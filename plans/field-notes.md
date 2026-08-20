@@ -145,3 +145,25 @@ contrast; our rule now handles **only** the non-flat cases axe punts to
 `incomplete` (text over images/gradients, resolved by the pixel-band pass). After
 the fix: axe 16 flat + our rule 12 non-flat = 28 distinct, **no double-count**.
 The 12 are genuinely axe-can't-do cases the pixel-band recovered.
+
+## M4 — judge (C1), maxedmarketing.ai (2026-08-19)
+
+The C1 layer adjudicates the deterministic `needs-review` queue: the DOM
+localizes (element region), the model only judges the handed crop.
+
+**End-to-end queue build:** a browser scan of maxedmarketing.ai (5 routes, 69
+findings) produced **22 adjudicable needs-review items** — the non-flat contrast
+crops the pixel-band left ambiguous. `complykit review --dry` reports the queue
+without spending a token; with a key, `review` crops each region, pHash-dedupes,
+checks the verdict cache, and adjudicates the misses.
+
+**DoD — 2nd run of an unchanged site ≈ 0 tokens:** proven deterministically in
+`test/judge.test.ts` with a counting stub adjudicator — the first `review` makes
+N model calls, the second makes **0** (all cache hits), and pHash dedupe collapses
+three identical crops to a single call. A bumped `rubricVersion` invalidates the
+cache (a re-judge), as intended.
+
+**Not run against the live API here** — the real Anthropic call (`client.ts`) is
+gated behind `ANTHROPIC_API_KEY` and costs money; the harness is exercised with a
+stub, which is what proves the cache economics. Publishing/paid runs are a
+separate, explicitly-approved step.

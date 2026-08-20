@@ -7,6 +7,7 @@ import { inventoryAiFrameworks } from './inventories/ai-frameworks.js';
 import { inventoryTrackers } from './inventories/trackers.js';
 import { inventoryPii } from './inventories/pii.js';
 import { contrastText } from './contrast/contrast.js';
+import { contrastAdjudicated } from './contrast/adjudicated.js';
 import { preConsentTracker } from './consent/pre-consent-tracker.js';
 import { consentAsymmetry } from './consent/consent-asymmetry.js';
 import { keyboardTrap, focusVisible } from './keyboard/keyboard.js';
@@ -24,6 +25,7 @@ export const ALL_RULES: AnyRule[] = [
   inventoryTrackers,
   inventoryPii,
   contrastText,
+  contrastAdjudicated,
   preConsentTracker,
   consentAsymmetry,
   keyboardTrap,

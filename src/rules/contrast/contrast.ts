@@ -22,6 +22,7 @@ const Candidate = z.object({
   measuredBand: z.enum(['pass', 'fail', 'ambiguous']).optional(),
   minRatio: z.number().optional(),
   maxRatio: z.number().optional(),
+  box: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }).optional(),
 });
 
 export const contrastText: Rule<readonly ['style-probe']> = {
@@ -41,6 +42,7 @@ export const contrastText: Rule<readonly ['style-probe']> = {
     let ordinal = 0;
     for (const artifact of input['style-probe']) {
       if (artifact.kind !== 'style-probe' || artifact.check !== 'contrast') continue;
+      const screenshotPath = artifact.screenshotPath;
       for (const raw of artifact.results) {
         const parsed = Candidate.safeParse(raw);
         if (!parsed.success) continue;
@@ -90,6 +92,11 @@ export const contrastText: Rule<readonly ['style-probe']> = {
                 required: String(c.required),
               },
             },
+            // Croppable evidence for C1 adjudication: the DOM localizes (region),
+            // the model only judges the handed crop.
+            ...(screenshotPath && c.box
+              ? [{ kind: 'screenshot' as const, path: screenshotPath, region: c.box }]
+              : []),
           ],
         });
       }

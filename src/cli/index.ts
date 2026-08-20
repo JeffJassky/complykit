@@ -7,6 +7,7 @@ import { cmdInit } from './commands/init.js';
 import { cmdScan } from './commands/scan.js';
 import { cmdStatic } from './commands/static.js';
 import { cmdReport } from './commands/report.js';
+import { cmdReview } from './commands/review.js';
 import { cmdDiff } from './commands/diff.js';
 import { cmdCoverage } from './commands/coverage.js';
 import { cmdFindingAdd } from './commands/finding-add.js';
@@ -37,6 +38,7 @@ Commands
                            (zero-config: complykit scan --url https://example.com)
   static                   Static layer only: point at a repo, get an in-PR run
   report                   Render a run (--format jsonl|md|sarif)
+  review                   Adjudicate the needs-review queue with C1 (LLM); --dry to preview
   diff                     Compare two runs by fingerprint
   coverage                 Requirement coverage for a ruleset
   finding add              Validate + fingerprint a finding into a run
@@ -44,7 +46,7 @@ Commands
   registry verify          Validate the registry; list items needing a human check
   runs                     List recorded runs
 
-  routes | review | auth   (land in later milestones)
+  routes | auth            (land in later milestones)
 
 Run 'complykit <command> --help' for command options.`;
 
@@ -69,6 +71,8 @@ async function main(argv: string[]): Promise<number> {
       return cmdStatic(joinArgs(sub, rest));
     case 'report':
       return cmdReport(joinArgs(sub, rest));
+    case 'review':
+      return cmdReview(joinArgs(sub, rest));
     case 'diff':
       return cmdDiff(joinArgs(sub, rest));
     case 'coverage':
@@ -85,7 +89,6 @@ async function main(argv: string[]): Promise<number> {
       if (sub !== 'verify') return unknown(`registry ${sub ?? ''}`);
       return cmdRegistryVerify(rest);
     case 'routes':
-    case 'review':
     case 'auth':
       process.stderr.write(`'${command}' lands in a later milestone — see plans/build-plan.md build order.\n`);
       return 2;

@@ -55,7 +55,8 @@ product; git, a laptop, or a scheduled agent can all produce and read it.
 | static (ESLint / a11y plugins, inventories) | — | ✅ |
 | browser passive (Playwright: axe, contrast flat + pixel-band, screenshots, DOMSnapshot) | `playwright` | ✅ |
 | browser probes (keyboard walk) + GDPR consent evidence (three-way, dark patterns, cookie classification) | `playwright` | ✅ |
-| LLM review (crop adjudication, tiled sweep) | `@anthropic-ai/sdk` | M4–M5 |
+| C1 LLM review — mode-1 crop adjudication, pHash dedupe, verdict cache | `@anthropic-ai/sdk` | ✅ |
+| C1 tiled visual sweep (Set-of-Marks) + skills + static-HTML report | `@anthropic-ai/sdk` | M5 |
 
 ## Not in scope
 

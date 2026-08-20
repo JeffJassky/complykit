@@ -89,6 +89,7 @@ async function scanOnce(
 
     // Contrast + pixel-band escalation for non-flat candidates.
     const contrast = await collectContrast(page, subject, capturedAt);
+    if (contrast.artifact.kind === 'style-probe') contrast.artifact.screenshotPath = shot.artifact.kind === 'screenshot' ? shot.artifact.path : undefined;
     try {
       const png = decodePng(shot.buffer);
       for (const c of contrast.candidates) {

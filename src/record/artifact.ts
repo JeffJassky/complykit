@@ -37,10 +37,14 @@ export const Artifact = z.discriminatedUnion('kind', [
   }),
   z.object({
     // Computed-style probe output (contrast, target-size, …) — the collector
-    // measures in-page; a pure rule evaluates the results.
+    // measures in-page; a pure rule evaluates the results. screenshotPath is the
+    // full-page capture this probe was measured against, so a rule can attach a
+    // croppable screenshot+region evidence for C1 adjudication (the DOM side
+    // localizes; the model only judges the handed crop).
     kind: z.literal('style-probe'),
     ...ArtifactBase,
     check: z.string(),
+    screenshotPath: z.string().optional(),
     results: z.array(Loose),
   }),
   z.object({
