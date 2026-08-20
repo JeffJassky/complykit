@@ -144,6 +144,7 @@ export {
   renderJsonl,
   renderMarkdown,
   renderSarif,
+  renderHtmlReport,
   renderReport,
   containsBannedVocabulary,
   assertReportVocabulary,
@@ -154,6 +155,7 @@ export {
 } from './report/index.js';
 export type {
   ReportFormat,
+  HtmlOptions,
   RunDiff,
   BudgetGate,
   RuleLayer,

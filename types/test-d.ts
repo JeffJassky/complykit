@@ -64,6 +64,7 @@ import {
   coverage,
   renderCoverage,
   renderSarif,
+  renderHtmlReport,
   buildCoverageIndex,
   normalizeEngineArtifacts,
   ENGINE_TABLES,
@@ -168,6 +169,7 @@ const _breaches: Finding[] = budgetBreaches(diff, 'new-critical');
 const matrix: CoverageMatrix = coverage('wcag22aa', buildCoverageIndex());
 const _cov: string = renderCoverage(matrix);
 const _sarif: string = renderSarif(run, [finding]);
+const _html: string = renderHtmlReport(run, [finding], { cwd: '.' });
 
 // Engine mapping surface + normalization.
 const _tables = ENGINE_TABLES.map((t) => t.engine);

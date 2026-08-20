@@ -12,7 +12,7 @@ Run `complykit help` for the summary, or `complykit <command> --help`.
 |---|---|
 | `init` | Write a starter `complykit.config.js` + `comply.dispositions.yaml`. |
 | `scan` | Collect artifacts, evaluate rules, write a run. Zero-config: `scan --url <url>`. |
-| `report` | Render a run — `--format jsonl \| md \| sarif`, `--run <id>`, `--out <file>`. |
+| `report` | Render a run — `--format jsonl \| md \| sarif \| html`, `--run <id>`, `--out <file>`. `html` is a single self-contained file (inline evidence crops, filters) that opens from disk. |
 | `review` | Adjudicate the needs-review queue with C1 (LLM crop verdicts). `--dry` previews the queue with no API call; needs `ANTHROPIC_API_KEY` to run. |
 | `diff` | Compare two runs by fingerprint. Exits non-zero on a budget breach. |
 | `coverage` | Requirement coverage for a `--ruleset`. |

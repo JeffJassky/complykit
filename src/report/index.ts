@@ -5,4 +5,5 @@ export * from './vocabulary.js';
 export * from './diff.js';
 export * from './render.js';
 export * from './sarif.js';
+export * from './html.js';
 export * from './coverage.js';

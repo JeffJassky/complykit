@@ -445,6 +445,11 @@ export type ReportFormat = 'jsonl' | 'md' | 'sarif' | 'html';
 export function renderJsonl(findings: Finding[]): string;
 export function renderMarkdown(run: Run, findings: Finding[]): string;
 export function renderSarif(run: Run, findings: Finding[]): string;
+export interface HtmlOptions {
+  cwd?: string;
+  coverage?: CoverageMatrix[];
+}
+export function renderHtmlReport(run: Run, findings: Finding[], opts?: HtmlOptions): string;
 export function renderReport(run: Run, findings: Finding[], format: ReportFormat): string;
 export function containsBannedVocabulary(text: string): boolean;
 export function assertReportVocabulary(text: string): void;

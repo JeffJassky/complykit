@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import { parseArgs } from 'node:util';
 import { loadRun, listRuns, asRunId } from '../../record/index.js';
-import { renderReport, type ReportFormat } from '../../report/index.js';
+import { renderReport, renderHtmlReport, coverage, type ReportFormat } from '../../report/index.js';
+import { buildCoverageIndex } from '../../coverage-index.js';
 
 export function cmdReport(argv: string[]): number {
   const { values } = parseArgs({
@@ -31,7 +32,14 @@ export function cmdReport(argv: string[]): number {
   }
 
   const { run, findings } = loadRun(runId, values.cwd);
-  const output = renderReport(run, findings, format);
+  const output =
+    format === 'html'
+      ? renderHtmlReport(run, findings, {
+          cwd: values.cwd,
+          // Coverage over the common rulesets, actual-not-theoretical for this run.
+          coverage: ['wcag22aa', 'gdpr', 'ai-act-50'].map((rs) => coverage(rs, buildCoverageIndex(), run)),
+        })
+      : renderReport(run, findings, format);
 
   if (values.out) {
     fs.writeFileSync(values.out, output);

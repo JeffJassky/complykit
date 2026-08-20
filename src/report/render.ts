@@ -1,6 +1,7 @@
 import type { Finding, Run, Severity } from '../record/index.js';
 import { getRequirement, getInstrument } from '../registry/index.js';
 import { renderSarif } from './sarif.js';
+import { renderHtmlReport } from './html.js';
 
 // Renderers over one run. jsonl is canonical (machine); md is the human summary.
 // sarif (M1) and static-html (M5) land in their milestones. Renderer CHROME
@@ -125,7 +126,9 @@ export function renderReport(run: Run, findings: Finding[], format: ReportFormat
     case 'sarif':
       return renderSarif(run, findings);
     case 'html':
-      throw new Error('static-html renderer lands in M5');
+      // The CLI report command calls renderHtmlReport directly with cwd +
+      // coverage for inline evidence; this dispatch path uses defaults.
+      return renderHtmlReport(run, findings);
     default: {
       const never: never = format;
       throw new Error(`unknown report format: ${String(never)}`);

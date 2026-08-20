@@ -72,6 +72,49 @@ export interface AnthropicAdjudicatorOptions {
 }
 export function createAnthropicAdjudicator(opts?: AnthropicAdjudicatorOptions): Promise<{ adjudicator: Adjudicator; model: string }>;
 
+// --- mode-2 tiled visual sweep ---------------------------------------------
+export interface Tile {
+  index: number;
+  buffer: Buffer;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+export interface TileOptions {
+  tileWidth?: number;
+  tileHeight?: number;
+  overlap?: number;
+}
+export function sliceTiles(pngBuffer: Buffer, opts?: TileOptions): Tile[];
+
+export interface MarkElement {
+  fingerprint: string;
+  role: string;
+  name?: string;
+  bbox: Box;
+}
+export interface TileSidecar {
+  tileIndex: number;
+  marks: Array<{ mark: number } & MarkElement>;
+}
+export function buildSidecars(tiles: Tile[], elements: MarkElement[]): TileSidecar[];
+
+export interface SweepLead {
+  fingerprint: string;
+  mark: number;
+  tileIndex: number;
+  suspicion: string;
+  pass: string;
+}
+export type Sweeper = (input: {
+  tile: Tile;
+  sidecar: TileSidecar;
+  pass: string;
+}) => Promise<Array<{ mark: number; suspicion: string }>>;
+export const SWEEP_PASSES: readonly ['perception', 'affordance-order'];
+export function sweep(tiles: Tile[], sidecars: TileSidecar[], sweeper: Sweeper, passes?: readonly string[]): Promise<SweepLead[]>;
+
 // --- orchestration ----------------------------------------------------------
 export function buildAdjudicationQueue(findings: Finding[], opts: { runId: RunId; cwd?: string }): AdjudicationRequest[];
 export function review(

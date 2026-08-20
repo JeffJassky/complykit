@@ -16,6 +16,8 @@ export * from './phash.js';
 export * from './cache.js';
 export * from './rubrics.js';
 export * from './adjudicate.js';
+export * from './tiler.js';
+export * from './sweep.js';
 export { createAnthropicAdjudicator } from './client.js';
 
 /**

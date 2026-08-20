@@ -56,7 +56,21 @@ product; git, a laptop, or a scheduled agent can all produce and read it.
 | browser passive (Playwright: axe, contrast flat + pixel-band, screenshots, DOMSnapshot) | `playwright` | ✅ |
 | browser probes (keyboard walk) + GDPR consent evidence (three-way, dark patterns, cookie classification) | `playwright` | ✅ |
 | C1 LLM review — mode-1 crop adjudication, pHash dedupe, verdict cache | `@anthropic-ai/sdk` | ✅ |
-| C1 tiled visual sweep (Set-of-Marks) + skills + static-HTML report | `@anthropic-ai/sdk` | M5 |
+| C1 tiled visual sweep (Set-of-Marks) + C2 skills + static-HTML report | `@anthropic-ai/sdk` | ✅ |
+
+## Reports
+
+`complykit report --format html` writes a single self-contained HTML file —
+inline evidence crops, severity/confidence filters, coverage and gaps, no
+network — that opens from disk and attaches to an email.
+
+## Investigative skills (C2)
+
+Four SKILL.md files ship in `skills/` for the investigative reviews that need a
+codebase exploration, run inside interactive Claude Code in the target repo:
+`a11y-visual-review`, `ai-act-50`, `gdpr-data-flow`, `policy-drift`. They record
+findings through `complykit finding add`, so agent findings go through the same
+validated gatekeeper as everything else.
 
 ## Not in scope
 
