@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ALL_RULES, getRule, getRequirement } from '../src/index.js';
 
 // Mechanical registration-completeness check (package-structure.md #4, the
@@ -7,11 +10,26 @@ import { ALL_RULES, getRule, getRequirement } from '../src/index.js';
 // requirement. A rule file that is never wired in fails HERE, not silently at
 // runtime by never firing.
 
-// Every .ts under src/rules except the plumbing (index, types, evaluate).
-const modules = import.meta.glob('../src/rules/**/*.ts', { eager: true }) as Record<
-  string,
-  Record<string, unknown>
->;
+// Every .ts under src/rules except the plumbing (index, types, evaluate). fs
+// walk + dynamic import rather than import.meta.glob, which tsc cannot type
+// under NodeNext (it is a Vite-only runtime feature).
+const RULES_DIR = fileURLToPath(new URL('../src/rules', import.meta.url));
+
+function walk(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walk(p));
+    else if (entry.name.endsWith('.ts')) out.push(p);
+  }
+  return out;
+}
+
+const ruleFiles = walk(RULES_DIR);
+const modules: Record<string, Record<string, unknown>> = {};
+for (const file of ruleFiles) {
+  modules[file] = (await import(pathToFileURL(file).href)) as Record<string, unknown>;
+}
 
 function looksLikeRule(v: unknown): v is { id: string; requirements: unknown; layer: unknown } {
   return (
