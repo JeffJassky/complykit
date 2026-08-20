@@ -7,6 +7,8 @@ import {
   unmappedEngineRules,
   coverage,
   buildCoverageIndex,
+  getRequirement,
+  requirementApplies,
 } from '../src/index.js';
 
 describe('registry integrity', () => {
@@ -45,6 +47,27 @@ describe('rulesets are queries', () => {
   it('an unknown ruleset selects nothing', () => {
     expect(findRuleSet('does-not-exist')).toBeUndefined();
     expect(requirementsForRuleset('does-not-exist', ALL_REQUIREMENTS)).toEqual([]);
+  });
+});
+
+describe('applicability gating (tags are hand-set, nothing auto-derived)', () => {
+  it('WCAG requirements always apply, regardless of tags', () => {
+    const wcag = getRequirement('wcag22.1.4.3')!;
+    expect(requirementApplies(wcag, [])).toBe(true);
+    expect(requirementApplies(wcag, ['targets-eu'])).toBe(true);
+  });
+
+  it('a GDPR requirement applies only when the property declares all its tags', () => {
+    const gdpr = getRequirement('gdpr.art13')!; // appliesIf: processes-personal-data + targets-eu
+    expect(requirementApplies(gdpr, [])).toBe(false);
+    expect(requirementApplies(gdpr, ['targets-eu'])).toBe(false); // missing the other tag
+    expect(requirementApplies(gdpr, ['targets-eu', 'processes-personal-data'])).toBe(true);
+  });
+
+  it('an AI Act requirement applies only when has-ai-features is set by hand', () => {
+    const art50 = getRequirement('eu-ai-act.art50.1')!;
+    expect(requirementApplies(art50, [])).toBe(false);
+    expect(requirementApplies(art50, ['has-ai-features'])).toBe(true);
   });
 });
 

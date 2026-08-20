@@ -368,6 +368,7 @@ export function findRuleSet(id: string): RuleSet | undefined;
 export function requirementsForRuleset(id: string, requirements: Requirement[]): Requirement[];
 export function getRequirement(id: string): Requirement | undefined;
 export function getInstrument(id: string): Instrument | undefined;
+export function requirementApplies(requirement: Requirement, tags: readonly string[]): boolean;
 export function verifyRegistry(sinceLastRelease?: string): VerifyReport;
 export function unmappedEngineRules(engine: string, observedRules: string[]): string[];
 

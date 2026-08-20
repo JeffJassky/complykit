@@ -48,7 +48,7 @@ export default defineConfig({
 | `targets` | `public` / `local` (command + port) / `staging` URL. |
 | `auth` | Playwright `storage-state` file, or a `form` login script. Absent → authed routes become a coverage gap; the run continues. |
 | `repo` | Enables the static layer and route-manifest emit. |
-| `tags` | Applicability tags (`targets-eu`, `processes-personal-data`, `has-ai-features`, `public-sector`). Requirements gate on these, so an AI Act rule never fires on a brochure site. |
+| `tags` | Applicability tags (`targets-eu`, `processes-personal-data`, `has-ai-features`, `public-sector`), **set by hand** — nothing is auto-derived. Requirements gate on them: WCAG always applies, but a GDPR or AI Act requirement produces findings only when the property declares its tags, so an AI Act rule never fires on a brochure site. The scan *nudges* you to add `has-ai-features` when it spots AI-framework imports, but never sets it for you. |
 | `routes` | `sitemap`, `crawl`, a cached `manifest` path, `include`/`exclude`, `sample`. |
 | `viewports` / `colorSchemes` | The browser matrix. |
 | `rulesets` | Queries over the registry (`wcag22aa`, `gdpr-consent`, `ai-act-50`), not ID lists. |

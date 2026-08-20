@@ -7,7 +7,7 @@ import {
   type MatrixCell,
   type AccessLevel,
 } from './record/index.js';
-import { AXE_VERSION } from './registry/index.js';
+import { AXE_VERSION, getRequirement, requirementApplies } from './registry/index.js';
 import { ALL_RULES, evaluate, resolveCapsFor } from './rules/index.js';
 import { normalizeEngineArtifacts } from './engines.js';
 import { collectStatic } from './collect/static/index.js';
@@ -18,6 +18,18 @@ import type { RouteDiscoveryOptions } from './collect/browser/routes.js';
 // export (it pulls collector deps) and out of cli/ (which is wiring only). The
 // browser layer is loaded via dynamic import so a static-only run never requires
 // the optional `playwright` peer.
+
+/**
+ * Drop findings whose cited requirement does not apply to this property's
+ * (hand-set) tags. WCAG has no appliesIf so it always survives; GDPR / AI Act
+ * findings survive only when the property declares the matching tags.
+ */
+function gateByTags(findings: Finding[], tags: readonly string[]): Finding[] {
+  return findings.filter((f) => {
+    const req = getRequirement(String(f.requirementId));
+    return req ? requirementApplies(req, tags) : true;
+  });
+}
 
 /** Resolve a rule's RawFindings into stored Findings (producer: rule). */
 function resolveRuleFindings(
@@ -56,14 +68,16 @@ export interface StaticScanResult {
 export async function runStaticScan(opts: StaticScanOptions): Promise<StaticScanResult> {
   const collection = await collectStatic({ cwd: opts.repoDir, property: opts.property });
   const artifacts: Artifact[] = collection.artifacts;
-  const tags = [...new Set([...(opts.tags ?? []), ...(collection.hasAiFeatures ? ['has-ai-features'] : [])])];
+  // Tags are hand-set in the config; nothing is auto-derived. hasAiFeatures is
+  // reported so the CLI can NUDGE the user to set the tag, not to set it for them.
+  const tags = opts.tags ?? [];
 
   const engine = normalizeEngineArtifacts(artifacts, { runId: opts.runId, engineVersions: collection.engineVersions });
   const raws = evaluate(artifacts, ALL_RULES, { property: opts.property, tags });
   const ruleFindings = resolveRuleFindings(raws, opts.runId, opts.packageVersion);
 
   return {
-    findings: [...engine.findings, ...ruleFindings],
+    findings: gateByTags([...engine.findings, ...ruleFindings], tags),
     engineVersions: collection.engineVersions,
     hasAiFeatures: collection.hasAiFeatures,
     fileCount: collection.fileCount,
@@ -123,13 +137,14 @@ export async function runBrowserScan(opts: BrowserScanOptions): Promise<BrowserS
     routes: opts.routes,
   });
 
+  const tags = opts.tags ?? [];
   const engineVersions = { 'axe-core': AXE_VERSION };
   const engine = normalizeEngineArtifacts(collection.artifacts, { runId: opts.runId, engineVersions });
-  const raws = evaluate(collection.artifacts, ALL_RULES, { property: opts.property, tags: opts.tags ?? [] });
+  const raws = evaluate(collection.artifacts, ALL_RULES, { property: opts.property, tags });
   const ruleFindings = resolveRuleFindings(raws, opts.runId, opts.packageVersion);
 
   return {
-    findings: [...engine.findings, ...ruleFindings],
+    findings: gateByTags([...engine.findings, ...ruleFindings], tags),
     gaps: collection.gaps,
     matrix: collection.matrix,
     accessLevels: collection.accessLevels,

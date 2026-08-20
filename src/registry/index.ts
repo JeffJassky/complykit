@@ -61,3 +61,16 @@ export function getRequirement(id: string): Requirement | undefined {
 export function getInstrument(id: string): Instrument | undefined {
   return INSTRUMENT_BY_ID.get(id);
 }
+
+/**
+ * Whether a requirement applies to a property with the given (manually declared)
+ * tags. A requirement with no `appliesIf` always applies (accessibility). One
+ * with `appliesIf` applies only when the property declares ALL of those tags —
+ * registry-design.md: "requirements gate on them", which keeps an AI Act rule
+ * from firing on a brochure site. Tags are set by hand in the config; nothing is
+ * auto-derived.
+ */
+export function requirementApplies(requirement: Requirement, tags: readonly string[]): boolean {
+  if (!requirement.appliesIf?.length) return true;
+  return requirement.appliesIf.every((t) => tags.includes(String(t)));
+}

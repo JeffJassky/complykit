@@ -60,7 +60,10 @@ export async function cmdScan(argv: string[], loadConfig: LoadConfig): Promise<n
     findings.push(...res.findings);
     Object.assign(engines, res.engineVersions);
     accessLevels.push(...res.accessLevels);
-    process.stdout.write(`  ${res.findings.length} static finding(s) over ${res.fileCount} file(s)${res.hasAiFeatures ? ' [has-ai-features]' : ''}\n`);
+    process.stdout.write(`  ${res.findings.length} static finding(s) over ${res.fileCount} file(s)\n`);
+    if (res.hasAiFeatures && !property.tags?.includes('has-ai-features')) {
+      process.stdout.write('  note: AI framework imports detected — add the `has-ai-features` tag to enable EU AI Act Art. 50 checks.\n');
+    }
   }
 
   if (publicUrl && !values['no-browser']) {

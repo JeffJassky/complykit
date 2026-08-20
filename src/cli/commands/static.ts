@@ -36,10 +36,13 @@ export async function cmdStatic(argv: string[]): Promise<number> {
     gitShaDir: repoDir, cwd,
   });
 
-  process.stdout.write(
-    `run ${String(run.id)}: ${written} finding(s) over ${res.fileCount} file(s)` +
-      `${res.hasAiFeatures ? ' [has-ai-features]' : ''}\n`,
-  );
+  process.stdout.write(`run ${String(run.id)}: ${written} finding(s) over ${res.fileCount} file(s)\n`);
+  if (res.hasAiFeatures) {
+    process.stdout.write(
+      'note: AI framework imports detected. If this AI is user-facing, add the ' +
+        '`has-ai-features` tag to the property config to enable EU AI Act Art. 50 checks.\n',
+    );
+  }
   if (res.unmapped.length) {
     process.stdout.write(`note: ${res.unmapped.length} unmapped engine rule(s) — \`complykit registry verify\`\n`);
   }

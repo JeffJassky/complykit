@@ -44,6 +44,7 @@ import {
   requirementsForRuleset,
   getRequirement,
   getInstrument,
+  requirementApplies,
   verifyRegistry,
   unmappedEngineRules,
   ALL_RULES,
@@ -99,6 +100,7 @@ const _rs = findRuleSet('wcag22aa');
 const _sel: Requirement[] = requirementsForRuleset('wcag22aa', ALL_REQUIREMENTS);
 const _req = getRequirement('wcag22.1.4.3');
 const _inst = getInstrument('wcag');
+const _applies: boolean = _req ? requirementApplies(_req, ['targets-eu']) : false;
 const _report = verifyRegistry();
 const _ok: boolean = _report.ok;
 const _unmapped: string[] = unmappedEngineRules('axe-core', ['color-contrast']);

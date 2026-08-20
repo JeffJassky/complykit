@@ -41,6 +41,7 @@ export {
   requirementsForRuleset,
   getRequirement,
   getInstrument,
+  requirementApplies,
   verifyRegistry,
   unmappedEngineRules,
 } from './index.js';

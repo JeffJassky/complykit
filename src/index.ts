@@ -98,6 +98,7 @@ export {
   REGISTRY_VERSION,
   getRequirement,
   getInstrument,
+  requirementApplies,
 } from './registry/index.js';
 
 // --- registry: types ---------------------------------------------------------
