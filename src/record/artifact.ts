@@ -36,6 +36,14 @@ export const Artifact = z.discriminatedUnion('kind', [
     results: z.array(Loose),
   }),
   z.object({
+    // Computed-style probe output (contrast, target-size, …) — the collector
+    // measures in-page; a pure rule evaluates the results.
+    kind: z.literal('style-probe'),
+    ...ArtifactBase,
+    check: z.string(),
+    results: z.array(Loose),
+  }),
+  z.object({
     kind: z.literal('inventory'),
     ...ArtifactBase,
     category: z.enum(['tracker', 'ai-framework', 'pii']),

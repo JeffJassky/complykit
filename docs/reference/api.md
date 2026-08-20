@@ -27,7 +27,7 @@ it without Chromium. The heavy collectors live behind subpath exports:
 | `@jeffjassky/complykit` | — | record, registry, rules, report, config |
 | `@jeffjassky/complykit/registry` | — | the pure legal data + `verifyRegistry` |
 | `@jeffjassky/complykit/collect-static` | — | file discovery, ESLint / a11y-plugin runner, inventories |
-| `@jeffjassky/complykit/collect-browser` | `playwright` peer *(M2)* | Playwright collectors |
+| `@jeffjassky/complykit/collect-browser` | `playwright` peer | axe inject, contrast (flat + pixel-band), screenshots, DOMSnapshot, route discovery |
 | `@jeffjassky/complykit/judge` | `@anthropic-ai/sdk` peer *(M4)* | the LLM adjudication harness |
 
 ## Rules are pure functions over artifacts

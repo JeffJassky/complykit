@@ -135,6 +135,7 @@ export type Artifact =
   | (ArtifactBase & { kind: 'dom-snapshot'; nodes: Loose[] })
   | (ArtifactBase & { kind: 'axe-result'; results: Loose })
   | (ArtifactBase & { kind: 'static-scan'; engine: string; results: Loose[] })
+  | (ArtifactBase & { kind: 'style-probe'; check: string; results: Loose[] })
   | (ArtifactBase & { kind: 'inventory'; category: 'tracker' | 'ai-framework' | 'pii'; items: Loose[] })
   | (ArtifactBase & { kind: 'cookie-capture'; phase: ConsentPhase; cookies: Loose[]; storage: Loose[] })
   | (ArtifactBase & { kind: 'network-log'; phase: ConsentPhase; requests: Loose[] })

@@ -71,6 +71,44 @@ No fixes needed. Observations carried forward:
   the static layer undercounts hard violations and routes the inferential bulk to
   the browser/LLM layers. Not noise to silence — leads to confirm.
 
+## M2 — browser passive, maxedmarketing.ai (2026-08-19)
+
+The static field subject (maxed) has no locally-served public site, so the
+browser layer was field-tested against the **live** property the user owns,
+`https://maxedmarketing.ai` (authorized — it is their own product).
+
+**Command:** browser passive pass, homepage, desktop × light.
+
+**Runtime:** 4.4s for the homepage (settle + scroll + screenshot + axe +
+contrast + DOMSnapshot). Well under the 20s per-page budget.
+
+**Result:** 36 findings from 4 artifacts, 0 coverage gaps.
+
+| Requirement | Count |
+|---|---|
+| wcag22.1.4.3 (Contrast) | 31 |
+| wcag22.4.1.2 (Name Role Value) | 5 |
+
+The contrast findings came from the flat-colour path and the pixel-band
+escalation; the name/role/value findings from axe. No cross-origin iframe or
+closed-shadow gap on the homepage.
+
+**Flake (DoD gate — <2% across 5 repeat runs):** 5 runs produced **identical**
+finding sets (36 each), avg Jaccard 100.0%, **drift 0.00%**. The settle protocol
++ animation freeze + measurement-profile ad-blocking hold the page steady. DoD
+met.
+
+### Ergonomics
+
+- The dynamic-import of the browser layer means `complykit static` never pays for
+  Playwright, and a missing-peer error is a clear install message, not a
+  module-resolution crash — verified by running the static tests with the browser
+  layer present but unused.
+- Determinism came for free once the freeze CSS + `networkidle` settle were in;
+  no per-site tuning was needed for a real marketing site.
+- The local source repo was untouched (the live URL was scanned; runs written to
+  a scratch dir).
+
 ## M3 — probes + GDPR evidence, maxed
 
-_Pending M3._
+_Pending M3 (after human review)._

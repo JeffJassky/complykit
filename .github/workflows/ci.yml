@@ -33,6 +33,10 @@ jobs:
       # `import { chromium }` inside rules/ fails to merge.
       - run: npm run boundaries
 
+      # The browser layer's tests drive real Chromium. Install it so they run
+      # here (they self-skip where it is absent, e.g. the peers matrix below).
+      - run: npx playwright install chromium
+
       - run: npm run build
 
       # After build: diff each .d.ts's value exports against the built bundle,

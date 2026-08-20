@@ -1,28 +1,21 @@
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
-import { writeRun, runIdFromTimestamp, appendFinding, type Run } from '../../record/index.js';
-import { REGISTRY_VERSION } from '../../registry/index.js';
+import {
+  runIdFromTimestamp,
+  type Finding,
+  type CoverageGap,
+  type MatrixCell,
+  type AccessLevel,
+} from '../../record/index.js';
 import { coverage, renderCoverage } from '../../report/index.js';
 import { buildCoverageIndex } from '../../coverage-index.js';
-import { runStaticScan } from '../../pipeline.js';
+import { runStaticScan, runBrowserScan } from '../../pipeline.js';
+import { assembleAndWrite } from '../write-run.js';
 import type { LoadedConfig } from '../config-load.js';
 import { packageVersion } from '../pkg.js';
 import type { Property } from '../../config.js';
 
 type LoadConfig = (opts: { url?: string; config?: string }, cwd?: string) => Promise<LoadedConfig>;
-
-function gitSha(cwd: string): string | undefined {
-  try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-  } catch {
-    return undefined;
-  }
-}
 
 export async function cmdScan(argv: string[], loadConfig: LoadConfig): Promise<number> {
   const { values } = parseArgs({
@@ -32,10 +25,12 @@ export async function cmdScan(argv: string[], loadConfig: LoadConfig): Promise<n
       config: { type: 'string' },
       property: { type: 'string' },
       cwd: { type: 'string' },
+      'no-browser': { type: 'boolean' },
     },
     allowPositionals: false,
   });
   const cwd = values.cwd ?? process.cwd();
+  const pkg = packageVersion();
 
   const { config, source } = await loadConfig({ url: values.url, config: values.config }, cwd);
   const property: Property | undefined = values.property
@@ -47,59 +42,56 @@ export async function cmdScan(argv: string[], loadConfig: LoadConfig): Promise<n
   }
 
   process.stdout.write(`scanning ${property.id} (config: ${source})\n`);
+  const now = new Date().toISOString();
+  const runId = runIdFromTimestamp(now);
 
-  // Static layer runs when a repo is available (property.repo, or the cwd for a
-  // config-driven scan). A pure `scan --url` with no repo has no static surface
-  // yet — the browser layer (M2) handles it.
-  const repoDir = property.repo ? path.resolve(cwd, property.repo) : values.url ? undefined : cwd;
+  const repoDir = property.repo ? path.resolve(cwd, property.repo) : undefined;
+  const publicUrl = property.targets.public?.url ?? values.url;
+
+  const findings: Finding[] = [];
+  const gaps: CoverageGap[] = [];
+  const matrix: MatrixCell[] = [];
+  const engines: Record<string, string> = {};
+  const accessLevels: AccessLevel[] = [];
 
   if (repoDir) {
-    const result = await runStaticScan({
-      cwd,
-      property: property.id,
-      repoDir,
-      tags: property.tags,
-      packageVersion: packageVersion(),
-    });
-    const run: Run = { ...result.run, gitSha: gitSha(repoDir) };
-    writeRun(run, cwd);
-    for (const f of result.findings) appendFinding(run.id, f, cwd);
-
-    process.stdout.write(
-      `run ${String(run.id)}: ${result.findings.length} finding(s) over ${result.fileCount} file(s)` +
-        `${result.hasAiFeatures ? ' [has-ai-features derived]' : ''}\n`,
-    );
-    if (result.unmapped.length) {
-      process.stdout.write(
-        `note: ${result.unmapped.length} engine rule(s) the registry does not map (engine drift) — run \`complykit registry verify\`:\n`,
-      );
-      for (const u of result.unmapped.slice(0, 10)) {
-        process.stdout.write(`  ${u.engine}/${u.engineRule} (${u.count})\n`);
-      }
-    }
-    process.stdout.write('\n');
-    for (const ruleset of property.rulesets) {
-      process.stdout.write(renderCoverage(coverage(ruleset, buildCoverageIndex(), run)) + '\n');
-    }
-    return 0;
+    process.stdout.write('· static layer…\n');
+    const res = await runStaticScan({ runId, property: property.id, repoDir, tags: property.tags, packageVersion: pkg });
+    findings.push(...res.findings);
+    Object.assign(engines, res.engineVersions);
+    accessLevels.push(...res.accessLevels);
+    process.stdout.write(`  ${res.findings.length} static finding(s) over ${res.fileCount} file(s)${res.hasAiFeatures ? ' [has-ai-features]' : ''}\n`);
   }
 
-  // No repo (pure --url): write a valid empty run; browser collection is M2.
-  const now = new Date().toISOString();
-  const run: Run = {
-    schemaVersion: 1,
-    id: runIdFromTimestamp(now),
-    property: property.id,
-    startedAt: now,
-    finishedAt: now,
-    versions: { package: packageVersion(), registry: REGISTRY_VERSION, engines: {} },
-    accessLevels: [],
-    matrix: [],
-    gaps: [],
-    rulesExecuted: [],
-  };
-  writeRun(run, cwd);
-  process.stdout.write(`run ${String(run.id)} written (no repo configured; browser collection lands in M2).\n\n`);
+  if (publicUrl && !values['no-browser']) {
+    process.stdout.write(`· browser layer (${publicUrl})…\n`);
+    try {
+      const res = await runBrowserScan({
+        runId, property: property.id, targetUrl: publicUrl, cwd, tags: property.tags, packageVersion: pkg,
+        viewports: property.viewports, schemes: property.colorSchemes, routes: property.routes,
+      });
+      findings.push(...res.findings);
+      gaps.push(...res.gaps);
+      matrix.push(...res.matrix);
+      Object.assign(engines, res.engineVersions);
+      accessLevels.push(...res.accessLevels);
+      process.stdout.write(`  ${res.findings.length} browser finding(s) over ${res.scanned.length} route(s); ${res.gaps.length} gap(s)\n`);
+      if (res.spike.closedShadowHosts) {
+        process.stdout.write(`  closed-shadow spike: ${res.spike.closedShadowHosts} host(s), pierced=${res.spike.piercedClosedShadow}\n`);
+      }
+    } catch (err) {
+      process.stderr.write(`  browser layer skipped: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  } else if (!repoDir) {
+    process.stdout.write('nothing to scan: no repo and no public target.\n');
+  }
+
+  const { run, written } = assembleAndWrite({
+    runId, property: property.id, now, packageVersion: pkg,
+    findings, engines, accessLevels, gaps, matrix,
+    gitShaDir: repoDir, cwd,
+  });
+  process.stdout.write(`\nrun ${String(run.id)}: ${written} finding(s) total\n\n`);
   for (const ruleset of property.rulesets) {
     process.stdout.write(renderCoverage(coverage(ruleset, buildCoverageIndex(), run)) + '\n');
   }

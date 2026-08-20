@@ -6,6 +6,7 @@ import { art50AiInteraction } from './art50/ai-interaction.js';
 import { inventoryAiFrameworks } from './inventories/ai-frameworks.js';
 import { inventoryTrackers } from './inventories/trackers.js';
 import { inventoryPii } from './inventories/pii.js';
+import { contrastText } from './contrast/contrast.js';
 
 export * from './types.js';
 export * from './evaluate.js';
@@ -19,6 +20,7 @@ export const ALL_RULES: AnyRule[] = [
   inventoryAiFrameworks,
   inventoryTrackers,
   inventoryPii,
+  contrastText,
 ];
 
 const RULE_BY_ID = new Map<string, AnyRule>(ALL_RULES.map((r) => [String(r.id), r]));

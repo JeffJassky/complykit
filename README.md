@@ -51,9 +51,10 @@ product; git, a laptop, or a scheduled agent can all produce and read it.
 
 | Layer | Behind | Status |
 |---|---|---|
-| record + registry + rules + report | — | M0 |
-| static (ESLint / a11y plugins, inventories) | — | M1 |
-| browser (Playwright: axe, contrast, consent, probes) | `playwright` | M2–M3 |
+| record + registry + rules + report | — | ✅ |
+| static (ESLint / a11y plugins, inventories) | — | ✅ |
+| browser passive (Playwright: axe, contrast flat + pixel-band, screenshots, DOMSnapshot) | `playwright` | ✅ |
+| browser probes + GDPR consent evidence | `playwright` | M3 |
 | LLM review (crop adjudication, tiled sweep) | `@anthropic-ai/sdk` | M4–M5 |
 
 ## Not in scope

@@ -88,8 +88,8 @@
     "docs:preview": "vitepress preview docs"
   },
   "peerDependencies": {
-    "playwright": "^1.40.0",
-    "@anthropic-ai/sdk": "^0.30.0 || ^0.40.0 || ^0.50.0 || ^0.60.0"
+    "@anthropic-ai/sdk": "^0.30.0 || ^0.40.0 || ^0.50.0 || ^0.60.0",
+    "playwright": "^1.40.0"
   },
   "peerDependenciesMeta": {
     "playwright": {
@@ -101,9 +101,11 @@
   },
   "dependencies": {
     "@typescript-eslint/parser": "8.18.0",
+    "axe-core": "^4.10.3",
     "eslint": "9.17.0",
     "eslint-plugin-jsx-a11y": "6.10.2",
     "eslint-plugin-vuejs-accessibility": "2.4.1",
+    "pngjs": "^7.0.0",
     "vue-eslint-parser": "9.4.3",
     "yaml": "^2.5.0",
     "zod": "^3.23.0"
@@ -111,6 +113,7 @@
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.60.0",
     "@types/node": "^22.7.0",
+    "@types/pngjs": "^6.0.5",
     "dependency-cruiser": "^16.4.0",
     "playwright": "^1.48.0",
     "tsup": "^8.5.1",
