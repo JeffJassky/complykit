@@ -1,0 +1,37 @@
+node_modules/
+dist/
+coverage/
+.cache/
+.DS_Store
+*.log
+
+# env
+.env
+.env.local
+.env.*.local
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# vitepress
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+
+# complykit run artifacts. Runs and the verdict cache are per-machine and
+# regenerable; the route manifest and dispositions are tracked deliberately
+# (build-plan §7). Test fixtures under test/ are NOT ignored.
+.comply/runs/
+.comply/cache/
+
+# A bare `config.js`/`config.ts` rule in a user's global gitignore
+# (core.excludesFile) applies to every repo on the machine. It silently dropped
+# both an adapter module and the docs config from featureboard's first push —
+# CI caught the first, nothing caught the second (VitePress builds fine without
+# a config and deploys a site with no nav). Repo rules outrank the global file,
+# so these are re-included explicitly. See standards/traps.md #1.
+!src/**/config.js
+!src/**/config.ts
+!docs/.vitepress/config.js
+!docs/.vitepress/config.ts

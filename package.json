@@ -1,0 +1,119 @@
+{
+  "name": "@jeffjassky/complykit",
+  "version": "0.0.0",
+  "description": "Compliance-audit toolkit: ADA/WCAG 2.2, GDPR consent + dark patterns, EU AI Act Art. 50",
+  "license": "MIT",
+  "author": "Jeff Jassky <jeff@jeffjassky.com>",
+  "homepage": "https://jeffjassky.github.io/complykit/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JeffJassky/complykit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JeffJassky/complykit/issues"
+  },
+  "keywords": [
+    "complykit",
+    "compliance",
+    "accessibility",
+    "wcag",
+    "ada",
+    "gdpr",
+    "eu-ai-act",
+    "audit",
+    "a11y"
+  ],
+  "type": "module",
+  "bin": {
+    "complykit": "./dist/cli.js"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./registry": {
+      "types": "./types/registry.d.ts",
+      "import": "./dist/registry.js",
+      "require": "./dist/registry.cjs"
+    },
+    "./collect-static": {
+      "types": "./types/collect-static.d.ts",
+      "import": "./dist/collect-static.js",
+      "require": "./dist/collect-static.cjs"
+    },
+    "./collect-browser": {
+      "types": "./types/collect-browser.d.ts",
+      "import": "./dist/collect-browser.js",
+      "require": "./dist/collect-browser.cjs"
+    },
+    "./judge": {
+      "types": "./types/judge.d.ts",
+      "import": "./dist/judge.js",
+      "require": "./dist/judge.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "types/index.d.ts",
+    "types/registry.d.ts",
+    "types/collect-static.d.ts",
+    "types/collect-browser.d.ts",
+    "types/judge.d.ts",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "boundaries": "depcruise src --config .dependency-cruiser.cjs",
+    "check-tracked": "node scripts/check-tracked.mjs",
+    "check-exports": "node scripts/check-exports.mjs",
+    "clean": "rm -rf dist coverage",
+    "prepublishOnly": "npm run clean && npm run typecheck && npm run boundaries && npm run build && npm run check-exports && npm test",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "peerDependencies": {
+    "playwright": "^1.40.0",
+    "@anthropic-ai/sdk": "^0.30.0 || ^0.40.0 || ^0.50.0 || ^0.60.0"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    },
+    "@anthropic-ai/sdk": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "yaml": "^2.5.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.60.0",
+    "@types/node": "^22.7.0",
+    "dependency-cruiser": "^16.4.0",
+    "playwright": "^1.48.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.6.0",
+    "vitepress": "^1.4.0",
+    "vitest": "^2.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

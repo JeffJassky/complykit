@@ -1,0 +1,78 @@
+name: CI
+
+# Standalone, deliberately. The house plan is thin callers of reusable
+# workflows in a shared repo — that repo does not exist yet, and a `uses:`
+# pointing at nothing trades drift for red CI. See template/README.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # FIRST. Every later step passes against the working tree, which is
+      # exactly the thing that lies when a global gitignore ate a file.
+      # See standards/traps.md #1.
+      - run: npm run check-tracked
+
+      - run: npm run typecheck
+
+      # The dependency law of plans/package-structure.md, mechanically enforced:
+      # rules/ import no collector, Playwright lives only in collect/browser,
+      # the Anthropic SDK only in judge/, nothing imports cli/. A PR that adds
+      # `import { chromium }` inside rules/ fails to merge.
+      - run: npm run boundaries
+
+      - run: npm run build
+
+      # After build: diff each .d.ts's value exports against the built bundle,
+      # both ways. Closes test-d.ts's blind spot (a value export declared
+      # type-only). See standards/traps.md #9.
+      - run: npm run check-exports
+
+      - run: npm test
+
+      # A host compiled to CommonJS can only `require()`, and an ESM-only
+      # package fails there with ERR_REQUIRE_ESM. Prove the CJS half is real by
+      # calling THROUGH it. Assert `defineConfig`: the one root export every
+      # consumer touches by construction (traps #24). No import.meta.url shim
+      # step — this package locates nothing on disk relative to itself (the
+      # static-HTML report template is inlined, not shipped as a file), so
+      # traps #7 does not apply here.
+      - name: CJS entry actually loads
+        run: node -e "const p=require('./dist/index.cjs'); if (typeof p.defineConfig !== 'function') process.exit(1)"
+
+  # Peer matrix (traps #10). playwright and @anthropic-ai/sdk are declared with
+  # version ranges; a range is a claim and an untested claim is a lie. These
+  # jobs install each peer major and run the suites that touch it. Populated as
+  # the browser (M2) and judge (M4) layers land — until then the core suite is
+  # peer-independent (rules are fixture-tested, judge is stubbed) and this job
+  # only proves the peers install and the package imports under each.
+  peers:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        anthropic: ['0.30', '0.60']
+    name: peers (@anthropic-ai/sdk ${{ matrix.anthropic }})
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # --no-save keeps the lockfile authoritative for everything else.
+      - run: npm install @anthropic-ai/sdk@${{ matrix.anthropic }} --no-save
+      - run: npm run build
+      - run: npm test

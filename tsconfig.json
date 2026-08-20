@@ -1,0 +1,31 @@
+{
+  "// ": "ONE tsconfig, unlike the template's two: this package ships no SPA, so",
+  "//  ": "there is no bundler-resolution half to check separately. traps.md #20 is",
+  "//   ": "about a second config going unchecked; here there is no second config.",
+  "//    ": "src/ imports its public types from types/ (traps #21), so a shape added",
+  "//     ": "to the source without a matching declaration is a compile error, and",
+  "//      ": "types/test-d.ts exercises the surface a host actually sees.",
+  "//       ": "noEmit is deliberate — tsup emits, tsc only judges.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true,
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "types/**/*.d.ts",
+    "types/test-d.ts",
+    "tsup.config.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": ["dist", "node_modules"]
+}
