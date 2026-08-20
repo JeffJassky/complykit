@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { loadConfigFor } from './config-load.js';
 import { cmdInit } from './commands/init.js';
 import { cmdScan } from './commands/scan.js';
+import { cmdStatic } from './commands/static.js';
 import { cmdReport } from './commands/report.js';
 import { cmdDiff } from './commands/diff.js';
 import { cmdCoverage } from './commands/coverage.js';
@@ -34,7 +35,8 @@ Commands
   init                     Write a starter config + dispositions file
   scan                     Collect artifacts, evaluate rules, write a run
                            (zero-config: complykit scan --url https://example.com)
-  report                   Render a run (--format jsonl|md)
+  static                   Static layer only: point at a repo, get an in-PR run
+  report                   Render a run (--format jsonl|md|sarif)
   diff                     Compare two runs by fingerprint
   coverage                 Requirement coverage for a ruleset
   finding add              Validate + fingerprint a finding into a run
@@ -42,7 +44,7 @@ Commands
   registry verify          Validate the registry; list items needing a human check
   runs                     List recorded runs
 
-  routes | static | review | auth   (land in later milestones)
+  routes | review | auth   (land in later milestones)
 
 Run 'complykit <command> --help' for command options.`;
 
@@ -63,6 +65,8 @@ async function main(argv: string[]): Promise<number> {
       return cmdInit(rest.length ? [sub, ...rest] : sub ? [sub] : []);
     case 'scan':
       return cmdScan(joinArgs(sub, rest), loadConfigFor);
+    case 'static':
+      return cmdStatic(joinArgs(sub, rest));
     case 'report':
       return cmdReport(joinArgs(sub, rest));
     case 'diff':
@@ -81,7 +85,6 @@ async function main(argv: string[]): Promise<number> {
       if (sub !== 'verify') return unknown(`registry ${sub ?? ''}`);
       return cmdRegistryVerify(rest);
     case 'routes':
-    case 'static':
     case 'review':
     case 'auth':
       process.stderr.write(`'${command}' lands in a later milestone — see plans/build-plan.md build order.\n`);

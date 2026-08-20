@@ -42,19 +42,19 @@ function looksLikeRule(v: unknown): v is { id: string; requirements: unknown; la
 }
 
 describe('rule registration completeness', () => {
-  const PLUMBING = ['index.ts', 'types.ts', 'evaluate.ts'];
-
   it('every rule exported from a rule file is registered in ALL_RULES', () => {
     const registeredIds = new Set(ALL_RULES.map((r) => String(r.id)));
+    let seen = 0;
     for (const [file, mod] of Object.entries(modules)) {
-      if (PLUMBING.some((p) => file.endsWith(p))) continue;
-      const exportedRules = Object.values(mod).filter(looksLikeRule);
-      expect(exportedRules.length, `${file} exports no rule-shaped value`).toBeGreaterThan(0);
-      for (const rule of exportedRules) {
+      // Helper/plumbing files export no rule-shaped value — skipped naturally.
+      for (const rule of Object.values(mod).filter(looksLikeRule)) {
+        seen++;
         expect(registeredIds.has(rule.id), `${rule.id} (${file}) is not in ALL_RULES`).toBe(true);
         expect(getRule(rule.id), `getRule('${rule.id}') is undefined`).toBeDefined();
       }
     }
+    // Sanity: discovery found at least the rules we registered.
+    expect(seen).toBeGreaterThanOrEqual(ALL_RULES.length);
   });
 
   it('every registered rule maps to at least one real requirement', () => {

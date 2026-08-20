@@ -90,6 +90,9 @@ export {
   AXE_MAPPINGS,
   AXE_PINNED_RULES,
   AXE_VERSION,
+  ENGINE_TABLES,
+  ALL_ENGINE_MAPPINGS,
+  getEngineMapping,
   verifyRegistry,
   unmappedEngineRules,
   REGISTRY_VERSION,
@@ -106,10 +109,18 @@ export type {
   AuthorityRef,
   RequirementFilter,
   EngineRuleMapping,
+  EngineTable,
   ApplicabilityTag,
   RuleSet,
   VerifyReport,
 } from './registry/index.js';
+
+// --- engine normalization (engine output -> findings) -----------------------
+export { normalizeEngineArtifacts } from './engines.js';
+export type { EngineNormalization, NormalizeEngineOptions } from './engines.js';
+
+// --- coverage index (rules + engine mappings) -------------------------------
+export { buildCoverageIndex } from './coverage-index.js';
 
 // --- rules: runtime + types --------------------------------------------------
 export { ALL_RULES, getRule, resolveCapsFor, evaluate, isLlmRule } from './rules/index.js';
@@ -127,6 +138,7 @@ export type {
 export {
   renderJsonl,
   renderMarkdown,
+  renderSarif,
   renderReport,
   containsBannedVocabulary,
   assertReportVocabulary,

@@ -1,21 +1,6 @@
 import { parseArgs } from 'node:util';
-import { coverage, renderCoverage, type CoverageIndex, type RuleLayer } from '../../report/index.js';
-import { ALL_RULES } from '../../rules/index.js';
-
-// Build the requirement -> layers index from the registered rules, then hand it
-// to report/coverage (which may not import rules/ under the dependency law).
-function buildCoverageIndex(): CoverageIndex {
-  const index: CoverageIndex = new Map();
-  for (const rule of ALL_RULES) {
-    for (const reqId of rule.requirements) {
-      const key = String(reqId);
-      const layers = index.get(key) ?? new Set<RuleLayer>();
-      layers.add(rule.layer);
-      index.set(key, layers);
-    }
-  }
-  return index;
-}
+import { coverage, renderCoverage } from '../../report/index.js';
+import { buildCoverageIndex } from '../../coverage-index.js';
 
 export function cmdCoverage(argv: string[]): number {
   const { values } = parseArgs({

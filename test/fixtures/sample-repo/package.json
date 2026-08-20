@@ -1,0 +1,9 @@
+{
+  "name": "sample-repo",
+  "private": true,
+  "dependencies": {
+    "vue": "^3.4.0",
+    "@anthropic-ai/sdk": "^0.60.0",
+    "mixpanel-browser": "^2.50.0"
+  }
+}

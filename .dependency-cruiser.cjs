@@ -102,7 +102,7 @@ module.exports = {
       name: 'no-orphans',
       comment: 'An unreferenced module is either dead or unregistered.',
       severity: 'warn',
-      from: { orphan: true, pathNot: '(index|test-d)\\.ts$' },
+      from: { orphan: true, pathNot: '(index|test-d)\\.ts$|\\.d\\.ts$' },
       to: {},
     },
   ],

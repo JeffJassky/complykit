@@ -1,7 +1,7 @@
 import { Requirement, Instrument, EngineRuleMapping } from './schema.js';
 import { INSTRUMENTS } from './instruments.js';
 import { ALL_REQUIREMENTS } from './requirements/index.js';
-import { AXE_MAPPINGS, AXE_PINNED_RULES, AXE_VERSION } from './mappings/axe.js';
+import { ENGINE_TABLES, ALL_ENGINE_MAPPINGS } from './mappings/index.js';
 
 // `complykit registry verify` runs this. It is also a CI gate: an axe upgrade
 // that adds an unmapped rule fails HERE (registry-design.md — engine drift as a
@@ -54,31 +54,34 @@ export function verifyRegistry(sinceLastRelease?: string): VerifyReport {
     }
   }
 
-  // 3. Engine mappings validate; requirements resolve; exhaustive vs pinned rules.
-  const mappedAxeRules = new Set<string>();
-  for (const m of AXE_MAPPINGS) {
-    const parsed = EngineRuleMapping.safeParse(m);
-    if (!parsed.success) {
-      errors.push(`axe mapping ${m.engineRule}: ${parsed.error.message}`);
-      continue;
-    }
-    if (m.engineVersion !== AXE_VERSION) {
-      errors.push(`axe mapping ${m.engineRule} pinned to ${m.engineVersion}, expected ${AXE_VERSION}`);
-    }
-    for (const r of m.requirements) {
-      if (!reqIds.has(String(r))) {
-        errors.push(`axe mapping ${m.engineRule} references unknown requirement ${String(r)}`);
+  // 3. Every engine table: mappings validate, requirements resolve, versions
+  //    match, and the table is EXHAUSTIVE against the pinned rule set. An engine
+  //    upgrade that adds a rule breaks CI here until it is mapped.
+  for (const table of ENGINE_TABLES) {
+    const mapped = new Set<string>();
+    for (const m of table.mappings) {
+      const parsed = EngineRuleMapping.safeParse(m);
+      if (!parsed.success) {
+        errors.push(`${table.engine} mapping ${m.engineRule}: ${parsed.error.message}`);
+        continue;
       }
+      if (m.engineVersion !== table.version) {
+        errors.push(`${table.engine} mapping ${m.engineRule} pinned to ${m.engineVersion}, expected ${table.version}`);
+      }
+      for (const r of m.requirements) {
+        if (!reqIds.has(String(r))) {
+          errors.push(`${table.engine} mapping ${m.engineRule} references unknown requirement ${String(r)}`);
+        }
+      }
+      if (!table.pinnedRules.includes(m.engineRule)) {
+        errors.push(`${table.engine} mapping ${m.engineRule} is not in the pinned rule set (stale mapping or typo)`);
+      }
+      mapped.add(m.engineRule);
     }
-    if (!AXE_PINNED_RULES.includes(m.engineRule)) {
-      errors.push(`axe mapping ${m.engineRule} is not in the pinned rule set (stale mapping or typo)`);
-    }
-    mappedAxeRules.add(m.engineRule);
-  }
-  // Exhaustiveness: every pinned rule must be mapped. This is the upgrade gate.
-  for (const rule of AXE_PINNED_RULES) {
-    if (!mappedAxeRules.has(rule)) {
-      errors.push(`axe rule "${rule}" (v${AXE_VERSION}) is unmapped — map it to a requirement or CI stays red`);
+    for (const rule of table.pinnedRules) {
+      if (!mapped.has(rule)) {
+        errors.push(`${table.engine} rule "${rule}" (v${table.version}) is unmapped — map it to a requirement or CI stays red`);
+      }
     }
   }
 
@@ -105,19 +108,20 @@ export function verifyRegistry(sinceLastRelease?: string): VerifyReport {
     counts: {
       requirements: ALL_REQUIREMENTS.length,
       instruments: INSTRUMENTS.length,
-      mappings: AXE_MAPPINGS.length,
+      mappings: ALL_ENGINE_MAPPINGS.length,
     },
     needsHumanCheck,
   };
 }
 
 /**
- * Runtime engine-drift check (M2): given the rules an engine actually reported,
- * fail on any not present in the mapping table. Same law, checked against live
- * output instead of the pinned constant.
+ * Runtime engine-drift check: given the rules an engine actually reported, fail
+ * on any not present in the mapping table. Same law, checked against live output
+ * instead of the pinned constant.
  */
 export function unmappedEngineRules(engine: string, observedRules: string[]): string[] {
-  if (engine !== 'axe-core') return [];
-  const mapped = new Set(AXE_MAPPINGS.map((m) => m.engineRule));
+  const table = ENGINE_TABLES.find((t) => t.engine === engine);
+  if (!table) return [];
+  const mapped = new Set(table.mappings.map((m) => m.engineRule));
   return observedRules.filter((r) => !mapped.has(r));
 }

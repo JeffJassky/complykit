@@ -6,23 +6,8 @@ import {
   findRuleSet,
   unmappedEngineRules,
   coverage,
-  ALL_RULES,
-  type CoverageIndex,
-  type RuleLayer,
+  buildCoverageIndex,
 } from '../src/index.js';
-
-function coverageIndex(): CoverageIndex {
-  const index: CoverageIndex = new Map();
-  for (const rule of ALL_RULES) {
-    for (const reqId of rule.requirements) {
-      const key = String(reqId);
-      const layers = index.get(key) ?? new Set<RuleLayer>();
-      layers.add(rule.layer);
-      index.set(key, layers);
-    }
-  }
-  return index;
-}
 
 describe('registry integrity', () => {
   it('verifies clean: no duplicate ids, resolvable instruments, exhaustive axe mappings', () => {
@@ -64,13 +49,21 @@ describe('rulesets are queries', () => {
 });
 
 describe('coverage is derived, and states the honest gap', () => {
-  it('reports Art. 50 as llm-assisted and WCAG as manual-only until browser rules land', () => {
-    const aiAct = coverage('ai-act-50', coverageIndex());
-    expect(aiAct.llmAssisted).toBeGreaterThan(0);
+  it('WCAG is largely auto-checked via engine mappings, with a real manual gap', () => {
+    const wcag = coverage('wcag22aa', buildCoverageIndex());
+    // eslint (static) + axe (browser) mappings cover most criteria...
+    expect(wcag.autoChecked).toBeGreaterThan(0);
+    // ...but contrast/target-size/focus-visible criteria with no mapping remain
+    // the honest manual-only gap printed in every report.
+    expect(wcag.manualOnly).toBeGreaterThan(0);
+    expect(wcag.autoChecked + wcag.llmAssisted + wcag.manualOnly).toBe(wcag.total);
+  });
 
-    const wcag = coverage('wcag22aa', coverageIndex());
-    // No deterministic WCAG rules registered yet -> every criterion is the gap.
-    expect(wcag.autoChecked).toBe(0);
-    expect(wcag.manualOnly).toBe(wcag.total);
+  it('Art. 50 has an auto-checked lead (inventory) and a manual-only paragraph', () => {
+    const aiAct = coverage('ai-act-50', buildCoverageIndex());
+    // art50.1 is reached by the ai-framework inventory (static) + the llm rule;
+    // art50.2 (content marking) has no rule yet -> manual.
+    expect(aiAct.autoChecked).toBeGreaterThanOrEqual(1);
+    expect(aiAct.manualOnly).toBeGreaterThanOrEqual(1);
   });
 });

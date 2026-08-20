@@ -60,6 +60,12 @@ import {
   budgetBreaches,
   coverage,
   renderCoverage,
+  renderSarif,
+  buildCoverageIndex,
+  normalizeEngineArtifacts,
+  ENGINE_TABLES,
+  ALL_ENGINE_MAPPINGS,
+  getEngineMapping,
 } from './index.js';
 import type {
   Config,
@@ -153,8 +159,16 @@ const _banned: boolean = containsBannedVocabulary('findings');
 _use(() => assertReportVocabulary('findings'));
 const diff: RunDiff = diffRuns({ run, findings: [] }, { run, findings: [finding] });
 const _breaches: Finding[] = budgetBreaches(diff, 'new-critical');
-const matrix: CoverageMatrix = coverage('wcag22aa', new Map());
+const matrix: CoverageMatrix = coverage('wcag22aa', buildCoverageIndex());
 const _cov: string = renderCoverage(matrix);
+const _sarif: string = renderSarif(run, [finding]);
+
+// Engine mapping surface + normalization.
+const _tables = ENGINE_TABLES.map((t) => t.engine);
+const _allMappings: number = ALL_ENGINE_MAPPINGS.length;
+const _mapping = getEngineMapping('axe-core', 'color-contrast');
+const _norm = normalizeEngineArtifacts([], { runId });
+const _normFindings: Finding[] = _norm.findings;
 
 // Evidence discriminated union is expressible.
 const ev: Evidence = { kind: 'dom-snippet', html: '<button>' };

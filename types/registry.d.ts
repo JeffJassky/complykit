@@ -18,6 +18,7 @@ export type {
   RequirementFilter,
   Instrument,
   EngineRuleMapping,
+  EngineTable,
   RuleSet,
   VerifyReport,
 } from './index.js';
@@ -31,6 +32,9 @@ export {
   AXE_MAPPINGS,
   AXE_PINNED_RULES,
   AXE_VERSION,
+  ENGINE_TABLES,
+  ALL_ENGINE_MAPPINGS,
+  getEngineMapping,
   RULESETS,
   REGISTRY_VERSION,
   findRuleSet,

@@ -16,7 +16,16 @@ export { asRequirementId, asRuleId, asInstrumentId } from './ids.js';
 export { RULESETS, findRuleSet, requirementsForRuleset } from './rulesets.js';
 export { INSTRUMENTS } from './instruments.js';
 export { ALL_REQUIREMENTS } from './requirements/index.js';
-export { AXE_MAPPINGS, AXE_PINNED_RULES, AXE_VERSION } from './mappings/axe.js';
+// Per-engine mapping arrays stay internal; ENGINE_TABLES is the public handle to
+// every engine's mappings + pinned rules + layer.
+export {
+  AXE_MAPPINGS,
+  AXE_PINNED_RULES,
+  AXE_VERSION,
+  ENGINE_TABLES,
+  ALL_ENGINE_MAPPINGS,
+  getEngineMapping,
+} from './mappings/index.js';
 export { verifyRegistry, unmappedEngineRules } from './verify.js';
 
 // --- types ------------------------------------------------------------------
@@ -33,6 +42,7 @@ export type {
 } from './schema.js';
 export type { RuleSet } from './rulesets.js';
 export type { VerifyReport } from './verify.js';
+export type { EngineTable } from './mappings/index.js';
 
 // Stamped into every run.json (types-sketch Run.versions.registry): a finding
 // means what the registry meant at the version that produced it. Bump on any

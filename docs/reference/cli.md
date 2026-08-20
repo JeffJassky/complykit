@@ -16,10 +16,11 @@ Run `complykit help` for the summary, or `complykit <command> --help`.
 | `diff` | Compare two runs by fingerprint. Exits non-zero on a budget breach. |
 | `coverage` | Requirement coverage for a `--ruleset`. |
 | `finding add` | Validate + fingerprint a finding into a run (the agent gateway). |
-| `fixtures record` | Record collector artifacts as rule test fixtures *(needs the collectors — M1/M2)*. |
+| `static` | Static layer only — point at a repo, get an in-PR run with no server or browser. |
+| `fixtures record` | Record collector artifacts as rule test fixtures (static now; browser with M2). |
 | `registry verify` | Validate the registry; list items needing a human check. |
 | `runs` | List recorded runs. |
-| `routes` / `static` / `review` / `auth` | Land in later milestones. |
+| `routes` / `review` / `auth` | Land in later milestones. |
 
 ## `scan`
 

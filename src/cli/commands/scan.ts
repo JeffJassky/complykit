@@ -1,9 +1,11 @@
+import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
-import { writeRun, runIdFromTimestamp, type Run } from '../../record/index.js';
+import { writeRun, runIdFromTimestamp, appendFinding, type Run } from '../../record/index.js';
 import { REGISTRY_VERSION } from '../../registry/index.js';
-import { coverage, renderCoverage, type CoverageIndex, type RuleLayer } from '../../report/index.js';
-import { ALL_RULES } from '../../rules/index.js';
+import { coverage, renderCoverage } from '../../report/index.js';
+import { buildCoverageIndex } from '../../coverage-index.js';
+import { runStaticScan } from '../../pipeline.js';
 import type { LoadedConfig } from '../config-load.js';
 import { packageVersion } from '../pkg.js';
 import type { Property } from '../../config.js';
@@ -20,19 +22,6 @@ function gitSha(cwd: string): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-function coverageIndex(): CoverageIndex {
-  const index: CoverageIndex = new Map();
-  for (const rule of ALL_RULES) {
-    for (const reqId of rule.requirements) {
-      const key = String(reqId);
-      const layers = index.get(key) ?? new Set<RuleLayer>();
-      layers.add(rule.layer);
-      index.set(key, layers);
-    }
-  }
-  return index;
 }
 
 export async function cmdScan(argv: string[], loadConfig: LoadConfig): Promise<number> {
@@ -59,33 +48,60 @@ export async function cmdScan(argv: string[], loadConfig: LoadConfig): Promise<n
 
   process.stdout.write(`scanning ${property.id} (config: ${source})\n`);
 
+  // Static layer runs when a repo is available (property.repo, or the cwd for a
+  // config-driven scan). A pure `scan --url` with no repo has no static surface
+  // yet — the browser layer (M2) handles it.
+  const repoDir = property.repo ? path.resolve(cwd, property.repo) : values.url ? undefined : cwd;
+
+  if (repoDir) {
+    const result = await runStaticScan({
+      cwd,
+      property: property.id,
+      repoDir,
+      tags: property.tags,
+      packageVersion: packageVersion(),
+    });
+    const run: Run = { ...result.run, gitSha: gitSha(repoDir) };
+    writeRun(run, cwd);
+    for (const f of result.findings) appendFinding(run.id, f, cwd);
+
+    process.stdout.write(
+      `run ${String(run.id)}: ${result.findings.length} finding(s) over ${result.fileCount} file(s)` +
+        `${result.hasAiFeatures ? ' [has-ai-features derived]' : ''}\n`,
+    );
+    if (result.unmapped.length) {
+      process.stdout.write(
+        `note: ${result.unmapped.length} engine rule(s) the registry does not map (engine drift) — run \`complykit registry verify\`:\n`,
+      );
+      for (const u of result.unmapped.slice(0, 10)) {
+        process.stdout.write(`  ${u.engine}/${u.engineRule} (${u.count})\n`);
+      }
+    }
+    process.stdout.write('\n');
+    for (const ruleset of property.rulesets) {
+      process.stdout.write(renderCoverage(coverage(ruleset, buildCoverageIndex(), run)) + '\n');
+    }
+    return 0;
+  }
+
+  // No repo (pure --url): write a valid empty run; browser collection is M2.
   const now = new Date().toISOString();
   const run: Run = {
     schemaVersion: 1,
     id: runIdFromTimestamp(now),
     property: property.id,
     startedAt: now,
-    finishedAt: new Date().toISOString(),
-    versions: {
-      package: packageVersion(),
-      registry: REGISTRY_VERSION,
-      engines: {},
-    },
-    gitSha: gitSha(cwd),
-    // Collection lands in M1 (static) and M2 (browser). Until then a scan
-    // produces a valid, empty run — the zero-config path works end to end and
-    // grows real findings as the collectors arrive.
+    finishedAt: now,
+    versions: { package: packageVersion(), registry: REGISTRY_VERSION, engines: {} },
     accessLevels: [],
     matrix: [],
     gaps: [],
     rulesExecuted: [],
   };
-  const dir = writeRun(run, cwd);
-  process.stdout.write(`run ${String(run.id)} written to ${dir}\n`);
-  process.stdout.write('note: collectors land in M1 (static) and M2 (browser); this run has no findings yet.\n\n');
-
+  writeRun(run, cwd);
+  process.stdout.write(`run ${String(run.id)} written (no repo configured; browser collection lands in M2).\n\n`);
   for (const ruleset of property.rulesets) {
-    process.stdout.write(renderCoverage(coverage(ruleset, coverageIndex(), run)) + '\n');
+    process.stdout.write(renderCoverage(coverage(ruleset, buildCoverageIndex(), run)) + '\n');
   }
   return 0;
 }

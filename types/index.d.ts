@@ -346,19 +346,43 @@ export interface VerifyReport {
   counts: { requirements: number; instruments: number; mappings: number };
   needsHumanCheck: Array<{ id: string; reason: string }>;
 }
+export interface EngineTable {
+  engine: string;
+  version: string;
+  layer: 'static' | 'browser';
+  mappings: EngineRuleMapping[];
+  pinnedRules: string[];
+}
 export const INSTRUMENTS: Instrument[];
 export const ALL_REQUIREMENTS: Requirement[];
 export const AXE_MAPPINGS: EngineRuleMapping[];
 export const AXE_PINNED_RULES: string[];
 export const AXE_VERSION: string;
+export const ENGINE_TABLES: EngineTable[];
+export const ALL_ENGINE_MAPPINGS: EngineRuleMapping[];
 export const RULESETS: RuleSet[];
 export const REGISTRY_VERSION: string;
+export function getEngineMapping(engine: string, engineRule: string): EngineRuleMapping | undefined;
 export function findRuleSet(id: string): RuleSet | undefined;
 export function requirementsForRuleset(id: string, requirements: Requirement[]): Requirement[];
 export function getRequirement(id: string): Requirement | undefined;
 export function getInstrument(id: string): Instrument | undefined;
 export function verifyRegistry(sinceLastRelease?: string): VerifyReport;
 export function unmappedEngineRules(engine: string, observedRules: string[]): string[];
+
+// --- engine normalization ---------------------------------------------------
+export interface NormalizeEngineOptions {
+  runId: RunId;
+  engineVersions?: Record<string, string>;
+}
+export interface EngineNormalization {
+  findings: Finding[];
+  unmapped: Array<{ engine: string; engineRule: string; count: number }>;
+}
+export function normalizeEngineArtifacts(
+  artifacts: Artifact[],
+  opts: NormalizeEngineOptions,
+): EngineNormalization;
 
 // --- rules surface ----------------------------------------------------------
 export interface RuleMeta {
@@ -410,6 +434,7 @@ export function isLlmRule(rule: AnyRule): rule is LlmRule;
 export type ReportFormat = 'jsonl' | 'md' | 'sarif' | 'html';
 export function renderJsonl(findings: Finding[]): string;
 export function renderMarkdown(run: Run, findings: Finding[]): string;
+export function renderSarif(run: Run, findings: Finding[]): string;
 export function renderReport(run: Run, findings: Finding[], format: ReportFormat): string;
 export function containsBannedVocabulary(text: string): boolean;
 export function assertReportVocabulary(text: string): void;
@@ -446,6 +471,7 @@ export interface CoverageMatrix {
 }
 export function coverage(ruleset: string, index: CoverageIndex, run?: Run): CoverageMatrix;
 export function renderCoverage(matrix: CoverageMatrix): string;
+export function buildCoverageIndex(): CoverageIndex;
 
 // --- orchestration ----------------------------------------------------------
 export interface AddFindingOptions {
