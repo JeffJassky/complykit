@@ -47,6 +47,8 @@ import {
   requirementApplies,
   verifyRegistry,
   unmappedEngineRules,
+  classifyCookie,
+  requiresConsent,
   ALL_RULES,
   getRule,
   resolveCapsFor,
@@ -101,6 +103,8 @@ const _sel: Requirement[] = requirementsForRuleset('wcag22aa', ALL_REQUIREMENTS)
 const _req = getRequirement('wcag22.1.4.3');
 const _inst = getInstrument('wcag');
 const _applies: boolean = _req ? requirementApplies(_req, ['targets-eu']) : false;
+const _cls = classifyCookie('_ga');
+const _needsConsent: boolean = requiresConsent(_cls.category);
 const _report = verifyRegistry();
 const _ok: boolean = _report.ok;
 const _unmapped: string[] = unmappedEngineRules('axe-core', ['color-contrast']);

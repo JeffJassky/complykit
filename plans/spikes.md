@@ -53,6 +53,25 @@ snapshot returns the shadow subtree's nodes/styles and flip the gap to recovered
 coverage. Until then the conservative behaviour (record the gap) is what ships —
 which is correct, not optimistic.
 
-## M3 — CMP selector coverage — PENDING
+## M3 — CMP selector coverage — RESOLVED
 
-Assigned to M3 (consent-flow capture). Not yet started.
+**Question:** can we locate the consent banner and its accept/reject controls
+across the CMP vendors real EU sites use, well enough to drive the three-way
+capture and measure click/prominence asymmetry?
+
+**Result (implemented, `collect/browser/consent.ts`):** two-tier detection.
+1. **Known-vendor selector table** (`CMP_VENDORS`): OneTrust, Cookiebot, Didomi,
+   Usercentrics, TrustArc, Osano/CookieConsent, Complianz, Quantcast — banner +
+   accept + reject (+ manage) selectors. Direct reject → 1 click; reject only via
+   a "manage" step → 2 clicks (buried); no reject → `null`.
+2. **Heuristic fallback**: text-matched buttons (`/accept|allow all|agree/i`,
+   `/reject|decline|deny|necessary only/i`, `/manage|settings|preferences/i`)
+   within the page's controls, tagged so we can click them.
+
+Verified on `maxedmarketing.ai`: its CMP is NOT a known vendor, and the heuristic
+tier detected it correctly — accept (1 click) + reject (2 clicks, behind manage),
+button prominence metrics captured. The click-asymmetry rule fired. The known-
+vendor table shortcuts the common cases; the heuristic catches the long tail.
+
+Follow-up (non-blocking): expand the vendor table as new CMPs appear in field
+runs; the heuristic ensures nothing is silently missed in the meantime.

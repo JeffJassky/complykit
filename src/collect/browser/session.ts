@@ -80,3 +80,15 @@ export async function openMeasurementContext(
 export async function newPage(context: BrowserContext): Promise<Page> {
   return context.newPage();
 }
+
+// The EVIDENCE profile (browser-analysis-design pitfall #3): a PRISTINE browser
+// — no ad/analytics blocking, no animation freeze, no reduced-motion — so the
+// captured tracker/consent behaviour is representative of what a real visitor
+// gets. One fresh context per consent path (pitfall #4: consent state must not
+// leak between the pre/reject/accept captures).
+export async function openEvidenceContext(browser: Browser, viewport: ViewportSize): Promise<BrowserContext> {
+  return browser.newContext({
+    viewport: { width: viewport.width, height: viewport.height },
+    deviceScaleFactor: 1,
+  });
+}

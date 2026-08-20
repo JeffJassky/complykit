@@ -54,7 +54,7 @@ product; git, a laptop, or a scheduled agent can all produce and read it.
 | record + registry + rules + report | — | ✅ |
 | static (ESLint / a11y plugins, inventories) | — | ✅ |
 | browser passive (Playwright: axe, contrast flat + pixel-band, screenshots, DOMSnapshot) | `playwright` | ✅ |
-| browser probes + GDPR consent evidence | `playwright` | M3 |
+| browser probes (keyboard walk) + GDPR consent evidence (three-way, dark patterns, cookie classification) | `playwright` | ✅ |
 | LLM review (crop adjudication, tiled sweep) | `@anthropic-ai/sdk` | M4–M5 |
 
 ## Not in scope

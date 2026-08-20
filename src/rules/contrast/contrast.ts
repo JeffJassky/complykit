@@ -3,11 +3,13 @@ import type { RawFinding, Artifact } from '../../record/index.js';
 import type { Rule, EvalContext } from '../types.js';
 import { asRuleId, asRequirementId } from '../../registry/index.js';
 
-// WCAG 1.4.3 contrast, from the collector's computed-style probe (family B). The
-// collector already did the hard part (effective-background compositing + the
-// pixel-band pass). This rule is pure: flat-colour failures and pixel-measured
-// failures are violations; anything the collector left ambiguous is needs-review
-// routed to C1. It never recomputes a ratio.
+// WCAG 1.4.3 contrast, from the collector's computed-style probe (family B).
+// This rule is the value-ADD OVER axe: axe already reports flat-colour contrast
+// violations reliably, so this rule deliberately SKIPS flat stacks (letting axe
+// own them, no duplicate findings) and handles only the cases axe punts to
+// `incomplete` — a non-flat background (image/gradient/overlap). The collector's
+// pixel-band pass measured those; here a measured fail is a violation and an
+// ambiguous band is needs-review routed to C1. It never recomputes a ratio.
 
 const Candidate = z.object({
   cssPath: z.string().optional(),
@@ -44,14 +46,14 @@ export const contrastText: Rule<readonly ['style-probe']> = {
         if (!parsed.success) continue;
         const c = parsed.data;
 
-        // Decide the verdict from what the collector measured.
+        // Flat-colour stacks are axe's job (axe color-contrast handles them
+        // reliably) — skip them here so the two engines don't double-report 1.4.3.
+        if (c.flat) continue;
+
+        // Non-flat only: decide the verdict from the pixel-band measurement.
         let confidence: 'violation' | 'needs-review' | null = null;
         let detail: string;
-        if (c.flat && c.ratio !== null && c.ratio !== undefined) {
-          if (c.ratio >= c.required) continue; // passing flat — collector already filters, guard anyway
-          confidence = 'violation';
-          detail = `measured ${c.ratio}:1 (needs ${c.required}:1)`;
-        } else if (c.measuredBand === 'pass') {
+        if (c.measuredBand === 'pass') {
           continue; // pixel-band cleared it
         } else if (c.measuredBand === 'fail') {
           confidence = 'violation';

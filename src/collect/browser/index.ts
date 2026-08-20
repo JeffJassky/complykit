@@ -14,6 +14,8 @@ import { collectContrast, type ContrastCandidate } from './contrast.js';
 import { decodePng, pixelBand } from './pixel-band.js';
 import { captureScreenshot } from './screenshot.js';
 import { captureSnapshot } from './snapshot.js';
+import { keyboardWalk } from './keyboard.js';
+import { captureConsent } from './consent.js';
 import { discoverRoutes, type RouteDiscoveryOptions } from './routes.js';
 
 export { VIEWPORT_PRESETS } from './session.js';
@@ -30,6 +32,8 @@ export interface CollectBrowserOptions {
   schemes?: ColorScheme[]; // default ['light']
   routes?: RouteDiscoveryOptions;
   perPageTimeoutMs?: number; // hard per-page budget (pitfall #10); default 20s
+  probes?: boolean; // keyboard walk etc. (default true); tiered to default vp × light
+  consent?: boolean; // three-way GDPR evidence pass (default true); per-property
 }
 
 export interface BrowserCollection {
@@ -58,6 +62,7 @@ async function scanOnce(
   scheme: ColorScheme,
   opts: CollectBrowserOptions,
   capturedAt: string,
+  runProbes: boolean,
 ): Promise<{ artifacts: Artifact[]; gaps: CoverageGap[]; spike?: { closedShadowHosts: number; piercedClosedShadow: boolean } }> {
   const context = await openMeasurementContext(browser, { scheme, viewport });
   const page = await newPage(context);
@@ -102,6 +107,13 @@ async function scanOnce(
     const snap = await captureSnapshot(page, subject, capturedAt);
     artifacts.push(snap.artifact);
     gaps.push(...snap.gaps);
+
+    // Family C probes (keyboard walk) — tiered to the default viewport × light
+    // only (keyboard behaviour rarely varies by scheme; the style checks catch
+    // the symptom when it does).
+    if (runProbes) {
+      artifacts.push(await keyboardWalk(page, subject, capturedAt));
+    }
     return { artifacts, gaps, spike: { closedShadowHosts: snap.spike.closedShadowHosts, piercedClosedShadow: snap.spike.piercedClosedShadow } };
   } catch (err) {
     gaps.push({ reason: 'crash', subject, note: err instanceof Error ? err.message.slice(0, 120) : 'page error' });
@@ -132,15 +144,20 @@ export async function collectBrowser(opts: CollectBrowserOptions): Promise<Brows
       await discoveryCtx.close();
     }
 
-    // Tiered matrix — passive checks over the full viewport × scheme matrix.
+    // Tiered matrix — passive checks over the full viewport × scheme matrix;
+    // probes only on the default viewport × light (browser-analysis-design tier).
+    const runProbes = opts.probes !== false;
     let instances = 0;
+    let probeStates = 0;
     for (const url of urls) {
       let scannedThis = false;
-      for (const viewport of viewports) {
-        for (const scheme of schemes) {
-          const res = await scanOnce(browser, url, viewport, scheme, opts, capturedAt);
+      for (let vi = 0; vi < viewports.length; vi++) {
+        for (let si = 0; si < schemes.length; si++) {
+          const isProbeTier = runProbes && vi === 0 && schemes[si] === 'light';
+          const res = await scanOnce(browser, url, viewports[vi], schemes[si], opts, capturedAt, isProbeTier);
           artifacts.push(...res.artifacts);
           gaps.push(...res.gaps);
+          if (isProbeTier) probeStates++;
           if (res.spike && (res.spike.piercedClosedShadow || res.spike.closedShadowHosts > spike.closedShadowHosts)) {
             spike = res.spike;
           }
@@ -153,6 +170,15 @@ export async function collectBrowser(opts: CollectBrowserOptions): Promise<Brows
       }
     }
 
+    // Evidence pass — three-way consent capture, ONCE per property (site-wide
+    // behaviour), on a pristine evidence profile.
+    if (opts.consent !== false && urls.length) {
+      const entrySubject: Subject = { property: opts.property, routePattern: routePatternOf(urls[0]), instanceUrl: urls[0] };
+      const consent = await captureConsent(browser, urls[0], entrySubject, viewports[0], capturedAt);
+      artifacts.push(...consent.artifacts);
+      gaps.push(...consent.gaps);
+    }
+
     const matrix: MatrixCell[] = [
       {
         family: 'passive',
@@ -162,6 +188,8 @@ export async function collectBrowser(opts: CollectBrowserOptions): Promise<Brows
         schemes,
         states: 1,
       },
+      { family: 'probes', routePatterns: runProbes ? new Set(scanned.map(routePatternOf)).size : 0, instances: probeStates, viewports: viewports.slice(0, 1).map((v) => v.id as ViewportId), schemes: ['light'], states: probeStates },
+      { family: 'evidence', routePatterns: opts.consent !== false ? 1 : 0, instances: opts.consent !== false ? 1 : 0, viewports: viewports.slice(0, 1).map((v) => v.id as ViewportId), schemes: ['light'], states: 3 },
     ];
     return { artifacts, gaps, matrix, accessLevels: ['public'], spike, scanned };
   } finally {

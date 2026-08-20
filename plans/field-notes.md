@@ -109,6 +109,39 @@ met.
 - The local source repo was untouched (the live URL was scanned; runs written to
   a scratch dir).
 
-## M3 — probes + GDPR evidence, maxed
+## M3 — probes + GDPR evidence, maxedmarketing.ai (2026-08-19)
 
-_Pending M3 (after human review)._
+Full evidence pass (passive + keyboard probes + three-way consent) against the
+live property.
+
+**Runtime:** 20.9s for the full pass (passive + keyboard walk + pre/reject/accept
+consent capture, each on a fresh evidence context). 0 coverage gaps.
+
+**Consent (DoD — a property with a CMP):** maxed **has a CMP** (heuristic-
+detected — not a known-vendor selector). Captured:
+- `clicksToAccept: 1`, `clicksToReject: 2` — refusing costs an extra click
+  (reject behind a "manage" step). That is a click-asymmetry dark pattern.
+- Three phases captured: pre-consent (2 cookies, 23 requests with initiators),
+  post-reject, post-accept.
+
+**Keyboard walk:** 60 focus stops, 0 traps.
+
+**Applicability gating in action** (the hand-set tags now do real work):
+
+| Tags | Findings |
+|---|---|
+| untagged (US-style) | 33 — WCAG only |
+| `targets-eu` + `processes-personal-data` | 34 — WCAG **+ `consent.click-asymmetry`** |
+
+The consent dark-pattern finding appears **only** when the property is tagged EU
++ personal-data. An untagged US property gets no GDPR noise — exactly the intent.
+
+### Ergonomics — one fix made mid-milestone
+
+The field run surfaced **duplicate contrast findings**: axe's `color-contrast`
+and our `contrast.text` both flagged 1.4.3 on the same flat-colour text (16 + 15
+≈ 31, overlapping). Fixed per the design's intent — axe owns flat-colour
+contrast; our rule now handles **only** the non-flat cases axe punts to
+`incomplete` (text over images/gradients, resolved by the pixel-band pass). After
+the fix: axe 16 flat + our rule 12 non-flat = 28 distinct, **no double-count**.
+The 12 are genuinely axe-can't-do cases the pixel-band recovered.

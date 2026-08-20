@@ -77,18 +77,21 @@ suite('collect/browser passive pass', () => {
     expect(reqs.has('wcag22.3.1.1')).toBe(true); // html-has-lang
   });
 
-  it('the contrast rule flags the low-contrast paragraph as a flat-colour violation', () => {
-    const contrast = findings.filter((f) => String(f.ruleId) === 'contrast.text');
-    expect(contrast.length).toBeGreaterThanOrEqual(1);
-    const violation = contrast.find((f) => f.confidence === 'violation');
-    expect(violation).toBeDefined();
-    expect(String(violation?.requirementId)).toBe('wcag22.1.4.3');
+  it('flags the low-contrast paragraph under 1.4.3 (axe owns flat-colour contrast)', () => {
+    const contrast143 = findings.filter((f) => String(f.requirementId) === 'wcag22.1.4.3');
+    expect(contrast143.length).toBeGreaterThanOrEqual(1);
+    // axe (engine) reports the flat-colour case; our rule defers to it.
+    expect(contrast143.some((f) => f.producer.type === 'engine')).toBe(true);
   });
 
-  it('does not flag the good-contrast paragraph', () => {
-    const contrastMsgs = findings.filter((f) => String(f.ruleId) === 'contrast.text').map((f) => JSON.stringify(f.details));
-    // The good paragraph text should not appear among contrast findings.
-    expect(contrastMsgs.some((m) => m.includes('Good contrast'))).toBe(false);
+  it('our contrast.text rule does not duplicate axe on flat-colour text', () => {
+    // Both paragraphs are flat-colour, so contrast.text (non-flat only) stays quiet.
+    const ours = findings.filter((f) => String(f.ruleId) === 'contrast.text');
+    for (const f of ours) {
+      const d = JSON.stringify(f.details);
+      expect(d.includes('Good contrast')).toBe(false);
+      expect(d.includes('Low contrast')).toBe(false);
+    }
   });
 
   it('is deterministic across two runs (no flake on a static page)', async () => {

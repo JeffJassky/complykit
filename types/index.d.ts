@@ -370,6 +370,14 @@ export function getRequirement(id: string): Requirement | undefined;
 export function getInstrument(id: string): Instrument | undefined;
 export function requirementApplies(requirement: Requirement, tags: readonly string[]): boolean;
 export function verifyRegistry(sinceLastRelease?: string): VerifyReport;
+
+export type CookieCategory = 'necessary' | 'functional' | 'analytics' | 'advertising' | 'unknown';
+export interface CookieClassification {
+  category: CookieCategory;
+  vendor?: string;
+}
+export function classifyCookie(name: string): CookieClassification;
+export function requiresConsent(category: CookieCategory): boolean;
 export function unmappedEngineRules(engine: string, observedRules: string[]): string[];
 
 // --- engine normalization ---------------------------------------------------

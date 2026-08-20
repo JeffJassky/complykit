@@ -21,6 +21,8 @@ export type {
   EngineTable,
   RuleSet,
   VerifyReport,
+  CookieCategory,
+  CookieClassification,
 } from './index.js';
 
 export {
@@ -42,6 +44,8 @@ export {
   getRequirement,
   getInstrument,
   requirementApplies,
+  classifyCookie,
+  requiresConsent,
   verifyRegistry,
   unmappedEngineRules,
 } from './index.js';

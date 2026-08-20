@@ -27,6 +27,7 @@ export {
   getEngineMapping,
 } from './mappings/index.js';
 export { verifyRegistry, unmappedEngineRules } from './verify.js';
+export { classifyCookie, requiresConsent, type CookieCategory, type CookieClassification } from './cookies.js';
 
 // --- types ------------------------------------------------------------------
 export type { RequirementId, RuleId, InstrumentId, IsoDate, Severity, Confidence } from './ids.js';

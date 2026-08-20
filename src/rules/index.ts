@@ -7,6 +7,9 @@ import { inventoryAiFrameworks } from './inventories/ai-frameworks.js';
 import { inventoryTrackers } from './inventories/trackers.js';
 import { inventoryPii } from './inventories/pii.js';
 import { contrastText } from './contrast/contrast.js';
+import { preConsentTracker } from './consent/pre-consent-tracker.js';
+import { consentAsymmetry } from './consent/consent-asymmetry.js';
+import { keyboardTrap, focusVisible } from './keyboard/keyboard.js';
 
 export * from './types.js';
 export * from './evaluate.js';
@@ -21,6 +24,10 @@ export const ALL_RULES: AnyRule[] = [
   inventoryTrackers,
   inventoryPii,
   contrastText,
+  preConsentTracker,
+  consentAsymmetry,
+  keyboardTrap,
+  focusVisible,
 ];
 
 const RULE_BY_ID = new Map<string, AnyRule>(ALL_RULES.map((r) => [String(r.id), r]));

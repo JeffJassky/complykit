@@ -99,6 +99,8 @@ export {
   getRequirement,
   getInstrument,
   requirementApplies,
+  classifyCookie,
+  requiresConsent,
 } from './registry/index.js';
 
 // --- registry: types ---------------------------------------------------------
@@ -114,6 +116,8 @@ export type {
   ApplicabilityTag,
   RuleSet,
   VerifyReport,
+  CookieCategory,
+  CookieClassification,
 } from './registry/index.js';
 
 // --- engine normalization (engine output -> findings) -----------------------
