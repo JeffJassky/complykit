@@ -28,6 +28,7 @@ export interface AssembleOptions {
   gitShaDir?: string;
   rulesExecuted?: RuleId[];
   cwd?: string;
+  partial?: Record<string, string>; // targeting flags, verbatim — see Run.partial
 }
 
 export function assembleAndWrite(opts: AssembleOptions): { run: Run; written: number } {
@@ -52,6 +53,7 @@ export function assembleAndWrite(opts: AssembleOptions): { run: Run; written: nu
     matrix: opts.matrix ?? [],
     gaps: opts.gaps ?? [],
     rulesExecuted: opts.rulesExecuted ?? [...new Set(deduped.map((f) => f.ruleId))],
+    ...(opts.partial ? { partial: opts.partial } : {}),
   };
   writeRun(run, opts.cwd);
   for (const f of deduped) appendFinding(run.id, f, opts.cwd);

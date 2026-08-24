@@ -11,11 +11,24 @@ import type { ContrastCandidate } from './contrast.js';
 
 export type Band = 'pass' | 'fail' | 'ambiguous';
 
+export interface PixelSample {
+  x: number; // absolute screenshot pixel coords
+  y: number;
+}
+
 export interface PixelBandResult {
   band: Band;
   minRatio: number;
   maxRatio: number;
   sampled: number;
+  // Visualization payload (evidence): the background-classified pixels and the
+  // colours behind the verdict, so a report can show exactly what was measured.
+  samples: PixelSample[]; // bounded subset of background pixels, absolute coords
+  fgColor: string; // rgb(...) — the text colour
+  bgLoColor: string; // rgb(...) — darkest sampled background pixel
+  bgHiColor: string; // rgb(...) — lightest sampled background pixel
+  ratioLo: number; // contrast of text vs the darkest background pixel
+  ratioHi: number; // contrast of text vs the lightest background pixel
 }
 
 function srgbToLin(c: number): number {
@@ -36,49 +49,110 @@ function parseRgb(s: string): [number, number, number] | null {
   return [r, g, b];
 }
 
+const HIST_BINS = 64;
+
 /**
- * Sample the candidate's background band from the screenshot. We approximate the
- * background by the lightest and darkest pixels in the region (text sits between
- * them); the WORST-case contrast over that band is what we report, so we never
- * over-claim a pass.
+ * Recover the element's background luminance band from the screenshot, EXCLUDING
+ * the text glyphs and — critically — their anti-aliasing halo.
+ *
+ * The naive approach (sample the box, drop pixels near the text colour) fails on
+ * every antialiased glyph: rendering blends text→background across a 1–2px edge,
+ * a continuum no fixed luminance threshold can cleanly cut, so halo pixels survive
+ * and drag the measured "background" toward the text colour — the bogus ~1.05
+ * contrast floor seen on almost every element.
+ *
+ * Instead we treat it as clustering. Background occupies the large MAJORITY of a
+ * text element's area; ink is a minority and its anti-aliasing is a minority
+ * spread thinly across the transition. So we histogram the region's luminances
+ * and take the dominant cluster — the mode and the contiguous populated bins
+ * around it — as the background. Anti-aliasing bins sit in the sparse valley
+ * between the background peak and the (smaller) ink peak, below the population
+ * threshold, so they are excluded by construction; a distinct icon/border is a
+ * separate minority cluster and excluded too. A flat background collapses to a
+ * near-exact value; a real gradient keeps a true (tight) range.
  */
-export function pixelBand(png: PNG, candidate: ContrastCandidate): PixelBandResult | null {
+export function pixelBand(png: PNG, candidate: ContrastCandidate, boxOverride?: ContrastCandidate['box']): PixelBandResult | null {
   const fg = parseRgb(candidate.textColor);
   if (!fg) return null;
   const fgLum = luminance(fg[0], fg[1], fg[2]);
 
-  const x0 = Math.max(0, Math.floor(candidate.box.x));
-  const y0 = Math.max(0, Math.floor(candidate.box.y));
-  const x1 = Math.min(png.width, Math.ceil(candidate.box.x + candidate.box.width));
-  const y1 = Math.min(png.height, Math.ceil(candidate.box.y + candidate.box.height));
+  // Which coordinates address this element IN THIS IMAGE: a band capture is
+  // viewport-relative, a full-page/composite capture is capture-space.
+  const box = boxOverride ?? candidate.box;
+  const x0 = Math.max(0, Math.floor(box.x));
+  const y0 = Math.max(0, Math.floor(box.y));
+  const x1 = Math.min(png.width, Math.ceil(box.x + box.width));
+  const y1 = Math.min(png.height, Math.ceil(box.y + box.height));
   if (x1 <= x0 || y1 <= y0) return null;
 
-  // Sample a bounded grid of pixels in the region; collect background luminance
-  // extremes (pixels far in luminance from the text colour are likely bg).
-  let minLum = Infinity;
-  let maxLum = -Infinity;
-  let sampled = 0;
-  const stepX = Math.max(1, Math.floor((x1 - x0) / 40));
-  const stepY = Math.max(1, Math.floor((y1 - y0) / 40));
+  // Histogram luminance over a bounded grid. Track per-bin min/max of the actual
+  // pixel luminances so the reported band uses measured values, not bin edges.
+  const counts = new Int32Array(HIST_BINS);
+  const binMin = new Float64Array(HIST_BINS).fill(Infinity);
+  const binMax = new Float64Array(HIST_BINS).fill(-Infinity);
+  // Retain each sampled pixel so, once the background band is known, we can point
+  // back at the exact pixels behind the verdict (evidence overlay).
+  const px: number[] = [];
+  const py: number[] = [];
+  const pl: number[] = [];
+  const pr: number[] = [];
+  const pg: number[] = [];
+  const pb: number[] = [];
+  const stepX = Math.max(1, Math.floor((x1 - x0) / 60));
+  const stepY = Math.max(1, Math.floor((y1 - y0) / 60));
   for (let y = y0; y < y1; y += stepY) {
     for (let x = x0; x < x1; x += stepX) {
       const idx = (png.width * y + x) << 2;
-      const r = png.data[idx];
-      const g = png.data[idx + 1];
-      const b = png.data[idx + 2];
+      const r = png.data[idx], g = png.data[idx + 1], b = png.data[idx + 2];
       const l = luminance(r, g, b);
-      // Skip pixels within the text colour's luminance (likely the glyphs).
-      if (Math.abs(l - fgLum) < 0.02) continue;
-      if (l < minLum) minLum = l;
-      if (l > maxLum) maxLum = l;
-      sampled++;
+      const bin = Math.min(HIST_BINS - 1, Math.max(0, Math.floor(l * HIST_BINS)));
+      counts[bin]++;
+      if (l < binMin[bin]) binMin[bin] = l;
+      if (l > binMax[bin]) binMax[bin] = l;
+      px.push(x); py.push(y); pl.push(l); pr.push(r); pg.push(g); pb.push(b);
     }
   }
-  if (sampled === 0 || minLum === Infinity) return null;
+  if (px.length === 0) return null;
+
+  // Background = the largest cluster by TOTAL AREA, not the tallest single bin.
+  // A gradient background spreads its pixels across many short bins whose sum
+  // still dwarfs any concentrated ink/halo/icon spike; splitting the histogram
+  // into contiguous runs of populated bins and picking the run with the most
+  // pixels isolates it. The sparse anti-aliasing valley (few pixels per
+  // intermediate blend value) drops below the populated floor and separates the
+  // background run from the ink run, so halo pixels never join the background.
+  let maxCount = 0;
+  for (let i = 0; i < HIST_BINS; i++) if (counts[i] > maxCount) maxCount = counts[i];
+  const floor = Math.max(2, maxCount * 0.05);
+
+  let bestArea = -1;
+  let bgMinLum = Infinity;
+  let bgMaxLum = -Infinity;
+  let bgPixels = 0;
+  let i = 0;
+  while (i < HIST_BINS) {
+    if (counts[i] < floor) { i++; continue; }
+    let area = 0;
+    let runMin = Infinity;
+    let runMax = -Infinity;
+    while (i < HIST_BINS && counts[i] >= floor) {
+      area += counts[i];
+      if (binMin[i] < runMin) runMin = binMin[i];
+      if (binMax[i] > runMax) runMax = binMax[i];
+      i++;
+    }
+    if (area > bestArea) {
+      bestArea = area;
+      bgMinLum = runMin;
+      bgMaxLum = runMax;
+      bgPixels = area;
+    }
+  }
+  if (bgPixels === 0 || bgMinLum === Infinity) return null;
 
   // Worst case: the background pixel whose contrast with the text is LOWEST.
-  const ratioAtMin = contrast(fgLum, minLum);
-  const ratioAtMax = contrast(fgLum, maxLum);
+  const ratioAtMin = contrast(fgLum, bgMinLum);
+  const ratioAtMax = contrast(fgLum, bgMaxLum);
   const minRatio = Math.min(ratioAtMin, ratioAtMax);
   const maxRatio = Math.max(ratioAtMin, ratioAtMax);
   const req = candidate.required;
@@ -88,11 +162,41 @@ export function pixelBand(png: PNG, candidate: ContrastCandidate): PixelBandResu
   else if (maxRatio < req) band = 'fail';
   else band = 'ambiguous';
 
+  // Collect the background-classified pixels (luminance within the chosen band)
+  // for the evidence overlay, plus the exact colours at the band extremes.
+  const rgbStr = (r: number, g: number, b: number): string => `rgb(${r}, ${g}, ${b})`;
+  const EPS = 1e-9;
+  let loIdx = -1, hiIdx = -1;
+  const bgIdx: number[] = [];
+  for (let k = 0; k < pl.length; k++) {
+    if (pl[k] >= bgMinLum - EPS && pl[k] <= bgMaxLum + EPS) {
+      bgIdx.push(k);
+      if (loIdx < 0 || pl[k] < pl[loIdx]) loIdx = k;
+      if (hiIdx < 0 || pl[k] > pl[hiIdx]) hiIdx = k;
+    }
+  }
+  // Evenly thin the background pixels to a bounded set of overlay markers.
+  const MAX_MARKERS = 24;
+  const samples: PixelSample[] = [];
+  const stride = Math.max(1, Math.floor(bgIdx.length / MAX_MARKERS));
+  for (let k = 0; k < bgIdx.length && samples.length < MAX_MARKERS; k += stride) {
+    const idx = bgIdx[k];
+    samples.push({ x: px[idx], y: py[idx] });
+  }
+  const lo = loIdx >= 0 ? loIdx : 0;
+  const hi = hiIdx >= 0 ? hiIdx : 0;
+
   return {
     band,
     minRatio: Math.round(minRatio * 100) / 100,
     maxRatio: Math.round(maxRatio * 100) / 100,
-    sampled,
+    sampled: bgPixels,
+    samples,
+    fgColor: rgbStr(fg[0], fg[1], fg[2]),
+    bgLoColor: rgbStr(pr[lo], pg[lo], pb[lo]),
+    bgHiColor: rgbStr(pr[hi], pg[hi], pb[hi]),
+    ratioLo: Math.round(contrast(fgLum, pl[lo]) * 100) / 100,
+    ratioHi: Math.round(contrast(fgLum, pl[hi]) * 100) / 100,
   };
 }
 

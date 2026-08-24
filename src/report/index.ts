@@ -6,4 +6,7 @@ export * from './diff.js';
 export * from './render.js';
 export * from './sarif.js';
 export * from './html.js';
+export * from './json.js';
+export * from './model.js';
 export * from './coverage.js';
+export * from './dispositions.js';

@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
 import type { Artifact } from '../../record/index.js';
 import type { Discovered } from './discover.js';
 import type { FrameworkInfo } from './framework.js';
@@ -20,7 +21,34 @@ interface StaticScanResultItem {
   line: number;
   column?: number;
   message: string;
+  snippet?: string; // the actual offending source line(s) — the element in context
   ordinal: number; // nth occurrence of this rule in this file — the fingerprint anchor
+}
+
+// Pull the offending source line(s) out of the linted file text so a finding
+// points at the ELEMENT, not just a file:line. Multi-line elements (a Vue tag
+// spread over several lines) show through endLine, capped; a single-line hit
+// gets a caret under the column. Line/column are 1-based (ESLint convention).
+function extractSnippet(
+  source: string,
+  line: number,
+  column?: number,
+  endLine?: number,
+  endColumn?: number,
+): string {
+  const lines = source.split('\n');
+  const first = Math.max(1, line);
+  const last = Math.min(lines.length, Math.max(first, endLine ?? first), first + 5);
+  const picked = lines.slice(first - 1, last);
+  if (picked.length === 0) return '';
+  // Single line: add a caret span under the offending columns.
+  if (picked.length === 1 && column && column >= 1) {
+    const src = picked[0];
+    const span = Math.max(1, (endColumn ?? column + 1) - column);
+    const caret = ' '.repeat(column - 1) + '^'.repeat(Math.min(span, Math.max(1, src.length - column + 1)));
+    return `${src}\n${caret}`;
+  }
+  return picked.join('\n');
 }
 
 function pkgVersion(name: string): string {
@@ -31,9 +59,16 @@ function pkgVersion(name: string): string {
   }
 }
 
-function allRuleIds(plugin: { rules?: Record<string, unknown> }, prefix: string): Record<string, 'warn'> {
-  const out: Record<string, 'warn'> = {};
-  for (const name of Object.keys(plugin.rules ?? {})) out[`${prefix}/${name}`] = 'warn';
+// Every non-deprecated rule, at 'warn'. Deprecated rules (e.g. no-onchange —
+// guidance the WAI retracted) assert violations current spec doesn't back, so
+// enabling them over-reports; skip them.
+function allRuleIds(plugin: { rules?: Record<string, unknown> }, prefix: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [name, rule] of Object.entries(plugin.rules ?? {})) {
+    const meta = (rule as { meta?: { deprecated?: boolean } } | undefined)?.meta;
+    if (meta?.deprecated) continue;
+    out[`${prefix}/${name}`] = 'warn';
+  }
   return out;
 }
 
@@ -57,6 +92,11 @@ export async function runEslint(
 
   const jsxRules = allRuleIds(jsxA11y, 'jsx-a11y');
   const vueRules = allRuleIds(vueA11y, 'vuejs-accessibility');
+  // label-has-for's DEFAULT demands BOTH nesting and for/id; the HTML spec
+  // accepts either. At the default this rule flags spec-valid labels (measured:
+  // ≥45 of 118 findings on a real app were labels with for= or a nested
+  // control). Run it at the spec's bar: one valid association suffices.
+  vueRules['vuejs-accessibility/label-has-for'] = ['warn', { required: { some: ['nesting', 'id'] } }];
 
   // Flat config. `overrideConfigFile: true` ignores any host eslintrc/flat config.
   const overrideConfig: unknown[] = [];
@@ -105,6 +145,16 @@ export async function runEslint(
     const relFile = res.filePath.startsWith(opts.cwd)
       ? res.filePath.slice(opts.cwd.length + 1)
       : res.filePath;
+    // ESLint attaches `source` when a result has messages; fall back to disk so
+    // the snippet is available even when it doesn't.
+    let source = res.source;
+    if (source === undefined && res.messages.length > 0) {
+      try {
+        source = readFileSync(res.filePath, 'utf8');
+      } catch {
+        source = undefined;
+      }
+    }
     for (const msg of res.messages) {
       if (!msg.ruleId) continue;
       const [prefix, ...rest] = msg.ruleId.split('/');
@@ -121,6 +171,9 @@ export async function runEslint(
         line: msg.line ?? 1,
         column: msg.column,
         message: msg.message,
+        snippet: source
+          ? extractSnippet(source, msg.line ?? 1, msg.column, msg.endLine, msg.endColumn)
+          : undefined,
         ordinal: 0, // assigned below, per (file, rule)
       });
     }

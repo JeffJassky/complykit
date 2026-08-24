@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>inner scroller shell</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  .shell { display: flex; flex-direction: column; height: 100vh; }
+  .chrome { height: 60px; background: #202020; color: #fff; }
+  .scroller { flex: 1; overflow-y: auto; background: #ffffff; }
+  .filler { height: 1400px; background: #ffffff; }
+  /* Below the fold, and only reachable by scrolling the INNER container. */
+  .deep { background: #ffffff; color: #9fb1c0; font-size: 12px; padding: 4px; }
+</style></head>
+<body>
+  <div class="shell">
+    <div class="chrome">chrome</div>
+    <div class="scroller">
+      <div class="filler"></div>
+      <p class="deep" id="deep">low contrast text below the fold</p>
+      <div style="height:600px"></div>
+    </div>
+  </div>
+</body></html>

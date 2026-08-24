@@ -34,7 +34,17 @@ export const consentAsymmetry: Rule<readonly ['consent-flow']> = {
       if (artifact.kind !== 'consent-flow') continue;
       if (!artifact.cmp) continue; // no banner detected -> nothing to judge here
 
-      const subject = { property: ctx.property, locator: { role: 'consent-banner', ordinal: 0 } };
+      const subject = {
+        property: ctx.property,
+        // The page the banner was captured on — the finding's locus.
+        routePattern: artifact.subject.routePattern,
+        instanceUrl: artifact.subject.instanceUrl,
+        locator: { role: 'consent-banner', ordinal: 0 },
+      };
+      // The banner crop, when captured — shows the actual banner being judged.
+      const bannerShot = artifact.screenshotPath
+        ? [{ kind: 'screenshot' as const, path: artifact.screenshotPath, region: artifact.bannerBox, pageState: 'pre-consent' }]
+        : [];
       const metrics = artifact.buttonMetrics
         .map((m) => ButtonMetric.safeParse(m))
         .filter((r): r is { success: true; data: z.infer<typeof ButtonMetric> } => r.success)
@@ -49,7 +59,10 @@ export const consentAsymmetry: Rule<readonly ['consent-flow']> = {
         confidence,
         message,
         details: { pattern, cmp: artifact.cmp, clicksToAccept: artifact.clicksToAccept, clicksToReject: artifact.clicksToReject },
-        evidence: [{ kind: 'interaction-log', steps: [{ clicksToAccept: artifact.clicksToAccept, clicksToReject: artifact.clicksToReject }] }],
+        evidence: [
+          { kind: 'interaction-log', steps: [{ clicksToAccept: artifact.clicksToAccept, clicksToReject: artifact.clicksToReject }] },
+          ...bannerShot,
+        ],
       });
 
       // 1. No reject path at all.

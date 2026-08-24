@@ -41,6 +41,9 @@ export const preConsentTracker: Rule<readonly ['cookie-capture']> = {
           requirementId: asRequirementId('gdpr.art7.4'),
           subject: {
             property: ctx.property,
+            // The page the cookie was observed on — the finding's locus.
+            routePattern: artifact.subject.routePattern,
+            instanceUrl: artifact.subject.instanceUrl,
             locator: { role: 'cookie', name, ordinal: 0 },
           },
           // Vendor-attributed -> violation; heuristic/unknown vendor -> needs-review.

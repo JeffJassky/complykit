@@ -145,6 +145,7 @@ export {
   renderMarkdown,
   renderSarif,
   renderHtmlReport,
+  renderJsonReport,
   renderReport,
   containsBannedVocabulary,
   assertReportVocabulary,
@@ -156,6 +157,7 @@ export {
 export type {
   ReportFormat,
   HtmlOptions,
+  JsonReportOptions,
   RunDiff,
   BudgetGate,
   RuleLayer,

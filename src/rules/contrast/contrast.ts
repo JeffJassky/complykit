@@ -13,6 +13,11 @@ import { asRuleId, asRequirementId } from '../../registry/index.js';
 
 const Candidate = z.object({
   cssPath: z.string().optional(),
+  sourceFile: z.string().nullable().optional(), // Vue __file from the dev runtime
+  scopeId: z.string().nullable().optional(), // data-v style-scope fallback
+  fgVars: z.array(z.string()).optional(), // CSS variables behind the colours
+  bgVars: z.array(z.string()).optional(),
+  bgImageVars: z.array(z.string()).optional(), // vars the authored gradient uses
   textSample: z.string().optional(),
   textColor: z.string().optional(),
   bgColor: z.string().nullable().optional(),
@@ -23,6 +28,12 @@ const Candidate = z.object({
   minRatio: z.number().optional(),
   maxRatio: z.number().optional(),
   box: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }).optional(),
+  samples: z.array(z.object({ x: z.number(), y: z.number() })).optional(),
+  fgColor: z.string().optional(),
+  bgLoColor: z.string().optional(),
+  bgHiColor: z.string().optional(),
+  ratioLo: z.number().optional(),
+  ratioHi: z.number().optional(),
 });
 
 export const contrastText: Rule<readonly ['style-probe']> = {
@@ -77,25 +88,54 @@ export const contrastText: Rule<readonly ['style-probe']> = {
             instanceUrl: artifact.subject.instanceUrl,
             viewport: artifact.subject.viewport,
             colorScheme: artifact.subject.colorScheme,
-            locator: { role: 'text', name: c.textSample?.slice(0, 40), ordinal: ordinal++ },
+            locator: { role: 'text', name: c.textSample?.slice(0, 40), cssPath: c.cssPath, ordinal: ordinal++ },
+            // Raw runtime path — the pipeline relativizes it against the repo.
+            file: c.sourceFile ? { path: c.sourceFile } : undefined,
           },
           confidence,
           message: `Text may not meet ${c.required}:1 contrast — ${detail}.`,
-          details: { cssPath: c.cssPath, textSample: c.textSample },
+          details: { cssPath: c.cssPath, textSample: c.textSample, ...(c.scopeId ? { vueScopeId: c.scopeId } : {}) },
           evidence: [
             {
               kind: 'computed-style',
               properties: {
+                // The violating text itself — the most useful context when the
+                // ratio is unprovable or the text is invisible (e.g. contrast ~0):
+                // you can still see WHAT reads badly even with no crop.
+                ...(c.textSample ? { text: `"${c.textSample}"` } : {}),
                 color: c.textColor ?? '',
+                // The design-token names behind the colours, resolved in this
+                // element's context — a fix targets the variable, not a literal.
+                ...(c.fgVars?.length ? { 'matching color vars': c.fgVars.map((v) => `var(${v})`).join(', ') } : {}),
                 background: c.bgColor ?? '(non-flat)',
+                ...(c.bgVars?.length ? { 'matching bg color vars': c.bgVars.map((v) => `var(${v})`).join(', ') } : {}),
+                ...(c.bgImageVars?.length ? { 'gradient vars (authored)': c.bgImageVars.map((v) => `var(${v})`).join(', ') } : {}),
                 ratio: c.ratio != null ? String(c.ratio) : `${c.minRatio ?? '?'}-${c.maxRatio ?? '?'}`,
                 required: String(c.required),
               },
             },
             // Croppable evidence for C1 adjudication: the DOM localizes (region),
-            // the model only judges the handed crop.
+            // the model only judges the handed crop. Carries the sampled
+            // background pixels + colour swatches so the report can show exactly
+            // which pixels the measurement read.
             ...(screenshotPath && c.box
-              ? [{ kind: 'screenshot' as const, path: screenshotPath, region: c.box }]
+              ? [
+                  {
+                    kind: 'screenshot' as const,
+                    path: screenshotPath,
+                    region: c.box,
+                    samples: c.samples,
+                    swatches: [
+                      ...(c.fgColor ? [{ label: 'text', color: c.fgColor }] : []),
+                      ...(c.bgLoColor
+                        ? [{ label: 'bg (darkest)', color: c.bgLoColor, ratio: c.ratioLo }]
+                        : []),
+                      ...(c.bgHiColor
+                        ? [{ label: 'bg (lightest)', color: c.bgHiColor, ratio: c.ratioHi }]
+                        : []),
+                    ],
+                  },
+                ]
               : []),
           ],
         });

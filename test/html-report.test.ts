@@ -62,9 +62,21 @@ describe('static HTML report', () => {
     expect(html).toContain('does not assert conformance');
   });
 
-  it('renders filter controls for severity and confidence', () => {
-    expect(html).toContain('data-f="sev"');
-    expect(html).toContain('data-f="conf"');
+  it('renders the power controls: group-by, facets, display toggles, copy', () => {
+    expect(html).toContain('id="groupBy"');
+    expect(html).toContain('id="facets"');
+    expect(html).toContain('id="showMenu"');
+    expect(html).toContain('id="copyBtn"');
+    // the client-side model is embedded (grouping/copy read it, not the DOM)
+    expect(html).toContain('id="fdata"');
+  });
+
+  it('embeds a finding model whose JSON cannot break out of its script tag', () => {
+    const evil: Finding = { ...finding, message: 'x</script><script>alert(1)</script>' };
+    const out = renderHtmlReport(run, [evil]);
+    // inside the JSON payload every < is <-escaped
+    expect(out).not.toContain('x</script>');
+    expect(out).toContain('x\\u003c/script');
   });
 
   it('escapes finding text (no raw HTML injection)', () => {

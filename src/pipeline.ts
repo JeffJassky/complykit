@@ -11,6 +11,8 @@ import { AXE_VERSION, getRequirement, requirementApplies } from './registry/inde
 import { ALL_RULES, evaluate, resolveCapsFor } from './rules/index.js';
 import { normalizeEngineArtifacts } from './engines.js';
 import { collectStatic } from './collect/static/index.js';
+import { buildVueScopeMap, enrichFindingsWithVueSource } from './enrich/vue-scope.js';
+import { supersedeByMeasurement } from './enrich/supersede.js';
 import type { RouteDiscoveryOptions } from './collect/browser/routes.js';
 
 // The scan pipeline: collect artifacts, normalize engine output, evaluate our
@@ -95,9 +97,12 @@ export interface BrowserScanOptions {
   cwd?: string;
   tags?: string[];
   packageVersion: string;
+  repoDir?: string; // when set, browser findings are mapped back to source files (Vue scope ids)
   viewports?: string[];
   schemes?: Array<'light' | 'dark'>;
   routes?: RouteDiscoveryOptions;
+  storageStatePath?: string;
+  trace?: (line: string) => void;
 }
 
 export interface BrowserScanResult {
@@ -135,16 +140,43 @@ export async function runBrowserScan(opts: BrowserScanOptions): Promise<BrowserS
     viewports: opts.viewports,
     schemes: opts.schemes,
     routes: opts.routes,
+    storageStatePath: opts.storageStatePath,
+    trace: opts.trace,
   });
 
   const tags = opts.tags ?? [];
   const engineVersions = { 'axe-core': AXE_VERSION };
   const engine = normalizeEngineArtifacts(collection.artifacts, { runId: opts.runId, engineVersions });
+  const sup = engine.superseded;
+  if (sup.cleared || sup.upgraded || sup.downgraded || sup.ceded) {
+    opts.trace?.(
+      `contrast: pixel measurement overrode axe on ${sup.cleared + sup.upgraded + sup.downgraded + sup.ceded} finding(s) ` +
+        `(${sup.cleared} cleared, ${sup.upgraded} upgraded to violation, ${sup.downgraded} downgraded, ${sup.ceded} ceded to contrast.text)`,
+    );
+  }
   const raws = evaluate(collection.artifacts, ALL_RULES, { property: opts.property, tags });
   const ruleFindings = resolveRuleFindings(raws, opts.runId, opts.packageVersion);
 
+  let findings = gateByTags([...engine.findings, ...ruleFindings], tags);
+  // Signal fusion: a physical measurement of an element supersedes another
+  // producer's needs-review shrug about the same element (see enrich/supersede.ts).
+  const fusion = supersedeByMeasurement(findings, collection.artifacts);
+  findings = fusion.findings;
+  if (fusion.superseded) {
+    const per = Object.entries(fusion.byProvider).map(([k, v]) => `${k}: ${v}`).join(', ');
+    opts.trace?.(`fusion: ${fusion.superseded} needs-review finding(s) superseded by measurement (${per})`);
+  }
+  // Source mapping: resolve data-v-<hash> scope ids in the findings' evidence
+  // back to .vue files, so browser findings carry a file locus too.
+  if (opts.repoDir) {
+    const res = enrichFindingsWithVueSource(findings, buildVueScopeMap(opts.repoDir), opts.repoDir);
+    opts.trace?.(
+      `vue source map: ${res.components} component(s), ${res.relativized} runtime path(s) relativized, ${res.enriched} finding(s) mapped via scope id`,
+    );
+  }
+
   return {
-    findings: gateByTags([...engine.findings, ...ruleFindings], tags),
+    findings,
     gaps: collection.gaps,
     matrix: collection.matrix,
     accessLevels: collection.accessLevels,

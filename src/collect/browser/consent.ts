@@ -1,5 +1,5 @@
 import type { Page, BrowserContext, Browser } from 'playwright';
-import type { Artifact, Subject, CoverageGap } from '../../record/index.js';
+import { putEvidence, type Artifact, type Subject, type CoverageGap, type RunId } from '../../record/index.js';
 import { openEvidenceContext, type ViewportSize } from './session.js';
 import { settle } from './settle.js';
 import { startCapture } from './cdp-capture.js';
@@ -44,6 +44,7 @@ export interface ButtonMetric {
 export interface CmpDetection {
   vendor: string | null;
   bannerFound: boolean;
+  bannerSelector?: string; // the matched banner container, for the evidence crop
   acceptSelector?: string;
   rejectSelector?: string;
   manageSelector?: string;
@@ -119,6 +120,7 @@ export async function detectCmp(page: Page): Promise<CmpDetection> {
     return {
       vendor: v.name,
       bannerFound: true,
+      bannerSelector: v.banner,
       acceptSelector: acceptSel,
       rejectSelector: rejectSel,
       manageSelector: manageSel,
@@ -191,20 +193,43 @@ export async function captureConsent(
   subject: Subject,
   viewport: ViewportSize,
   capturedAt: string,
+  runId: RunId,
+  cwd?: string,
+  storageStatePath?: string,
 ): Promise<ConsentEvidence> {
   const artifacts: Artifact[] = [];
   const gaps: CoverageGap[] = [];
   let cmp: CmpDetection | null = null;
+  let bannerShotPath: string | undefined;
+  let bannerBox: { x: number; y: number; width: number; height: number } | undefined;
 
   // Pre-consent baseline — nothing clicked.
   try {
-    const ctx = await openEvidenceContext(browser, viewport);
+    const ctx = await openEvidenceContext(browser, viewport, storageStatePath);
     try {
       const page = await ctx.newPage();
       const capture = await startCapture(page);
       await page.goto(url, { waitUntil: 'commit', timeout: 20000 });
       await settle(page);
       cmp = await detectCmp(page);
+      // Banner crop evidence: the pre-consent screenshot + the banner's box, so
+      // a dark-pattern finding can show the banner it judged.
+      if (cmp.bannerFound) {
+        try {
+          const buffer = await page.screenshot({ fullPage: true, type: 'png' });
+          bannerShotPath = putEvidence(runId, buffer, 'png', cwd);
+          if (cmp.bannerSelector) {
+            const box = await page
+              .locator(cmp.bannerSelector)
+              .first()
+              .boundingBox()
+              .catch(() => null);
+            if (box) bannerBox = { x: box.x, y: box.y, width: box.width, height: box.height };
+          }
+        } catch {
+          /* screenshot failed — finding still carries metrics + interaction-log */
+        }
+      }
       const { cookies, storage } = await capture.stop();
       const pre = { ...subject, state: 'pre-consent' as const };
       artifacts.push(
@@ -221,7 +246,7 @@ export async function captureConsent(
   // Reject path (fresh context).
   if (cmp?.rejectSelector || cmp?.manageSelector) {
     try {
-      const ctx = await openEvidenceContext(browser, viewport);
+      const ctx = await openEvidenceContext(browser, viewport, storageStatePath);
       try {
         const arts = await capturePhase(ctx, url, subject, 'post-reject', capturedAt, async (page) => {
           if (cmp!.manageSelector && !cmp!.rejectSelector) await page.click(cmp!.manageSelector, { timeout: 5000 }).catch(() => {});
@@ -240,7 +265,7 @@ export async function captureConsent(
   // Accept path (fresh context).
   if (cmp?.acceptSelector) {
     try {
-      const ctx = await openEvidenceContext(browser, viewport);
+      const ctx = await openEvidenceContext(browser, viewport, storageStatePath);
       try {
         const arts = await capturePhase(ctx, url, subject, 'post-accept', capturedAt, async (page) => {
           await page.click(cmp!.acceptSelector!, { timeout: 5000 }).catch(() => {});
@@ -263,6 +288,8 @@ export async function captureConsent(
     clicksToAccept: cmp?.clicksToAccept ?? 0,
     clicksToReject: cmp?.clicksToReject ?? null,
     buttonMetrics: (cmp?.buttonMetrics ?? []) as unknown as Record<string, unknown>[],
+    screenshotPath: bannerShotPath,
+    bannerBox,
   });
 
   return { artifacts, gaps, cmp };

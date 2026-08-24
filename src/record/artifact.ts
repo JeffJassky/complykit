@@ -27,6 +27,9 @@ export const Artifact = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('axe-result'),
     ...ArtifactBase,
+    // The cell's full-page capture — with each node's post-run bounding box this
+    // lets every axe finding carry a croppable screenshot of the element.
+    screenshotPath: z.string().optional(),
     results: Loose,
   }),
   z.object({
@@ -73,10 +76,17 @@ export const Artifact = z.discriminatedUnion('kind', [
     clicksToAccept: z.number().int(),
     clicksToReject: z.number().int().nullable(),
     buttonMetrics: z.array(Loose),
+    // The banner crop: a screenshot of the pre-consent page and the banner's
+    // bounding box, so a consent finding can SHOW the banner it is judging.
+    screenshotPath: z.string().optional(),
+    bannerBox: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }).optional(),
   }),
   z.object({
     kind: z.literal('focus-walk'),
     ...ArtifactBase,
+    // The cell's full-page capture — stops carry boxes, so focus findings can
+    // show the element they are about.
+    screenshotPath: z.string().optional(),
     stops: z.array(Loose),
     traps: z.array(Loose),
   }),

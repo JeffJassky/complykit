@@ -51,8 +51,32 @@ function coverageBlock(run: Run): string {
 function subjectLabel(f: Finding): string {
   const s = f.subject;
   if (s.routePattern) return s.routePattern;
+  if (s.instanceUrl) return s.instanceUrl; // page-scoped findings must show their page
   if (s.file) return `${s.file.path}${s.file.line ? `:${s.file.line}` : ''}`;
   return '(property-wide)';
+}
+
+// The element the finding is about — name and/or CSS path — so the reader can
+// locate it, not just the file/route it sits in. When a source/DOM snippet is
+// rendered below, the name duplicates it — keep only the CSS path there.
+function locatorLabel(f: Finding): string {
+  const loc = f.subject.locator;
+  if (!loc) return '';
+  const hasSnippet = f.evidence.some((e) => e.kind === 'file' || e.kind === 'dom-snippet');
+  const bits: string[] = [];
+  if (loc.name && !hasSnippet) bits.push(`\`${loc.name.replace(/`/g, "'")}\``);
+  if (loc.cssPath) bits.push(`\`${loc.cssPath}\``);
+  return bits.join(' ');
+}
+
+// The most locating piece of evidence, rendered inline as a fenced block so the
+// reader sees the offending source/DOM, not just an item count.
+function evidenceSnippet(f: Finding): string | null {
+  for (const e of f.evidence) {
+    if (e.kind === 'file') return `${e.path}:${e.line}\n${e.snippet}`;
+    if (e.kind === 'dom-snippet') return e.html;
+  }
+  return null;
 }
 
 export function renderMarkdown(run: Run, findings: Finding[]): string {
@@ -106,10 +130,19 @@ export function renderMarkdown(run: Run, findings: Finding[]): string {
     out.push('');
     for (const f of group.sort((a, b) => severityRank(a.severity) - severityRank(b.severity))) {
       const evidence = f.evidence.length ? `${f.evidence.length} evidence item(s)` : 'no evidence attached';
+      const loc = locatorLabel(f);
       out.push(
         `- **[${f.severity}]** ${f.message}  \n` +
-          `  rule \`${String(f.ruleId)}\` · confidence ${f.confidence} · ${subjectLabel(f)} · ${evidence}`,
+          `  rule \`${String(f.ruleId)}\` · confidence ${f.confidence} · ${subjectLabel(f)}` +
+          `${loc ? ` · ${loc}` : ''} · ${evidence}`,
       );
+      const snip = evidenceSnippet(f);
+      if (snip) {
+        out.push('');
+        out.push('  ```');
+        for (const line of snip.split('\n')) out.push(`  ${line}`);
+        out.push('  ```');
+      }
     }
     out.push('');
   }

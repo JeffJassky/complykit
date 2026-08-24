@@ -71,6 +71,22 @@ export function resolveFinding(rawInput: unknown, ctx: NormalizeContext): Findin
     );
   }
 
+  // Localization invariant: a PRESENCE finding asserts "this defect exists at
+  // this spot", so it MUST say where — a page (routePattern/instanceUrl) or a
+  // source location (file). A finding with no locus is unactionable noise; catch
+  // it at the boundary as a producer bug rather than shipping it to the report.
+  // (Absence findings are property-wide by nature — "the site never does X" — so
+  // they are exempt.)
+  if (caps.detects === 'presence') {
+    const s = raw.subject;
+    if (!s.routePattern && !s.instanceUrl && !s.file) {
+      throw new Error(
+        `presence finding for rule ${raw.ruleId} has no locus — it must carry a routePattern, ` +
+          `instanceUrl, or file so the report can say where the defect is. This is a producer bug.`,
+      );
+    }
+  }
+
   const confidence = capConfidence(raw.confidence, caps.maxConfidence);
   const severity = caps.ruleSeverity ?? caps.requirementSeverity;
 

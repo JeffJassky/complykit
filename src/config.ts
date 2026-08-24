@@ -31,7 +31,7 @@ export const RoutesConfig = z.object({
   manifest: z.string().optional(), // agent-emitted, cached, human-reviewed
   include: z.array(z.string()).optional(),
   exclude: z.array(z.string()).optional(),
-  sample: z.number().int().optional(), // instances per pattern, default applied at run
+  sample: z.number().int().optional(), // max instances scanned per layout fingerprint; default 3
 });
 export type RoutesConfig = z.infer<typeof RoutesConfig>;
 

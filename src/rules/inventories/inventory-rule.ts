@@ -55,16 +55,21 @@ export function makeInventoryRule(spec: InventoryRuleSpec): Rule<readonly ['inve
 
       const findings: RawFinding[] = [];
       for (const [name, occurrences] of byName) {
+        const first = occurrences[0];
         findings.push({
           ruleId: asRuleId(spec.id),
           requirementId: asRequirementId(spec.requirement),
           subject: {
             property: ctx.property,
+            // Primary locus on the subject (not only in evidence) so the finding
+            // says WHERE, the report can label it, and an agent can jump straight
+            // to the first occurrence. The rest of the occurrences stay in evidence.
+            file: first ? { path: first.file, line: first.line } : undefined,
             locator: { role: spec.category, name, ordinal: 0 },
           },
           confidence: 'needs-review',
           message: spec.message(name, occurrences.length),
-          details: { name, occurrences: occurrences.length },
+          details: { name, occurrences: occurrences.length, files: occurrences.map((o) => o.file) },
           evidence: occurrences.slice(0, 20).map((o) => ({
             kind: 'file' as const,
             path: o.file,

@@ -6,22 +6,25 @@
 
 import type { Browser } from 'playwright';
 import type { Artifact, Subject, CoverageGap, MatrixCell, RunId, ViewportId, ColorScheme } from '../../record/index.js';
-import { launchBrowser, openMeasurementContext, newPage, VIEWPORT_PRESETS, type ViewportSize } from './session.js';
+import type { Page } from 'playwright';
+import { launchBrowser, openMeasurementContext, applyMeasurementCell, newPage, VIEWPORT_PRESETS, type ViewportSize } from './session.js';
 import { settle } from './settle.js';
 import { scrollThrough } from './scroll.js';
 import { runAxe } from './axe.js';
-import { collectContrast, type ContrastCandidate } from './contrast.js';
-import { decodePng, pixelBand } from './pixel-band.js';
+import { collectContrast, attributeGradientVars, type ContrastCandidate } from './contrast.js';
+import { pixelBand } from './pixel-band.js';
+import { measureAxeContrastTargets } from './axe-contrast-measure.js';
 import { captureScreenshot } from './screenshot.js';
 import { captureSnapshot } from './snapshot.js';
 import { keyboardWalk } from './keyboard.js';
 import { captureConsent } from './consent.js';
-import { discoverRoutes, type RouteDiscoveryOptions } from './routes.js';
+import { discoverRoutes, type RouteDiscoveryOptions, type TraceFn } from './routes.js';
 
 export { VIEWPORT_PRESETS } from './session.js';
 export type { ContrastCandidate } from './contrast.js';
 export { discoverRoutes } from './routes.js';
-export type { RouteDiscovery, RouteDiscoveryOptions } from './routes.js';
+export type { RouteDiscovery, RouteDiscoveryOptions, TraceFn } from './routes.js';
+export { structuralFingerprint } from './fingerprint.js';
 
 export interface CollectBrowserOptions {
   property: string;
@@ -34,15 +37,27 @@ export interface CollectBrowserOptions {
   perPageTimeoutMs?: number; // hard per-page budget (pitfall #10); default 20s
   probes?: boolean; // keyboard walk etc. (default true); tiered to default vp × light
   consent?: boolean; // three-way GDPR evidence pass (default true); per-property
+  storageStatePath?: string; // resolved path from property.auth (kind: 'storage-state')
+  trace?: TraceFn; // per-navigation narration; default no-op
 }
 
 export interface BrowserCollection {
   artifacts: Artifact[];
   gaps: CoverageGap[];
   matrix: MatrixCell[];
-  accessLevels: Array<'public'>;
+  accessLevels: Array<'public' | 'authed'>;
   spike: { closedShadowHosts: number; piercedClosedShadow: boolean };
   scanned: string[]; // instance urls actually scanned
+}
+
+function normalizeForTrace(u: string): string {
+  try {
+    const url = new URL(u);
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return u;
+  }
 }
 
 function routePatternOf(url: string): string {
@@ -56,16 +71,18 @@ function routePatternOf(url: string): string {
 }
 
 async function scanOnce(
-  browser: Browser,
+  page: Page,
   url: string,
   viewport: ViewportSize,
   scheme: ColorScheme,
   opts: CollectBrowserOptions,
   capturedAt: string,
   runProbes: boolean,
+  alreadyLoaded = false,
 ): Promise<{ artifacts: Artifact[]; gaps: CoverageGap[]; spike?: { closedShadowHosts: number; piercedClosedShadow: boolean } }> {
-  const context = await openMeasurementContext(browser, { scheme, viewport });
-  const page = await newPage(context);
+  // Reuse the one measurement page. For the first cell of a page the crawl has
+  // ALREADY loaded and settled it at this viewport × scheme (single-visit pass),
+  // so skip the redundant navigation; other cells retarget and reload.
   const artifacts: Artifact[] = [];
   const gaps: CoverageGap[] = [];
   const subject: Subject = {
@@ -77,33 +94,110 @@ async function scanOnce(
   };
   page.setDefaultTimeout(opts.perPageTimeoutMs ?? 20000);
   try {
-    await page.goto(url, { waitUntil: 'commit', timeout: opts.perPageTimeoutMs ?? 20000 });
-    await settle(page);
+    if (!alreadyLoaded) {
+      await applyMeasurementCell(page, viewport, scheme);
+      await page.goto(url, { waitUntil: 'commit', timeout: opts.perPageTimeoutMs ?? 20000 });
+      await settle(page);
+    }
+    const landed = page.url();
+    opts.trace?.(
+      `scan ${viewport.id}/${scheme} → ${url}` +
+        (normalizeForTrace(landed) !== normalizeForTrace(url) ? ` ⇒ landed ${landed} (redirected)` : ''),
+    );
     const scroll = await scrollThrough(page);
     if (scroll.capped) gaps.push({ reason: 'scroll-cap', subject, note: `${scroll.screens} screens` });
 
+    // Contrast measurement runs INSIDE the capture, once per band, while the
+    // page is still scrolled there. Measuring afterwards against the finished
+    // image was wrong on any still-loading page: one route's scroller grew from
+    // 2208px to 3703px between capture and measurement, so boxes addressed
+    // pixels that had moved and produced precise, confident, fictional ratios.
+    const measured = new Map<string, ContrastCandidate>();
+    let candidates: ContrastCandidate[] = [];
+    let contrast: Awaited<ReturnType<typeof collectContrast>> | null = null;
+
     const shot = await captureScreenshot(page, subject, {
       runId: opts.runId, cwd: opts.cwd, viewport: viewport.id as ViewportId, scheme, capturedAt,
+      onBand: async (bandPng, offset) => {
+        const pass = await collectContrast(page, subject, capturedAt);
+        if (!contrast) contrast = pass; // keep the first artifact; results are merged below
+        for (const c of pass.candidates) {
+          const key = `${c.cssPath}|${Math.round(c.box.x)}|${Math.round(c.box.y)}`;
+          const already = measured.get(key);
+          if (already?.measuredBand) continue; // already measured in an earlier band
+          const vb = c.viewportBox;
+          // Only elements actually ON SCREEN in this band can be measured from
+          // it. An element off-screen in every band still gets RECORDED, without
+          // a band — it surfaces as "ratio could not be proven" rather than
+          // disappearing. Dropping the candidates we failed to measure would
+          // turn a coverage hole into a clean bill of health.
+          if (!vb || vb.y + vb.height <= 0 || vb.y >= bandPng.height) {
+            if (!already) measured.set(key, c);
+            continue;
+          }
+          // Measure EVERY candidate, flat stacks included: a flat cascade is not
+          // proof of what rendered, and engines.ts reconciles axe's inferred
+          // verdicts against these measurements.
+          const band = pixelBand(bandPng, c, vb);
+          if (band) {
+            Object.assign(c, {
+              measuredBand: band.band,
+              minRatio: band.minRatio,
+              maxRatio: band.maxRatio,
+              // Overlay markers are stored in capture space, so shift the
+              // band-relative sample points by this band's scroll offset.
+              samples: band.samples.map((pt) => ({ x: pt.x, y: pt.y + offset })),
+              fgColor: band.fgColor,
+              bgLoColor: band.bgLoColor,
+              bgHiColor: band.bgHiColor,
+              ratioLo: band.ratioLo,
+              ratioHi: band.ratioHi,
+            });
+          }
+          measured.set(key, c);
+        }
+      },
     });
     artifacts.push(shot.artifact);
-
-    // Contrast + pixel-band escalation for non-flat candidates.
-    const contrast = await collectContrast(page, subject, capturedAt);
-    if (contrast.artifact.kind === 'style-probe') contrast.artifact.screenshotPath = shot.artifact.kind === 'screenshot' ? shot.artifact.path : undefined;
-    try {
-      const png = decodePng(shot.buffer);
-      for (const c of contrast.candidates) {
-        if (!c.flat) {
-          const band = pixelBand(png, c);
-          if (band) Object.assign(c, { measuredBand: band.band, minRatio: band.minRatio, maxRatio: band.maxRatio });
-        }
-      }
-    } catch {
-      /* undecodable screenshot — candidates stay unresolved (needs-review) */
+    if (shot.stitched) {
+      opts.trace?.(`capture ${viewport.id}/${scheme} → stitched ${shot.bands} band(s) from an inner scroll container`);
     }
+    if (shot.cappedPx && shot.cappedPx > 0) {
+      // Content past the band cap is NOT in the capture, so nothing below it can
+      // be measured. Say so rather than let the missing pixels read as clean.
+      gaps.push({ reason: 'scroll-cap', subject, note: `${Math.round(shot.cappedPx)}px below the capture cap` });
+    }
+
+    // Fall back to a single pass if the capture never invoked a band visitor.
+    if (!contrast) contrast = await collectContrast(page, subject, capturedAt);
+    candidates = measured.size ? [...measured.values()] : contrast.candidates;
+    contrast.candidates = candidates;
+    if (contrast.artifact.kind === 'style-probe') {
+      contrast.artifact.results = candidates as unknown as Record<string, unknown>[];
+      contrast.artifact.screenshotPath = shot.artifact.kind === 'screenshot' ? shot.artifact.path : undefined;
+    }
+    // Name the CSS variables the AUTHORED gradient declarations actually use,
+    // while the element is still on this load.
+    await attributeGradientVars(page, contrast.candidates);
     artifacts.push(contrast.artifact);
 
-    artifacts.push(await runAxe(page, subject, capturedAt));
+    const axeArtifact = await runAxe(page, subject, capturedAt);
+    if (axeArtifact.kind === 'axe-result' && shot.artifact.kind === 'screenshot') {
+      axeArtifact.screenshotPath = shot.artifact.path;
+    }
+    // Measure the elements axe could not resolve a background for. The contrast
+    // collector drops flat-and-passing candidates, which is exactly the set axe
+    // disputes when something overlaps the text — so measure those now and let
+    // the measurement govern axe's verdict downstream.
+    if (axeArtifact.kind === 'axe-result' && contrast.artifact.kind === 'style-probe') {
+      try {
+        const extra = await measureAxeContrastTargets(page, axeArtifact.results, contrast.candidates);
+        if (extra.length) contrast.artifact.results.push(...(extra as unknown as Record<string, unknown>[]));
+      } catch {
+        /* best-effort — axe's own verdict stands unreconciled */
+      }
+    }
+    artifacts.push(axeArtifact);
 
     const snap = await captureSnapshot(page, subject, capturedAt);
     artifacts.push(snap.artifact);
@@ -113,14 +207,16 @@ async function scanOnce(
     // only (keyboard behaviour rarely varies by scheme; the style checks catch
     // the symptom when it does).
     if (runProbes) {
-      artifacts.push(await keyboardWalk(page, subject, capturedAt));
+      const walk = await keyboardWalk(page, subject, capturedAt);
+      if (walk.kind === 'focus-walk' && shot.artifact.kind === 'screenshot') {
+        walk.screenshotPath = shot.artifact.path;
+      }
+      artifacts.push(walk);
     }
     return { artifacts, gaps, spike: { closedShadowHosts: snap.spike.closedShadowHosts, piercedClosedShadow: snap.spike.piercedClosedShadow } };
   } catch (err) {
     gaps.push({ reason: 'crash', subject, note: err instanceof Error ? err.message.slice(0, 120) : 'page error' });
     return { artifacts, gaps };
-  } finally {
-    await context.close();
   }
 }
 
@@ -135,27 +231,39 @@ export async function collectBrowser(opts: CollectBrowserOptions): Promise<Brows
   let spike = { closedShadowHosts: 0, piercedClosedShadow: false };
 
   try {
-    // Route discovery on a throwaway context.
-    const discoveryCtx = await openMeasurementContext(browser, { scheme: 'light', viewport: viewports[0] });
-    const discoveryPage = await newPage(discoveryCtx);
-    let urls: string[];
-    try {
-      urls = (await discoverRoutes(discoveryPage, opts.targetUrl, opts.routes)).urls;
-    } finally {
-      await discoveryCtx.close();
-    }
-
     // Tiered matrix — passive checks over the full viewport × scheme matrix;
     // probes only on the default viewport × light (browser-analysis-design tier).
     const runProbes = opts.probes !== false;
     let instances = 0;
     let probeStates = 0;
-    for (const url of urls) {
+
+    // Single-visit pass: ONE reused context/page both crawls AND measures. The
+    // crawl loads each page once at cell 0 (viewport[0] × scheme[0]); a page that
+    // passes sampling is measured inline via `onKeep` — cell 0 reuses that very
+    // load (no re-navigation), the remaining cells retarget and reload. This
+    // removes the old second full visit of every kept page.
+    const measureCtx = await openMeasurementContext(browser, {
+      scheme: schemes[0],
+      viewport: viewports[0],
+      storageStatePath: opts.storageStatePath,
+    });
+    const measurePage = await newPage(measureCtx);
+
+    // Reset the page to cell 0 before each crawl navigation, so fingerprints are
+    // always computed at the same viewport × scheme (a prior onKeep may have left
+    // the page on another cell).
+    const prepareVisit = async (): Promise<void> => {
+      await applyMeasurementCell(measurePage, viewports[0], schemes[0]);
+    };
+
+    // Measure one kept page across the matrix. cell 0 = the crawl's current load.
+    const measureMatrix = async (page: Page, url: string): Promise<void> => {
       let scannedThis = false;
       for (let vi = 0; vi < viewports.length; vi++) {
         for (let si = 0; si < schemes.length; si++) {
           const isProbeTier = runProbes && vi === 0 && schemes[si] === 'light';
-          const res = await scanOnce(browser, url, viewports[vi], schemes[si], opts, capturedAt, isProbeTier);
+          const isCell0 = vi === 0 && si === 0;
+          const res = await scanOnce(page, url, viewports[vi], schemes[si], opts, capturedAt, isProbeTier, isCell0);
           artifacts.push(...res.artifacts);
           gaps.push(...res.gaps);
           if (isProbeTier) probeStates++;
@@ -169,13 +277,27 @@ export async function collectBrowser(opts: CollectBrowserOptions): Promise<Brows
         scanned.push(url);
         instances++;
       }
+    };
+
+    let urls: string[] = [];
+    try {
+      urls = (
+        await discoverRoutes(measurePage, opts.targetUrl, {
+          ...opts.routes,
+          trace: opts.trace,
+          prepareVisit,
+          onKeep: (page, url) => measureMatrix(page, url),
+        })
+      ).urls;
+    } finally {
+      await measureCtx.close();
     }
 
     // Evidence pass — three-way consent capture, ONCE per property (site-wide
     // behaviour), on a pristine evidence profile.
     if (opts.consent !== false && urls.length) {
       const entrySubject: Subject = { property: opts.property, routePattern: routePatternOf(urls[0]), instanceUrl: urls[0] };
-      const consent = await captureConsent(browser, urls[0], entrySubject, viewports[0], capturedAt);
+      const consent = await captureConsent(browser, urls[0], entrySubject, viewports[0], capturedAt, opts.runId, opts.cwd, opts.storageStatePath);
       artifacts.push(...consent.artifacts);
       gaps.push(...consent.gaps);
     }
@@ -192,7 +314,7 @@ export async function collectBrowser(opts: CollectBrowserOptions): Promise<Brows
       { family: 'probes', routePatterns: runProbes ? new Set(scanned.map(routePatternOf)).size : 0, instances: probeStates, viewports: viewports.slice(0, 1).map((v) => v.id as ViewportId), schemes: ['light'], states: probeStates },
       { family: 'evidence', routePatterns: opts.consent !== false ? 1 : 0, instances: opts.consent !== false ? 1 : 0, viewports: viewports.slice(0, 1).map((v) => v.id as ViewportId), schemes: ['light'], states: 3 },
     ];
-    return { artifacts, gaps, matrix, accessLevels: ['public'], spike, scanned };
+    return { artifacts, gaps, matrix, accessLevels: opts.storageStatePath ? ['public', 'authed'] : ['public'], spike, scanned };
   } finally {
     await browser.close();
   }

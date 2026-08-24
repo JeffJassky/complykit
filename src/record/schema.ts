@@ -87,6 +87,13 @@ export const Evidence = z.discriminatedUnion('kind', [
     path: z.string(),
     region: Box.optional(),
     pageState: z.string().optional(),
+    // Contrast overlay: the exact background pixels sampled (absolute screenshot
+    // coords) and the colours behind the verdict, so a report can draw markers
+    // and swatches on the crop instead of asking the reader to trust a ratio.
+    samples: z.array(z.object({ x: z.number(), y: z.number() })).optional(),
+    swatches: z
+      .array(z.object({ label: z.string(), color: z.string(), ratio: z.number().optional() }))
+      .optional(),
   }),
   z.object({
     kind: z.literal('dom-snippet'),
@@ -225,6 +232,12 @@ export const Run = z.object({
   matrix: z.array(MatrixCell).default([]),
   gaps: z.array(CoverageGap).default([]),
   rulesExecuted: z.array(RuleId).default([]),
+  // Set when the scan ran with CLI targeting overrides (--routes, --rules, …):
+  // the flags, verbatim. A partial run exists to verify a specific fix fast;
+  // its totals are NOT comparable to a full run's — diff only inside the
+  // targeted slice. Reports surface this so a shrunken count is never read as
+  // progress.
+  partial: z.record(z.string()).optional(),
 });
 export type Run = z.infer<typeof Run>;
 

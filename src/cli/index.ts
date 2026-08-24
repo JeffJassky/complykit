@@ -36,8 +36,18 @@ Commands
   init                     Write a starter config + dispositions file
   scan                     Collect artifacts, evaluate rules, write a run
                            (zero-config: complykit scan --url https://example.com)
+                           Targeting (marks the run partial, for fast fix-verify):
+                             --routes <substr,…>   crawl only matching routes
+                             --max-pages N         cap the crawl
+                             --viewports a,b       subset of configured presets
+                             --schemes light,dark  subset of color schemes
+                             --only static|browser one layer only
+                             --rules <substr,…>    keep findings matching ruleId
+                             --requirements <p,…>  keep by requirementId prefix
+                             --law <prefix>        keep one instrument (wcag22|gdpr|…)
   static                   Static layer only: point at a repo, get an in-PR run
-  report                   Render a run (--format jsonl|md|sarif)
+  report                   Render a run (--format jsonl|md|sarif|html|json;
+                           html also writes a .json sidecar next to --out)
   review                   Adjudicate the needs-review queue with C1 (LLM); --dry to preview
   diff                     Compare two runs by fingerprint
   coverage                 Requirement coverage for a ruleset
@@ -70,7 +80,7 @@ async function main(argv: string[]): Promise<number> {
     case 'static':
       return cmdStatic(joinArgs(sub, rest));
     case 'report':
-      return cmdReport(joinArgs(sub, rest));
+      return cmdReport(joinArgs(sub, rest), loadConfigFor);
     case 'review':
       return cmdReview(joinArgs(sub, rest));
     case 'diff':
@@ -107,12 +117,16 @@ function unknown(what: string): number {
 }
 
 // A thrown handler must not print a raw stack to a CI log as if the tool
-// crashed at random — print the message, exit non-zero.
+// crashed at random — print the message, exit non-zero. Set exitCode rather
+// than calling process.exit(): exit() drops un-flushed stdout on pipes, which
+// truncates large reports (`--format json | jq` died at 64KB).
 main(process.argv.slice(2))
-  .then((code) => process.exit(code))
+  .then((code) => {
+    process.exitCode = code;
+  })
   .catch((err: unknown) => {
     process.stderr.write(`complykit: ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
+    process.exitCode = 1;
   });
 
 export { parseArgs };
