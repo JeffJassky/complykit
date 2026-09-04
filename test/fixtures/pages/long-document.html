@@ -1,0 +1,39 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Long document-scrolling page</title>
+<!--
+  A document-scrolling page taller than the band cap, built to catch the bug
+  where below-fold candidates were measured against the wrong rows.
+
+  #decoy sits in the FIRST screen and is near-white on near-black. #subject sits
+  far below the fold and is near-black on white. If the measurement addresses
+  viewport-relative coordinates against a full-page image, #subject's box lands
+  in the decoy's neighbourhood and reports a failing ratio for text that is
+  actually 16:1.
+-->
+<style>
+  html, body { margin: 0; }
+  body { background: #ffffff; font: 16px/1.5 system-ui, sans-serif; }
+  .screen { height: 600px; }
+  #decoy {
+    background: #0b0812;
+    color: #f4f2fa;
+    padding: 24px;
+    height: 552px;
+    box-sizing: border-box;
+  }
+  #subject {
+    background: #ffffff;
+    color: #1d1f23;
+    padding: 24px;
+  }
+</style>
+
+<div class="screen" id="decoy">Bright text on a dark ground, first screen.</div>
+<div class="screen"></div>
+<div class="screen"></div>
+<div class="screen"></div>
+<div class="screen"></div>
+<div class="screen"></div>
+<div class="screen" id="subject">Near-black body text on white, far below the fold.</div>
+<div class="screen"></div>

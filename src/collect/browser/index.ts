@@ -118,11 +118,19 @@ async function scanOnce(
 
     const shot = await captureScreenshot(page, subject, {
       runId: opts.runId, cwd: opts.cwd, viewport: viewport.id as ViewportId, scheme, capturedAt,
-      onBand: async (bandPng, offset) => {
+      onBand: async (bandPng, offset, _index, obstructions) => {
         const pass = await collectContrast(page, subject, capturedAt);
         if (!contrast) contrast = pass; // keep the first artifact; results are merged below
         for (const c of pass.candidates) {
-          const key = `${c.cssPath}|${Math.round(c.box.x)}|${Math.round(c.box.y)}`;
+          // Identity is the ELEMENT, not where it happened to be. Including the
+          // box in the key looked harmless while every page was visited once,
+          // but a band walk re-reads the DOM at each offset, and a page with
+          // sticky sections, scroll-linked pinning or reveal transforms puts
+          // the same element at a different contentBox in every band. Each band
+          // then minted a new key for it: one client route went from ~900
+          // findings to ~45,000, the same text over and over at the offsets it
+          // travelled through.
+          const key = c.cssPath;
           const already = measured.get(key);
           if (already?.measuredBand) continue; // already measured in an earlier band
           const vb = c.viewportBox;
@@ -132,6 +140,18 @@ async function scanOnce(
           // disappearing. Dropping the candidates we failed to measure would
           // turn a coverage hole into a clean bill of health.
           if (!vb || vb.y + vb.height <= 0 || vb.y >= bandPng.height) {
+            if (!already) measured.set(key, c);
+            continue;
+          }
+          // A screenshot records what the camera saw, not what the document
+          // says. Content scrolled under a fixed header is covered by the
+          // header's pixels, so measuring it here reports the header's colour
+          // as this element's background — the source of "near-black heading on
+          // a white hero, 1.24:1". Leave it for a band that parks it in the
+          // clear; if none does, it stays recorded and unproven.
+          if (obstructions.rects.some((o) =>
+            vb.x < o.x + o.width && vb.x + vb.width > o.x &&
+            vb.y < o.y + o.height && vb.y + vb.height > o.y)) {
             if (!already) measured.set(key, c);
             continue;
           }
@@ -171,6 +191,42 @@ async function scanOnce(
     // Fall back to a single pass if the capture never invoked a band visitor.
     if (!contrast) contrast = await collectContrast(page, subject, capturedAt);
     candidates = measured.size ? [...measured.values()] : contrast.candidates;
+    // Re-read geometry at the page's resting state.
+    //
+    // A candidate's box is whatever contentBox said in the band that measured
+    // it. Sticky sections, scroll-linked pinning and reveal transforms move an
+    // element between bands, so that box can be hundreds of pixels from where
+    // the same element sits at rest. That matters because contrast-reconcile
+    // matches axe's findings to our measurements GEOMETRICALLY, within 2px, and
+    // axe runs once, at rest: a stale box means no match, so a measurement we
+    // actually took never gets to answer axe's "background could not be
+    // determined" and the finding stays needs-review. On the client's marketing
+    // routes that was ~1,600 findings' worth of measurement thrown away.
+    //
+    // The ratios stay as measured — those are the pixels the element really had.
+    // Only where it is gets refreshed. (`samples` are overlay markers in the
+    // capture space of that band and are deliberately left alone.)
+    if (measured.size) {
+      try {
+        const rested = (await page.evaluate((paths: string[]) => {
+          const ck = (window as unknown as { __ck?: { contentBox(e: Element): { x: number; y: number; width: number; height: number } } }).__ck;
+          return paths.map((p) => {
+            let el: Element | null = null;
+            try { el = document.querySelector(p); } catch { el = null; }
+            if (!el) return null;
+            if (ck) return ck.contentBox(el);
+            const r = el.getBoundingClientRect();
+            return { x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height };
+          });
+        }, candidates.map((c) => c.cssPath))) as ({ x: number; y: number; width: number; height: number } | null)[];
+        for (let i = 0; i < candidates.length; i++) {
+          const box = rested[i];
+          if (box && box.width > 0 && box.height > 0) candidates[i].box = box;
+        }
+      } catch {
+        /* best-effort — the band's box stands */
+      }
+    }
     contrast.candidates = candidates;
     if (contrast.artifact.kind === 'style-probe') {
       contrast.artifact.results = candidates as unknown as Record<string, unknown>[];

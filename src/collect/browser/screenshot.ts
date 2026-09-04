@@ -28,6 +28,14 @@ interface ScrollerInfo {
 
 const MAX_BANDS = 12; // a bound on capture cost; overflow is reported, not hidden
 
+// The measurement walk has a separate, looser cap. MAX_BANDS bounds the size of
+// a STITCHED IMAGE; a measurement band is a throwaway screenshot, so the only
+// cost is time. Capping it at 12 quietly stopped measuring below ~9,000px on a
+// 14,500px marketing page — and unmeasured text does not disappear, it becomes
+// "ratio could not be proven", which is how coverage loss disguises itself as a
+// pile of new needs-review findings.
+const MAX_MEASURE_BANDS = 40;
+
 /**
  * Called once per captured band, while the page is still scrolled there.
  *
@@ -38,7 +46,26 @@ const MAX_BANDS = 12; // a bound on capture cost; overflow is reported, not hidd
  * precise, entirely fictional ratios (white-on-dark text "measured" at 1.02:1).
  * Collectors that need pixels run here instead, where geometry and image agree.
  */
-export type BandVisitor = (png: PNG, scrollOffset: number, index: number) => Promise<void>;
+export interface Rect { x: number; y: number; width: number; height: number }
+
+export interface Obstructions {
+  /** Viewport rects of fixed/sticky elements painted over the content. */
+  rects: Rect[];
+  topInset: number;
+  bottomInset: number;
+}
+
+export type BandVisitor = (png: PNG, scrollOffset: number, index: number, obstructions: Obstructions) => Promise<void>;
+
+const NO_OBSTRUCTIONS: Obstructions = { rects: [], topInset: 0, bottomInset: 0 };
+
+async function readObstructions(page: Page): Promise<Obstructions> {
+  const o = (await page.evaluate(() => {
+    const ck = (window as unknown as { __ck?: { obstructions(): unknown } }).__ck;
+    return ck?.obstructions ? ck.obstructions() : null;
+  })) as Obstructions | null;
+  return o ?? NO_OBSTRUCTIONS;
+}
 
 /**
  * Capture the whole scrollable content even when the DOCUMENT does not scroll.
@@ -55,6 +82,56 @@ export type BandVisitor = (png: PNG, scrollOffset: number, index: number) => Pro
  * band contributes only the scroller's own rows, so page chrome is not repeated
  * down the composite.
  */
+/**
+ * Walk a document-scrolling page a screen at a time, handing the visitor each
+ * viewport-sized band while the page is parked at that offset — the only moment
+ * `viewportBox` and the pixels describe the same layout.
+ *
+ * The bands are for MEASUREMENT only; the evidence image is captured separately
+ * with `fullPage`. Document scroll offsets and full-page image coordinates are
+ * the same space, so samples shifted by `offset` still address the stored image.
+ *
+ * Why not measure against the fullPage image directly (what this path used to
+ * do): candidates carry `viewportBox`, which agrees with a full-page image only
+ * inside the first screen; and `fullPage` resizes the viewport to the whole
+ * document to capture beyond it, firing IntersectionObservers, scroll-linked
+ * reveals and vh-based layout, so the DOM read afterwards describes a different
+ * layout than the image. Both produce the exact failure this file warns about.
+ *
+ * Why the step is not simply the viewport height: a fixed header is painted over
+ * whatever is scrolled beneath it, so content parked in those rows is measured
+ * against the header. Stepping by the UNOBSTRUCTED height and scrolling back by
+ * the top inset puts every row of the document into some band's clear strip.
+ */
+async function measureInBands(page: Page, info: ScrollerInfo, onBand: BandVisitor): Promise<void> {
+  const obs = await readObstructions(page);
+  const clear = Math.max(1, info.clientHeight - obs.topInset - obs.bottomInset);
+  const needed = Math.ceil(info.scrollHeight / clear);
+  const bands = Math.min(Math.max(needed, 1), MAX_MEASURE_BANDS);
+
+  for (let i = 0; i < bands; i++) {
+    // Park so the rows this band is responsible for land below the top chrome.
+    const target = Math.max(0, i * clear - obs.topInset);
+    const actual = (await page.evaluate((offset: number) => {
+      const ck = (window as unknown as { __ck?: { scrollPrimaryTo(o: number): number } }).__ck;
+      if (ck) return ck.scrollPrimaryTo(offset);
+      window.scrollTo(0, offset);
+      return (document.scrollingElement ?? document.documentElement).scrollTop;
+    }, target)) as number;
+    await page.waitForTimeout(120); // lazy content + scroll-linked effects settle
+    // Obstructions are re-read per band: headers hide on scroll-down, banners
+    // get dismissed, and a stale rect would reject good measurements.
+    const bandObs = await readObstructions(page);
+    const band = PNG.sync.read(await page.screenshot({ type: 'png' }));
+    await onBand(band, actual, i, bandObs);
+  }
+
+  await page.evaluate(() => {
+    const ck = (window as unknown as { __ck?: { scrollPrimaryTo(o: number): number } }).__ck;
+    ck?.scrollPrimaryTo(0);
+  });
+}
+
 async function captureScrollableContent(
   page: Page,
   onBand?: BandVisitor,
@@ -65,13 +142,19 @@ async function captureScrollableContent(
     type ScrollerInfoLike = { inner: boolean; top: number; clientHeight: number; scrollHeight: number; scrollTop: number };
   })) as ScrollerInfo | null;
 
-  // Document-scrolling page (or helpers unavailable): Playwright already does
-  // the right thing.
+  // Document-scrolling page: `fullPage` remains the EVIDENCE image — one CDP
+  // call, fixed chrome drawn once, no stitching seams — but it is not a safe
+  // thing to measure against (see measureInBands).
   if (!info || !info.inner) {
     const buffer = await page.screenshot({ fullPage: true, type: 'png' });
-    // A document-scrolling page renders in one piece: the full-page image and
-    // the live DOM describe the same instant, so the visitor sees it directly.
-    if (onBand) await onBand(PNG.sync.read(buffer), 0, 0);
+    if (onBand) {
+      if (!info) {
+        // No geometry helpers — one band at the top is all we can honestly claim.
+        await onBand(PNG.sync.read(buffer), 0, 0, NO_OBSTRUCTIONS);
+      } else {
+        await measureInBands(page, info, onBand);
+      }
+    }
     return { buffer, stitched: false, bands: 1, cappedPx: 0 };
   }
 
@@ -84,7 +167,7 @@ async function captureScrollableContent(
   const composite = new PNG({ width: first.width, height: Math.ceil(info.top + bands * step) });
   // Band 0 whole (it carries the chrome above the scroller too).
   PNG.bitblt(first, composite, 0, 0, first.width, Math.min(first.height, composite.height), 0, 0);
-  if (onBand) await onBand(first, 0, 0);
+  if (onBand) await onBand(first, 0, 0, await readObstructions(page));
 
   for (let i = 1; i < bands; i++) {
     const target = i * step;
@@ -103,7 +186,7 @@ async function captureScrollableContent(
     }
     // Hand the visitor this band's pixels WHILE the page is still at this scroll
     // position — the only moment its pixels and the live DOM agree.
-    if (onBand) await onBand(band, actual, i);
+    if (onBand) await onBand(band, actual, i, await readObstructions(page));
   }
 
   await page.evaluate(() => {

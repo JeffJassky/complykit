@@ -103,5 +103,55 @@ export const GEOMETRY_INIT = (): void => {
     return el.scrollTop;
   }
 
-  (window as unknown as { __ck?: unknown }).__ck = { contentBox, primaryScroller, scrollPrimaryTo, scrolls };
+  /**
+   * The fixed and sticky elements PAINTED OVER the scrolling content, as
+   * viewport rects, plus the insets they occupy at the top and bottom edges.
+   *
+   * A viewport screenshot is what the camera sees, not what the document says:
+   * a fixed header is drawn over whatever content is scrolled beneath it. Any
+   * pixel measurement of an element under that header samples the header. On
+   * this app the header is 136px of rgba(13,10,23,.875), so a near-black
+   * heading on a white section — parked at a scroll offset that put it in the
+   * top 136px — measured as near-black on dark purple: a confident, precise,
+   * fictional failure.
+   *
+   * Two uses. The insets let the band walk park content clear of the chrome;
+   * the rects let a measurement pass reject anything still overlapped, rather
+   * than measure it against pixels that belong to something else.
+   */
+  function obstructions(): {
+    rects: { x: number; y: number; width: number; height: number }[];
+    topInset: number;
+    bottomInset: number;
+  } {
+    const vw = document.documentElement.clientWidth;
+    const vh = document.documentElement.clientHeight;
+    const rects: { x: number; y: number; width: number; height: number }[] = [];
+    let topInset = 0;
+    let bottomInset = 0;
+    const all = document.querySelectorAll('*');
+    for (let i = 0; i < all.length; i++) {
+      const el = all[i];
+      const cs = getComputedStyle(el);
+      if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
+      if (cs.visibility === 'hidden' || cs.display === 'none' || parseFloat(cs.opacity) === 0) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) continue;
+      if (r.bottom <= 0 || r.top >= vh || r.right <= 0 || r.left >= vw) continue;
+      // A nested fixed child is inside its fixed ancestor's rect; keeping both
+      // is harmless for the intersection test and cheap.
+      rects.push({ x: r.x, y: r.y, width: r.width, height: r.height });
+      // Only a band spanning most of the width actually costs usable rows; a
+      // floating chat bubble in a corner does not, and insetting for it would
+      // throw away most of the viewport.
+      if (r.width < vw * 0.5) continue;
+      if (r.top <= 0 && r.bottom > topInset) topInset = r.bottom;
+      if (r.bottom >= vh && vh - r.top > bottomInset) bottomInset = vh - r.top;
+    }
+    // Never let chrome claim the whole screen; leave a usable strip.
+    const cap = vh * 0.4;
+    return { rects, topInset: Math.min(topInset, cap), bottomInset: Math.min(bottomInset, cap) };
+  }
+
+  (window as unknown as { __ck?: unknown }).__ck = { contentBox, primaryScroller, scrollPrimaryTo, scrolls, obstructions };
 };

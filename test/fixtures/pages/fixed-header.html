@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Document-scrolling page under a fixed header</title>
+<!--
+  The same document-scrolling shape, plus the thing every real site has: a
+  fixed header painted over the content.
+
+  #subject starts at document y = 600, exactly one viewport down. A band walk
+  that steps by the viewport height parks it at viewport y = 0 — underneath the
+  100px header — so a screenshot shows the header's near-black there and the
+  white block is measured as near-black on near-black. Stepping by the
+  UNOBSTRUCTED height instead puts it in the clear.
+-->
+<style>
+  html, body { margin: 0; }
+  body { background: #ffffff; font: 16px/1.5 system-ui, sans-serif; }
+  .screen { height: 600px; }
+  #chrome {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 100px;
+    background: #0b0812;
+    color: #f4f2fa;
+    z-index: 10;
+  }
+  #subject {
+    background: #ffffff;
+    color: #1d1f23;
+    padding: 24px;
+    box-sizing: border-box;
+  }
+</style>
+
+<div id="chrome">Fixed header, painted over everything.</div>
+<div class="screen"></div>
+<div class="screen" id="subject">Near-black body text on white, one screen down.</div>
+<div class="screen"></div>
+<div class="screen"></div>
