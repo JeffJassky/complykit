@@ -34,6 +34,16 @@
   #clipper { height: 44px; overflow: hidden; background: #14121f; }
   #clipper p { margin: 0; color: #6f6a80; }
   #below { height: 120px; background: #f5f9ff; }
+  /* Gradient text: the glyphs are painted by the element's own background, so
+     a pixel band samples the gradient as both ink and ground. */
+  #gradient-title {
+    background: linear-gradient(90deg, #4797ff, #fc61d0);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-size: 32px;
+    padding: 12px;
+  }
   #visible-copy { padding: 24px; color: #a0a0a0; background: #ffffff; }
 </style>
 
@@ -43,6 +53,8 @@
   </div>
 </div>
 <div id="hero">Hero copy that the closed panel is laid out on top of.</div>
+<div id="gradient-title">Convert any video</div>
+
 <div id="clipper">
   <p>First line, painted.</p>
   <p>Second line, painted.</p>

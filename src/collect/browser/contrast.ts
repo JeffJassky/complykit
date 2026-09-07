@@ -47,6 +47,10 @@ export interface ContrastCandidate {
   /** True when an ancestor's overflow clips the element away entirely: it lays
    *  out and reports a rect, but nothing of it is painted. */
   clipped?: boolean;
+  /** True when the glyphs are painted by the element's own background
+   *  (`background-clip: text` + a transparent fill), which no pixel band can
+   *  measure: the "background" it samples is the text. */
+  paintedByBackground?: boolean;
   // Assigned AFTER collection by the pixel-band escalation (index.ts) — the
   // measured verdict and the exact colours it read off the screenshot.
   measuredBand?: 'pass' | 'fail' | 'ambiguous';
@@ -320,6 +324,21 @@ function collectInPage(): ContrastCandidate[] {
     // flagging it is a false positive (and it produces the confusing ratio-less
     // findings). Skip it here; a hidden-text a11y concern is a different rule.
     if (fg[3] === 0) continue;
+
+    // Gradient text: `background-clip: text` with a transparent text fill, so
+    // the glyphs ARE the background. A pixel measurement of such an element
+    // compares the gradient with itself and lands around 1.1:1 every time —
+    // which is how a legible hero headline became a confident violation. The
+    // ratio that matters is each glyph against what lies behind the element,
+    // and this method cannot see it, so it says nothing and leaves axe's own
+    // verdict standing.
+    const fillRaw = (cs as CSSStyleDeclaration & { webkitTextFillColor?: string }).webkitTextFillColor;
+    const fill = fillRaw ? parseRgb(fillRaw) : null;
+    const paintedByBackground =
+      (fill !== null && fill[3] === 0) ||
+      (cs.backgroundClip === 'text' ||
+        (cs as CSSStyleDeclaration & { webkitBackgroundClip?: string }).webkitBackgroundClip === 'text');
+
     const fontSizePx = parseFloat(cs.fontSize) || 16;
     const weight = parseInt(cs.fontWeight, 10) || 400;
     const bold = weight >= 700;
@@ -357,11 +376,13 @@ function collectInPage(): ContrastCandidate[] {
       // scrolls; correct too when an inner container does.
       box: ckBox(el, rect),
       clipped: painted === null ? true : undefined,
+      paintedByBackground: paintedByBackground || undefined,
       // The PAINTED rect, not the laid-out one: the pixel pass must sample only
       // pixels this element actually put on screen.
-      viewportBox: painted
-        ? { x: painted.x, y: painted.y, width: painted.width, height: painted.height }
-        : undefined,
+      viewportBox:
+        painted && !paintedByBackground
+          ? { x: painted.x, y: painted.y, width: painted.width, height: painted.height }
+          : undefined,
     });
     if (out.length >= 400) break; // bound the payload
   }

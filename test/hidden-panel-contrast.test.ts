@@ -61,6 +61,12 @@ suite('contrast candidates exclude what is not painted', () => {
     expect(clipped).toHaveLength(1);
     expect(clipped[0].textColor).toBe('rgb(111, 106, 128)');
     expect(clipped[0].viewportBox).toBeUndefined();
+    // Gradient text is carried but never measured: sampling it compares the
+    // gradient with itself.
+    const gradient = pass.candidates.filter((c) => c.paintedByBackground);
+    expect(gradient).toHaveLength(1);
+    expect(gradient[0].viewportBox).toBeUndefined();
+
     // Its two painted siblings are not flagged.
     expect(pass.candidates.filter((c) => c.textColor === 'rgb(111, 106, 128)')).toHaveLength(3);
     // Both visible blocks still are — the fix must not blind the collector.

@@ -23,6 +23,7 @@ const Candidate = z.object({
   bgColor: z.string().nullable().optional(),
   flat: z.boolean(),
   clipped: z.boolean().optional(),
+  paintedByBackground: z.boolean().optional(),
   ratio: z.number().nullable().optional(),
   required: z.number(),
   measuredBand: z.enum(['pass', 'fail', 'ambiguous']).optional(),
@@ -70,6 +71,12 @@ export const contrastText: Rule<readonly ['style-probe']> = {
         // no one can see. The candidate is still carried so the reconciliation
         // can clear axe's finding on the same element.
         if (c.clipped) continue;
+
+        // Gradient text: the glyphs are the background, so a pixel band
+        // compares the gradient with itself. Nothing measurable here — axe's
+        // own verdict stands rather than being revised by a number that means
+        // nothing.
+        if (c.paintedByBackground) continue;
 
         // Non-flat only: decide the verdict from the pixel-band measurement.
         let confidence: 'violation' | 'needs-review' | null = null;
