@@ -68,20 +68,46 @@ async function readObstructions(page: Page): Promise<Obstructions> {
 }
 
 /**
- * Capture the whole scrollable content even when the DOCUMENT does not scroll.
+ * Wait until the page has stopped moving under us.
  *
- * `fullPage: true` only knows about document scroll. An app shell that pins the
- * document and scrolls an inner container yields exactly one screen — and every
- * below-fold element then sits outside the image, where a pixel measurement
- * clips to nothing and reports "could not be proven". So: find the container the
- * page actually scrolls, walk it a screen at a time, and compose the bands into
- * one tall image whose coordinate space matches `__ck.contentBox` (rect + the
- * scroll offsets of every scrolling ancestor).
+ * A fixed `waitForTimeout` is a guess, and on a real marketing page it is the
+ * wrong one: reveal transitions here run 520-800ms and images arrive without
+ * intrinsic size, so 120ms after a scroll the layout is still settling. The
+ * screenshot is taken at one instant and the DOM is read a moment later, so
+ * anything that moves in between makes the two describe different layouts —
+ * which is how a transcript line came to be "measured" against the photo
+ * thumbnail of the row above it. Between two passes of one scan the document
+ * grew by 1,215px this way.
  *
- * Rows above the scroller (a fixed header) come from the first band; each later
- * band contributes only the scroller's own rows, so page chrome is not repeated
- * down the composite.
+ * So: poll until the document height, the scroll offset and the in-flight image
+ * count all hold still across consecutive samples, with a hard cap so a page
+ * that animates forever (a carousel, a ticker) costs a bounded wait rather than
+ * hanging the scan.
  */
+async function settleLayout(page: Page, capMs = 1200): Promise<void> {
+  const start = Date.now();
+  let stable = 0;
+  let last = '';
+  while (Date.now() - start < capMs) {
+    const now = (await page.evaluate(() => {
+      const doc = document.scrollingElement ?? document.documentElement;
+      let pending = 0;
+      const imgs = document.images;
+      for (let i = 0; i < imgs.length; i++) if (!imgs[i].complete) pending++;
+      return `${doc.scrollHeight}|${Math.round(doc.scrollTop)}|${pending}|${document.readyState}`;
+    })) as string;
+    if (now === last) {
+      // Two agreeing samples a frame apart is enough; a third costs more than
+      // it buys on a page that is genuinely at rest.
+      if (++stable >= 2) return;
+    } else {
+      stable = 0;
+      last = now;
+    }
+    await page.waitForTimeout(80);
+  }
+}
+
 /**
  * Walk a document-scrolling page a screen at a time, handing the visitor each
  * viewport-sized band while the page is parked at that offset — the only moment
@@ -118,7 +144,7 @@ async function measureInBands(page: Page, info: ScrollerInfo, onBand: BandVisito
       window.scrollTo(0, offset);
       return (document.scrollingElement ?? document.documentElement).scrollTop;
     }, target)) as number;
-    await page.waitForTimeout(120); // lazy content + scroll-linked effects settle
+    await settleLayout(page); // lazy images + reveal transitions, not a fixed guess
     // Obstructions are re-read per band: headers hide on scroll-down, banners
     // get dismissed, and a stale rect would reject good measurements.
     const bandObs = await readObstructions(page);
@@ -132,6 +158,21 @@ async function measureInBands(page: Page, info: ScrollerInfo, onBand: BandVisito
   });
 }
 
+/**
+ * Capture the whole scrollable content even when the DOCUMENT does not scroll.
+ *
+ * `fullPage: true` only knows about document scroll. An app shell that pins the
+ * document and scrolls an inner container yields exactly one screen — and every
+ * below-fold element then sits outside the image, where a pixel measurement
+ * clips to nothing and reports "could not be proven". So: find the container the
+ * page actually scrolls, walk it a screen at a time, and compose the bands into
+ * one tall image whose coordinate space matches `__ck.contentBox` (rect + the
+ * scroll offsets of every scrolling ancestor).
+ *
+ * Rows above the scroller (a fixed header) come from the first band; each later
+ * band contributes only the scroller's own rows, so page chrome is not repeated
+ * down the composite.
+ */
 async function captureScrollableContent(
   page: Page,
   onBand?: BandVisitor,
@@ -175,7 +216,7 @@ async function captureScrollableContent(
       const ck = (window as unknown as { __ck?: { scrollPrimaryTo(o: number): number } }).__ck;
       return ck ? ck.scrollPrimaryTo(offset) : 0;
     }, target)) as number;
-    await page.waitForTimeout(120); // lazy content + scroll-linked effects settle
+    await settleLayout(page); // lazy images + reveal transitions, not a fixed guess
     const band = PNG.sync.read(await page.screenshot({ type: 'png' }));
     // Copy only the scroller's rows; `actual` may differ from `target` at the
     // end of the range, so place the band where it really landed.
