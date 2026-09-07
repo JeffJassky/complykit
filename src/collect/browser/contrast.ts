@@ -44,6 +44,9 @@ export interface ContrastCandidate {
   // against the band captured at this scroll position; `box` (capture space)
   // stays the stable identity/evidence coordinate.
   viewportBox?: { x: number; y: number; width: number; height: number };
+  /** True when an ancestor's overflow clips the element away entirely: it lays
+   *  out and reports a rect, but nothing of it is painted. */
+  clipped?: boolean;
   // Assigned AFTER collection by the pixel-band escalation (index.ts) — the
   // measured verdict and the exact colours it read off the screenshot.
   measuredBand?: 'pass' | 'fail' | 'ambiguous';
@@ -233,6 +236,39 @@ function collectInPage(): ContrastCandidate[] {
     return parts.join('>');
   }
 
+  /**
+   * The part of the element that is actually painted: its rect intersected with
+   * every clipping ancestor.
+   *
+   * `getBoundingClientRect` reports where an element WOULD be. Inside a box with
+   * `overflow: hidden` — a fixed-height transcript panel, a masked carousel, a
+   * "read more" collapse — the overflowing lines still lay out and still report
+   * a position, but nothing of them is drawn. Sampling that position reads
+   * whatever the clip lets through, which is the section underneath: on the
+   * StoryFolder client, transcript words clipped out of a panel measured
+   * entirely against the near-white band below it, 261 of 355 contrast
+   * violations at a uniform 2.38:1.
+   *
+   * Returns null when nothing of the element survives the clip.
+   */
+  function paintedRect(el: Element, rect: DOMRect): { x: number; y: number; width: number; height: number } | null {
+    let left = rect.left, top = rect.top, right = rect.right, bottom = rect.bottom;
+    let cur = el.parentElement;
+    while (cur) {
+      const cs = getComputedStyle(cur);
+      const clipsX = cs.overflowX !== 'visible';
+      const clipsY = cs.overflowY !== 'visible';
+      if (clipsX || clipsY) {
+        const r = cur.getBoundingClientRect();
+        if (clipsX) { left = Math.max(left, r.left); right = Math.min(right, r.right); }
+        if (clipsY) { top = Math.max(top, r.top); bottom = Math.min(bottom, r.bottom); }
+        if (right - left < 1 || bottom - top < 1) return null;
+      }
+      cur = cur.parentElement;
+    }
+    return { x: left, y: top, width: right - left, height: bottom - top };
+  }
+
   function ckBox(el: Element, r: DOMRect): { x: number; y: number; width: number; height: number } {
     const ck = (window as unknown as { __ck?: { contentBox(e: Element): { x: number; y: number; width: number; height: number } } }).__ck;
     return ck ? ck.contentBox(el) : { x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height };
@@ -271,6 +307,12 @@ function collectInPage(): ContrastCandidate[] {
     }
     const rect = el.getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1) continue;
+    // Only the painted part is measurable; sampling where clipped-away text
+    // "would be" reads the content behind the clip. A fully clipped element is
+    // still RECORDED, flagged, so the reconciliation can clear axe's finding
+    // about text nobody can see — dropping it here would leave that finding
+    // standing forever as "could not be proven".
+    const painted = paintedRect(el, rect);
 
     const fg = parseRgb(cs.color);
     if (!fg) continue;
@@ -314,7 +356,12 @@ function collectInPage(): ContrastCandidate[] {
       // (geometry-init.ts). Identical to rect + window.scroll when the document
       // scrolls; correct too when an inner container does.
       box: ckBox(el, rect),
-      viewportBox: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      clipped: painted === null ? true : undefined,
+      // The PAINTED rect, not the laid-out one: the pixel pass must sample only
+      // pixels this element actually put on screen.
+      viewportBox: painted
+        ? { x: painted.x, y: painted.y, width: painted.width, height: painted.height }
+        : undefined,
     });
     if (out.length >= 400) break; // bound the payload
   }

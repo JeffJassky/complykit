@@ -79,33 +79,47 @@ async function readObstructions(page: Page): Promise<Obstructions> {
  * thumbnail of the row above it. Between two passes of one scan the document
  * grew by 1,215px this way.
  *
- * So: poll until the document height, the scroll offset and the in-flight image
- * count all hold still across consecutive samples, with a hard cap so a page
- * that animates forever (a carousel, a ticker) costs a bounded wait rather than
- * hanging the scan.
+ * Polling the DOM is not enough on its own. A scroll-linked component — a
+ * sticky scrubber, a pinned split — animates with rAF-driven transforms toward
+ * a target: document height, scroll offset and image count are all constant
+ * while the content is still sliding. So the last word goes to the pixels: two
+ * consecutive identical frames mean nothing is moving, whatever the DOM says.
+ * On the client's two scrubbed pages that difference accounted for 261 of 354
+ * contrast violations, every one of them sampling the same near-white pixel of
+ * an app screenshot that had not finished moving into place.
+ *
+ * A hard cap keeps a page that animates forever (a carousel, a ticker, a video)
+ * to a bounded wait rather than hanging the scan.
  */
-async function settleLayout(page: Page, capMs = 1200): Promise<void> {
+async function settleLayout(page: Page, capMs = 1500): Promise<Buffer | null> {
   const start = Date.now();
-  let stable = 0;
-  let last = '';
+  let lastDom = '';
+  let lastFrame: Buffer | null = null;
+  let domStable = false;
   while (Date.now() - start < capMs) {
-    const now = (await page.evaluate(() => {
+    const dom = (await page.evaluate(() => {
       const doc = document.scrollingElement ?? document.documentElement;
       let pending = 0;
       const imgs = document.images;
       for (let i = 0; i < imgs.length; i++) if (!imgs[i].complete) pending++;
       return `${doc.scrollHeight}|${Math.round(doc.scrollTop)}|${pending}|${document.readyState}`;
     })) as string;
-    if (now === last) {
-      // Two agreeing samples a frame apart is enough; a third costs more than
-      // it buys on a page that is genuinely at rest.
-      if (++stable >= 2) return;
-    } else {
-      stable = 0;
-      last = now;
+    domStable = dom === lastDom;
+    lastDom = dom;
+
+    // Only start comparing frames once the cheap check agrees; a growing
+    // document will not produce two identical frames anyway.
+    if (!domStable) {
+      lastFrame = null;
+      await page.waitForTimeout(80);
+      continue;
     }
+    const frame = await page.screenshot({ type: 'png' });
+    if (lastFrame && lastFrame.equals(frame)) return frame;
+    lastFrame = frame;
     await page.waitForTimeout(80);
   }
+  return lastFrame;
 }
 
 /**
@@ -144,11 +158,13 @@ async function measureInBands(page: Page, info: ScrollerInfo, onBand: BandVisito
       window.scrollTo(0, offset);
       return (document.scrollingElement ?? document.documentElement).scrollTop;
     }, target)) as number;
-    await settleLayout(page); // lazy images + reveal transitions, not a fixed guess
+    // The frame the page settled on IS the band image: taking another would
+    // reopen the gap this is here to close.
+    const settled = await settleLayout(page);
     // Obstructions are re-read per band: headers hide on scroll-down, banners
     // get dismissed, and a stale rect would reject good measurements.
     const bandObs = await readObstructions(page);
-    const band = PNG.sync.read(await page.screenshot({ type: 'png' }));
+    const band = PNG.sync.read(settled ?? (await page.screenshot({ type: 'png' })));
     await onBand(band, actual, i, bandObs);
   }
 
@@ -216,8 +232,8 @@ async function captureScrollableContent(
       const ck = (window as unknown as { __ck?: { scrollPrimaryTo(o: number): number } }).__ck;
       return ck ? ck.scrollPrimaryTo(offset) : 0;
     }, target)) as number;
-    await settleLayout(page); // lazy images + reveal transitions, not a fixed guess
-    const band = PNG.sync.read(await page.screenshot({ type: 'png' }));
+    const settled = await settleLayout(page);
+    const band = PNG.sync.read(settled ?? (await page.screenshot({ type: 'png' })));
     // Copy only the scroller's rows; `actual` may differ from `target` at the
     // end of the range, so place the band where it really landed.
     const srcTop = Math.round(info.top);

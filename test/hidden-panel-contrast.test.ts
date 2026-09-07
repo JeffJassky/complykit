@@ -53,6 +53,16 @@ suite('contrast candidates exclude what is not painted', () => {
 
     // The closed panel's near-white ink is not a candidate at all.
     expect(inks).not.toContain('rgb(244, 246, 250)');
+
+    // The clipped line IS still carried — the reconciliation needs it to clear
+    // axe's finding about the same element — but flagged, and with no viewport
+    // box, so nothing tries to measure pixels where it is not painted.
+    const clipped = pass.candidates.filter((c) => c.clipped);
+    expect(clipped).toHaveLength(1);
+    expect(clipped[0].textColor).toBe('rgb(111, 106, 128)');
+    expect(clipped[0].viewportBox).toBeUndefined();
+    // Its two painted siblings are not flagged.
+    expect(pass.candidates.filter((c) => c.textColor === 'rgb(111, 106, 128)')).toHaveLength(3);
     // Both visible blocks still are — the fix must not blind the collector.
     expect(inks).toContain('rgb(160, 160, 160)'); // the pale paragraph
     expect(inks).toContain('rgb(201, 201, 207)'); // the pale hero copy

@@ -28,6 +28,12 @@
   }
   /* Deliberately low contrast (2.3:1) so the collector keeps it: it drops
      flat candidates that already pass, and a control has to survive. */
+  /* A fixed-height panel that clips its overflow: the third line lays out and
+     reports a rect, but nothing of it is painted — and the rect lands on the
+     pale band below the panel. */
+  #clipper { height: 44px; overflow: hidden; background: #14121f; }
+  #clipper p { margin: 0; color: #6f6a80; }
+  #below { height: 120px; background: #f5f9ff; }
   #visible-copy { padding: 24px; color: #a0a0a0; background: #ffffff; }
 </style>
 
@@ -37,4 +43,11 @@
   </div>
 </div>
 <div id="hero">Hero copy that the closed panel is laid out on top of.</div>
+<div id="clipper">
+  <p>First line, painted.</p>
+  <p>Second line, painted.</p>
+  <p id="clipped-line">Third line, clipped away entirely.</p>
+</div>
+<div id="below"></div>
+
 <div id="visible-copy">Ordinary visible paragraph, and too pale for its ground.</div>

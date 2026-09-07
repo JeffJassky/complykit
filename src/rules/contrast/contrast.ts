@@ -22,6 +22,7 @@ const Candidate = z.object({
   textColor: z.string().optional(),
   bgColor: z.string().nullable().optional(),
   flat: z.boolean(),
+  clipped: z.boolean().optional(),
   ratio: z.number().nullable().optional(),
   required: z.number(),
   measuredBand: z.enum(['pass', 'fail', 'ambiguous']).optional(),
@@ -62,6 +63,13 @@ export const contrastText: Rule<readonly ['style-probe']> = {
         // Flat-colour stacks are axe's job (axe color-contrast handles them
         // reliably) — skip them here so the two engines don't double-report 1.4.3.
         if (c.flat) continue;
+
+        // Clipped away by an ancestor's overflow: it lays out and reports a
+        // rect, but nothing of it is drawn. There is no rendered contrast to
+        // report, and "ratio could not be proven" would be a finding about text
+        // no one can see. The candidate is still carried so the reconciliation
+        // can clear axe's finding on the same element.
+        if (c.clipped) continue;
 
         // Non-flat only: decide the verdict from the pixel-band measurement.
         let confidence: 'violation' | 'needs-review' | null = null;

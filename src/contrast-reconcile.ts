@@ -26,6 +26,9 @@ import type { Artifact, Subject } from './record/index.js';
 export interface MeasuredContrast {
   box: { x: number; y: number; width: number; height: number };
   flat: boolean;
+  /** An ancestor's overflow clips this element away: it lays out, but nothing
+   *  of it is painted. */
+  clipped?: boolean;
   measuredBand?: 'pass' | 'fail' | 'ambiguous';
   minRatio?: number;
   maxRatio?: number;
@@ -52,6 +55,7 @@ export function indexMeasuredContrast(artifacts: Artifact[]): MeasuredIndex {
       bucket.push({
         box,
         flat: raw.flat === true,
+        clipped: raw.clipped === true,
         measuredBand: raw.measuredBand as MeasuredContrast['measuredBand'],
         minRatio: typeof raw.minRatio === 'number' ? raw.minRatio : undefined,
         maxRatio: typeof raw.maxRatio === 'number' ? raw.maxRatio : undefined,
@@ -104,6 +108,12 @@ export function reconcileAxeContrast(
   axeConfidence: 'violation' | 'needs-review',
 ): Reconciliation {
   if (!measured) return { action: 'keep' };
+  // Nothing of this element is drawn — an ancestor's overflow clips it away. A
+  // contrast ratio for text no one can see is not a finding; whether hiding it
+  // that way is itself a problem is a different rule's question.
+  if (measured.clipped) {
+    return { action: 'drop', reason: 'clipped out by an ancestor’s overflow — not painted' };
+  }
   if (!measured.flat) return { action: 'drop', reason: 'non-flat background — contrast.text owns this element' };
   if (!measured.measuredBand) return { action: 'keep' };
 
