@@ -44,6 +44,10 @@ export interface ContrastCandidate {
   // against the band captured at this scroll position; `box` (capture space)
   // stays the stable identity/evidence coordinate.
   viewportBox?: { x: number; y: number; width: number; height: number };
+  /** Handle into the page-side element registry (__ck.register), so geometry
+   *  can be re-read for THIS element rather than for whatever cssPath happens
+   *  to match first. */
+  ref?: number;
   /** True when nothing of the element reaches the screen: an ancestor's
    *  overflow clips it away, or something is painted over it. Either way it
    *  lays out and reports a rect that nobody can see. */
@@ -312,10 +316,6 @@ function collectInPage(): { candidates: ContrastCandidate[]; truncated: boolean 
 
     const fg = parseRgb(cs.color);
     if (!fg) continue;
-    // Fully transparent text (alpha 0) is invisible, not a contrast defect —
-    // flagging it is a false positive (and it produces the confusing ratio-less
-    // findings). Skip it here; a hidden-text a11y concern is a different rule.
-    if (fg[3] === 0) continue;
 
     // Gradient text: `background-clip: text` with a transparent text fill, so
     // the glyphs ARE the background. A pixel measurement of such an element
@@ -330,6 +330,9 @@ function collectInPage(): { candidates: ContrastCandidate[]; truncated: boolean 
       (fill !== null && fill[3] === 0) ||
       (cs.backgroundClip === 'text' ||
         (cs as CSSStyleDeclaration & { webkitBackgroundClip?: string }).webkitBackgroundClip === 'text');
+    // Fully transparent text that is NOT gradient-clipped is invisible, not a
+    // contrast defect; a hidden-text concern is a different rule's.
+    if (fg[3] === 0 && !paintedByBackground) continue;
 
     const fontSizePx = parseFloat(cs.fontSize) || 16;
     const weight = parseInt(cs.fontWeight, 10) || 400;
@@ -345,7 +348,9 @@ function collectInPage(): { candidates: ContrastCandidate[]; truncated: boolean 
     if (flat && r !== null && r >= required) continue;
     const bgStr = flat ? `rgb(${bg!.map((n) => Math.round(n)).join(',')})` : null;
     const [fgVars, bgVars] = matchVars(el, [cs.color, bgStr]);
+    const ckReg = (window as unknown as { __ck?: { register(e: Element): number } }).__ck;
     out.push({
+      ref: ckReg?.register ? ckReg.register(el) : undefined,
       cssPath: cssPath(el),
       sourceFile: vueFile(el),
       scopeId: vueScopeId(el),
@@ -372,7 +377,7 @@ function collectInPage(): { candidates: ContrastCandidate[]; truncated: boolean 
       // The PAINTED rect, not the laid-out one: the pixel pass must sample only
       // pixels this element actually put on screen.
       viewportBox:
-        painted && !hidden && !paintedByBackground
+        painted && !hidden
           ? { x: painted.x, y: painted.y, width: painted.width, height: painted.height }
           : undefined,
     });

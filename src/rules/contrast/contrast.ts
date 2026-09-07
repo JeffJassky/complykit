@@ -72,11 +72,10 @@ export const contrastText: Rule<readonly ['style-probe']> = {
         // can clear axe's finding on the same element.
         if (c.clipped) continue;
 
-        // Gradient text: the glyphs are the background, so a pixel band
-        // compares the gradient with itself. Nothing measurable here — axe's
-        // own verdict stands rather than being revised by a number that means
-        // nothing.
-        if (c.paintedByBackground) continue;
+        // Gradient text is measured with its ink read from the pixels (see
+        // pixel-band.ts). Only when that produced nothing does axe's own
+        // verdict stand.
+        if (c.paintedByBackground && !c.measuredBand) continue;
 
         // Non-flat only: decide the verdict from the pixel-band measurement.
         let confidence: 'violation' | 'needs-review' | null = null;

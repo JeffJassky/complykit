@@ -72,9 +72,17 @@ const HIST_BINS = 64;
  * near-exact value; a real gradient keeps a true (tight) range.
  */
 export function pixelBand(png: PNG, candidate: ContrastCandidate, boxOverride?: ContrastCandidate['box']): PixelBandResult | null {
-  const fg = parseRgb(candidate.textColor);
-  if (!fg) return null;
-  const fgLum = luminance(fg[0], fg[1], fg[2]);
+  // Gradient text has no single ink colour: `background-clip: text` paints the
+  // glyphs with the element's own gradient and the CSS colour is transparent.
+  // It is still measurable — the glyphs are the pixels that are NOT the
+  // ground. Same histogram, but the ink is read from the image too: every
+  // populated luminance run other than the background's, with the sparse
+  // anti-aliasing valley excluded by the same floor. The verdict is the worst
+  // glyph pixel against the worst ground pixel, which is what the reader gets.
+  const inkFromPixels = candidate.paintedByBackground === true;
+  const fg = inkFromPixels ? null : parseRgb(candidate.textColor);
+  if (!fg && !inkFromPixels) return null;
+  const fgLum = fg ? luminance(fg[0], fg[1], fg[2]) : 0;
 
   // Which coordinates address this element IN THIS IMAGE: a band capture is
   // viewport-relative, a full-page/composite capture is capture-space.
@@ -162,11 +170,36 @@ export function pixelBand(png: PNG, candidate: ContrastCandidate, boxOverride?: 
   }
   if (bgPixels === 0 || bgMinLum === Infinity) return null;
 
-  // Worst case: the background pixel whose contrast with the text is LOWEST.
-  const ratioAtMin = contrast(fgLum, bgMinLum);
-  const ratioAtMax = contrast(fgLum, bgMaxLum);
-  const minRatio = Math.min(ratioAtMin, ratioAtMax);
-  const maxRatio = Math.max(ratioAtMin, ratioAtMax);
+  let minRatio: number;
+  let maxRatio: number;
+  let inkLo = -1;
+  let inkHi = -1;
+  if (inkFromPixels) {
+    // Ink = every populated run that is not the background run. Track the ink
+    // pixels nearest the background in luminance (worst case) and farthest
+    // (best case).
+    let worst = Infinity;
+    let best = -Infinity;
+    for (let k = 0; k < pl.length; k++) {
+      const l = pl[k];
+      if (l >= bgMinLum - 1e-9 && l <= bgMaxLum + 1e-9) continue; // background
+      const bin = Math.min(HIST_BINS - 1, Math.max(0, Math.floor(l * HIST_BINS)));
+      if (counts[bin] < floor) continue; // anti-aliasing valley
+      const r = Math.min(contrast(l, bgMinLum), contrast(l, bgMaxLum));
+      const R = Math.max(contrast(l, bgMinLum), contrast(l, bgMaxLum));
+      if (r < worst) { worst = r; inkLo = k; }
+      if (R > best) { best = R; inkHi = k; }
+    }
+    if (inkLo < 0) return null; // no ink cluster distinct from the ground
+    minRatio = worst;
+    maxRatio = best;
+  } else {
+    // Worst case: the background pixel whose contrast with the text is LOWEST.
+    const ratioAtMin = contrast(fgLum, bgMinLum);
+    const ratioAtMax = contrast(fgLum, bgMaxLum);
+    minRatio = Math.min(ratioAtMin, ratioAtMax);
+    maxRatio = Math.max(ratioAtMin, ratioAtMax);
+  }
   const req = candidate.required;
 
   let band: Band;
@@ -198,17 +231,20 @@ export function pixelBand(png: PNG, candidate: ContrastCandidate, boxOverride?: 
   const lo = loIdx >= 0 ? loIdx : 0;
   const hi = hiIdx >= 0 ? hiIdx : 0;
 
+  const fgOut: [number, number, number] = fg
+    ? [fg[0], fg[1], fg[2]]
+    : [pr[inkLo], pg[inkLo], pb[inkLo]]; // the worst glyph pixel, for the swatch
   return {
     band,
     minRatio: Math.round(minRatio * 100) / 100,
     maxRatio: Math.round(maxRatio * 100) / 100,
     sampled: bgPixels,
     samples,
-    fgColor: rgbStr(fg[0], fg[1], fg[2]),
+    fgColor: rgbStr(fgOut[0], fgOut[1], fgOut[2]),
     bgLoColor: rgbStr(pr[lo], pg[lo], pb[lo]),
     bgHiColor: rgbStr(pr[hi], pg[hi], pb[hi]),
-    ratioLo: Math.round(contrast(fgLum, pl[lo]) * 100) / 100,
-    ratioHi: Math.round(contrast(fgLum, pl[hi]) * 100) / 100,
+    ratioLo: Math.round((fg ? contrast(fgLum, pl[lo]) : minRatio) * 100) / 100,
+    ratioHi: Math.round((fg ? contrast(fgLum, pl[hi]) : maxRatio) * 100) / 100,
   };
 }
 

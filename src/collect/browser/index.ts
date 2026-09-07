@@ -262,17 +262,15 @@ async function scanOnce(
     // capture space of that band and are deliberately left alone.)
     if (measured.size) {
       try {
-        const rested = (await page.evaluate((paths: string[]) => {
-          const ck = (window as unknown as { __ck?: { contentBox(e: Element): { x: number; y: number; width: number; height: number } } }).__ck;
-          return paths.map((p) => {
-            let el: Element | null = null;
-            try { el = document.querySelector(p); } catch { el = null; }
-            if (!el) return null;
-            if (ck) return ck.contentBox(el);
-            const r = el.getBoundingClientRect();
-            return { x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height };
-          });
-        }, candidates.map((c) => c.cssPath))) as ({ x: number; y: number; width: number; height: number } | null)[];
+        // By element handle, never by cssPath: the path is a positional
+        // fingerprint that matches many nodes, and re-resolving it landed on
+        // the wrong one — a measured, passing "for macOS · Apple Silicon" was
+        // stamped with the box of some other span 9,000px away and then
+        // reported as unresolved because axe's node no longer matched it.
+        const rested = (await page.evaluate((refs: (number | null)[]) => {
+          const ck = (window as unknown as { __ck?: { boxOf(ref: number): { x: number; y: number; width: number; height: number } | null } }).__ck;
+          return refs.map((ref) => (ref == null || !ck?.boxOf ? null : ck.boxOf(ref)));
+        }, candidates.map((c) => (typeof c.ref === 'number' ? c.ref : null)))) as ({ x: number; y: number; width: number; height: number } | null)[];
         for (let i = 0; i < candidates.length; i++) {
           const box = rested[i];
           if (box && box.width > 0 && box.height > 0) candidates[i].box = box;

@@ -67,11 +67,12 @@ suite('contrast candidates exclude what is not painted', () => {
     expect(clipped).toHaveLength(1);
     expect(clipped[0].textColor).toBe('rgb(111, 106, 128)');
     expect(clipped[0].viewportBox).toBeUndefined();
-    // Gradient text is carried but never measured: sampling it compares the
-    // gradient with itself.
+    // Gradient text is carried, flagged, and MEASURABLE: the pixel pass reads
+    // its ink from the image (every cluster that is not the ground) instead of
+    // from a CSS colour that is transparent.
     const gradient = pass.candidates.filter((c) => c.paintedByBackground);
     expect(gradient).toHaveLength(1);
-    expect(gradient[0].viewportBox).toBeUndefined();
+    expect(gradient[0].viewportBox).toBeDefined();
 
     // Its two painted siblings are not flagged.
     expect(pass.candidates.filter((c) => c.textColor === 'rgb(111, 106, 128)')).toHaveLength(3);

@@ -21,6 +21,8 @@ import type { ContrastCandidate } from './contrast.js';
 // which knows whether the background is flat, wins.
 
 interface Resolved {
+  ref?: number;
+  paintedByBackground?: boolean;
   sel: string;
   textColor: string;
   fontSizePx: number;
@@ -100,11 +102,12 @@ export async function measureAxeContrastTargets(
             cs.backgroundClip === 'text' ||
             (cs as CSSStyleDeclaration & { webkitBackgroundClip?: string }).webkitBackgroundClip === 'text';
           const transparentFill = !!fillRaw && /rgba?\([^)]*,\s*0\s*\)$/.test(fillRaw);
-          if (clipsToText || transparentFill) {
-            return { sel, textColor: '', fontSizePx: 16, bold: false, textSample: null, box: null, viewportBox: null };
-          }
+          const paintedByBackground = clipsToText || transparentFill;
+          const ckReg = (window as unknown as { __ck?: { register(e: Element): number } }).__ck;
           return {
             sel,
+            ref: ckReg?.register ? ckReg.register(el) : undefined,
+            paintedByBackground: paintedByBackground || undefined,
             textColor: cs.color,
             fontSizePx: parseFloat(cs.fontSize) || 16,
             bold: (parseInt(cs.fontWeight, 10) || 400) >= 700,
@@ -141,6 +144,8 @@ export async function measureAxeContrastTargets(
     if (vb.y + vb.height <= 0 || vb.y >= png.height) continue; // off-screen right now
     const large = r.fontSizePx >= 24 || (r.fontSizePx >= 18.66 && r.bold);
     const candidate: ContrastCandidate = {
+      ref: r.ref,
+      paintedByBackground: r.paintedByBackground,
       cssPath: r.sel,
       sourceFile: null,
       scopeId: null,

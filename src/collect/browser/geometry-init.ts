@@ -24,15 +24,48 @@ export const GEOMETRY_INIT = (): void => {
     return oy === 'auto' || oy === 'scroll' || el === document.scrollingElement;
   }
 
-  /** Every scroll container, innermost-first. */
+  /**
+   * Every INNER scroll container, innermost-first. The document's own
+   * scroller is excluded on purpose: contentBox already adds window.scrollY,
+   * and counting <html>'s scrollTop on top of it doubled the document offset
+   * for every box read mid-walk — an element at 14,517 reported 28,451 while
+   * parked at 13,934. It went unnoticed because the at-rest re-read happens at
+   * scrollY 0, where the double is 0.
+   */
   function scrollAncestors(el: Element): Element[] {
     const out: Element[] = [];
+    const doc = document.scrollingElement ?? document.documentElement;
     let cur: Element | null = el.parentElement;
     while (cur) {
-      if (scrolls(cur)) out.push(cur);
+      if (cur !== doc && cur !== document.body && scrolls(cur)) out.push(cur);
       cur = cur.parentElement;
     }
     return out;
+  }
+
+  /**
+   * A stable handle on an element for the life of the page.
+   *
+   * The collector's cssPath is a positional fingerprint — good enough to name a
+   * finding, not good enough to find the element again: `div>div>div:nth-of-
+   * type(2)>p>span:nth-of-type(1)` matches dozens of nodes and querySelector
+   * returns the first. Re-reading geometry "at rest" through that selector
+   * landed on the wrong element and stamped its box onto the measurement, so
+   * the reconciliation — which matches axe's node to ours geometrically —
+   * missed by 50px and reported a measured, passing element as unresolved.
+   * 44 of 85 residual findings on the client were this.
+   */
+  const registry: Element[] = [];
+  function register(el: Element): number {
+    const i = registry.indexOf(el);
+    if (i >= 0) return i;
+    registry.push(el);
+    return registry.length - 1;
+  }
+  function boxOf(ref: number): { x: number; y: number; width: number; height: number } | null {
+    const el = registry[ref];
+    if (!el || !el.isConnected) return null;
+    return contentBox(el);
   }
 
   /**
@@ -182,8 +215,32 @@ export const GEOMETRY_INIT = (): void => {
    * cannot drift apart on it — they did, and the second one reintroduced the
    * first one's bug.
    */
+  /**
+   * Does this element hide what is behind it? A translucent shade over a hero
+   * dims the text beneath, but the text is still what the reader sees — and
+   * what the reader sees, dimmed, is exactly what should be measured. Only an
+   * opaque surface (a solid fill, an image, a video) takes the pixels away.
+   */
+  function opaque(el: Element): boolean {
+    const cs = getComputedStyle(el);
+    if (parseFloat(cs.opacity) < 1) return false;
+    if (/^(IMG|VIDEO|CANVAS|SVG)$/i.test(el.tagName)) return true;
+    const m = cs.backgroundColor.match(/rgba?\(([^)]+)\)/);
+    const a = m ? (m[1].split(',')[3] === undefined ? 1 : parseFloat(m[1].split(',')[3])) : 0;
+    if (a >= 1) return true;
+    // A background image with no opaque colour behind it: a gradient with
+    // alpha is see-through, a raster is not. Gradients are far more common as
+    // overlays, so err toward measuring; a raster is handled by the IMG case
+    // when it is an element, and is rare as a CSS background over text.
+    return false;
+  }
+
   function paintedBox(el: Element): { x: number; y: number; width: number; height: number } | null {
     const rect = el.getBoundingClientRect();
+    // A 1x1 (or thinner) box is the visually-hidden idiom: text for screen
+    // readers, clipped to nothing on screen. Nobody sees it, so there is
+    // nothing to measure and nothing to report.
+    if (rect.width < 2 || rect.height < 2) return null;
     let left = rect.left, top = rect.top, right = rect.right, bottom = rect.bottom;
     let cur = el.parentElement;
     while (cur) {
@@ -211,6 +268,17 @@ export const GEOMETRY_INIT = (): void => {
         if (hit === el || el.contains(hit) || hit.contains(el)) {
           return { x: left, y: top, width: right - left, height: bottom - top };
         }
+        // Something unrelated is on top. If it is see-through, the text is
+        // still visible — dimmed — and that dimmed rendering is the honest
+        // thing to measure. Check every layer between it and us, since a
+        // translucent shade may itself sit inside an opaque panel.
+        let layer: Element | null = hit;
+        let blocked = false;
+        while (layer && layer !== document.documentElement && !layer.contains(el)) {
+          if (opaque(layer)) { blocked = true; break; }
+          layer = layer.parentElement;
+        }
+        if (!blocked) return { x: left, y: top, width: right - left, height: bottom - top };
       }
     }
     // Nothing testable means we learned nothing, not that it is hidden.
@@ -218,5 +286,42 @@ export const GEOMETRY_INIT = (): void => {
     return null;
   }
 
-  (window as unknown as { __ck?: unknown }).__ck = { contentBox, primaryScroller, scrollPrimaryTo, scrolls, obstructions, paintedBox };
+  /**
+   * Scroll containers OTHER than the page's own, currently on screen.
+   *
+   * The band walk scrolls the primary scroller and nothing else. A fixed-height
+   * transcript box, a sticky documentation sidebar, a carousel track: each is
+   * its own scroller, and everything past its first screen is laid out, clipped,
+   * and never brought into view by the walk — so it is never measured. On the
+   * client that was every transcript row past the fourth; on the help centre,
+   * every sidebar link below the fold of an 800px viewport. The walk asks for
+   * these per band and steps through each one it has not walked yet.
+   */
+  function innerScrollers(): Array<{ ref: number; top: number; clientHeight: number; scrollHeight: number }> {
+    const doc = document.scrollingElement ?? document.documentElement;
+    const vh = document.documentElement.clientHeight;
+    const out: Array<{ ref: number; top: number; clientHeight: number; scrollHeight: number }> = [];
+    const all = document.querySelectorAll('*');
+    for (let i = 0; i < all.length; i++) {
+      const el = all[i];
+      if (el === doc || el === document.body) continue;
+      if (!scrolls(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width * r.height < 10000) continue;
+      if (r.bottom <= 0 || r.top >= vh) continue;
+      const primary = (window as unknown as { __ckScroller?: Element }).__ckScroller;
+      if (el === primary) continue;
+      out.push({ ref: register(el), top: r.top, clientHeight: el.clientHeight, scrollHeight: el.scrollHeight });
+    }
+    return out;
+  }
+
+  function scrollInnerTo(ref: number, offset: number): number {
+    const el = registry[ref];
+    if (!el) return 0;
+    el.scrollTop = offset;
+    return el.scrollTop;
+  }
+
+  (window as unknown as { __ck?: unknown }).__ck = { contentBox, primaryScroller, scrollPrimaryTo, scrolls, obstructions, paintedBox, register, boxOf, innerScrollers, scrollInnerTo };
 };

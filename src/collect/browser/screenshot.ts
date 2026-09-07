@@ -164,7 +164,48 @@ async function settleLayout(page: Page, capMs = 1500): Promise<Buffer | null> {
  * against the header. Stepping by the UNOBSTRUCTED height and scrolling back by
  * the top inset puts every row of the document into some band's clear strip.
  */
+/**
+ * Step through every inner scroll container visible in this band that has not
+ * been walked yet, handing the visitor a fresh frame at each step. The page's
+ * own scroll does not move, so `offset` stays the band's; what changes is what
+ * the container shows, and the visitor re-reads the DOM so it sees that.
+ */
+async function walkInnerScrollers(
+  page: Page,
+  offset: number,
+  index: number,
+  obs: Obstructions,
+  onBand: BandVisitor,
+  walked: Set<number>,
+): Promise<void> {
+  const scrollers = (await page.evaluate(() => {
+    const ck = (window as unknown as { __ck?: { innerScrollers(): unknown } }).__ck;
+    return ck?.innerScrollers ? ck.innerScrollers() : [];
+  })) as Array<{ ref: number; top: number; clientHeight: number; scrollHeight: number }>;
+  for (const sc of scrollers) {
+    if (walked.has(sc.ref)) continue;
+    walked.add(sc.ref);
+    const step = Math.max(1, sc.clientHeight);
+    const steps = Math.min(MAX_MEASURE_BANDS, Math.ceil(sc.scrollHeight / step));
+    for (let k = 1; k < steps; k++) {
+      const got = (await page.evaluate(([ref, o]: [number, number]) => {
+        const ck = (window as unknown as { __ck?: { scrollInnerTo(r: number, o: number): number } }).__ck;
+        return ck?.scrollInnerTo ? ck.scrollInnerTo(ref, o) : 0;
+      }, [sc.ref, k * step] as [number, number])) as number;
+      if (got <= 0) break;
+      const frame = (await settleLayout(page)) ?? (await safeShot(page));
+      if (!frame) break;
+      await onBand(PNG.sync.read(frame), offset, index, obs);
+    }
+    await page.evaluate((ref: number) => {
+      const ck = (window as unknown as { __ck?: { scrollInnerTo(r: number, o: number): number } }).__ck;
+      ck?.scrollInnerTo?.(ref, 0);
+    }, sc.ref);
+  }
+}
+
 async function measureInBands(page: Page, info: ScrollerInfo, onBand: BandVisitor): Promise<void> {
+  const walked = new Set<number>();
   const obs = await readObstructions(page);
   const clear = Math.max(1, info.clientHeight - obs.topInset - obs.bottomInset);
   const needed = Math.ceil(info.scrollHeight / clear);
@@ -187,6 +228,7 @@ async function measureInBands(page: Page, info: ScrollerInfo, onBand: BandVisito
     // get dismissed, and a stale rect would reject good measurements.
     const bandObs = await readObstructions(page);
     await onBand(PNG.sync.read(settled), actual, i, bandObs);
+    await walkInnerScrollers(page, actual, i, bandObs, onBand, walked);
   }
 
   await page.evaluate(() => {
