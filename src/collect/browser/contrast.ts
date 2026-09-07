@@ -251,6 +251,24 @@ function collectInPage(): ContrastCandidate[] {
 
     const cs = getComputedStyle(el);
     if (cs.visibility === 'hidden' || cs.display === 'none' || parseFloat(cs.opacity) === 0) continue;
+    // The element's OWN styles are not enough. A closed mega-menu, a carousel
+    // slide, a modal that has not opened: these lay out with real geometry
+    // while an ancestor hides them with opacity, visibility or
+    // content-visibility. Measuring one samples whatever is painted at those
+    // coordinates — the page behind it — and reports the panel's text as
+    // failing against a background it never sits on. On one real site that was
+    // a closed dropdown, laid out over the hero, reported at 1.03:1.
+    // checkVisibility asks the engine the question directly, ancestors
+    // included; where it is missing, the own-style check above still stands.
+    const check = (el as Element & {
+      checkVisibility?: (o: Record<string, boolean>) => boolean;
+    }).checkVisibility;
+    if (
+      typeof check === 'function' &&
+      !check.call(el, { opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true })
+    ) {
+      continue;
+    }
     const rect = el.getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1) continue;
 

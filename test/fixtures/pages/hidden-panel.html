@@ -1,0 +1,40 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>A panel that lays out but is not painted</title>
+<!--
+  A closed mega-menu: the panel has real geometry (it is positioned over the
+  hero and sized), but an ancestor hides it with opacity: 0. Its own computed
+  style says visible, so an own-styles-only check lets it through — and then a
+  pixel measurement samples the hero underneath and reports the panel's near-
+  white text as failing against a near-white background.
+-->
+<style>
+  html, body { margin: 0; }
+  body { background: #ffffff; font: 16px/1.5 system-ui, sans-serif; }
+  #hero { height: 400px; background: #f7f7f9; color: #c9c9cf; padding: 24px; }
+  #menu { position: relative; }
+  /* The wrapper hides it; the panel itself is a perfectly ordinary block. */
+  #panel-wrap { opacity: 0; }
+  /* A gradient, like every glassy dropdown: the cascade cannot resolve a flat
+     background for it, so the collector keeps it for pixel measurement instead
+     of clearing it from styles alone. That is the path that reaches the
+     screenshot and reads the hero underneath. */
+  #panel {
+    position: absolute;
+    top: 40px; left: 40px; width: 380px;
+    background: linear-gradient(180deg, #14121f, #221d36);
+    color: #f4f6fa;
+    padding: 16px;
+  }
+  /* Deliberately low contrast (2.3:1) so the collector keeps it: it drops
+     flat candidates that already pass, and a control has to survive. */
+  #visible-copy { padding: 24px; color: #a0a0a0; background: #ffffff; }
+</style>
+
+<div id="menu">
+  <div id="panel-wrap">
+    <div id="panel">Import a video from anywhere</div>
+  </div>
+</div>
+<div id="hero">Hero copy that the closed panel is laid out on top of.</div>
+<div id="visible-copy">Ordinary visible paragraph, and too pale for its ground.</div>
