@@ -269,7 +269,13 @@ function collectInPage(): { candidates: ContrastCandidate[]; truncated: boolean 
   let textNode: Node | null;
   while ((textNode = walker.nextNode())) {
     const text = (textNode.textContent ?? '').trim();
-    if (text.length < 2) continue;
+    // Any non-empty text, including one character. Requiring two excluded
+    // single-letter words — a transcript demo that renders one <span> per word
+    // put "I" and "a" in their own elements — and axe, which reports those as
+    // `incomplete` ("content is too short to determine if it is actual text"),
+    // then had nothing to reconcile against: 64 findings that no one could
+    // resolve because the one collector able to settle them was not looking.
+    if (text.length < 1) continue;
     const el = textNode.parentElement;
     if (!el || seen.has(el)) continue;
     seen.add(el);

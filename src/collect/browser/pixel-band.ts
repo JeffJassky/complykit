@@ -79,10 +79,22 @@ export function pixelBand(png: PNG, candidate: ContrastCandidate, boxOverride?: 
   // Which coordinates address this element IN THIS IMAGE: a band capture is
   // viewport-relative, a full-page/composite capture is capture-space.
   const box = boxOverride ?? candidate.box;
-  const x0 = Math.max(0, Math.floor(box.x));
-  const y0 = Math.max(0, Math.floor(box.y));
-  const x1 = Math.min(png.width, Math.ceil(box.x + box.width));
-  const y1 = Math.min(png.height, Math.ceil(box.y + box.height));
+  // A very small element is almost all ink. The clustering below assumes the
+  // background is the majority of the region — true for a word, false for a
+  // one-letter word: `<span class="word">I</span>` is about four pixels wide,
+  // its glyph fills most of them, and the "background" cluster it finds is the
+  // ink. That is why 64 single-letter spans in a transcript demo came back
+  // unmeasured while every multi-letter sibling measured cleanly.
+  //
+  // Padding a few pixels outward fixes it without changing what is measured:
+  // the pixels immediately around a word belong to the same surface it sits on
+  // (inter-word space, line leading), so they are the ground, not a neighbour's.
+  const PAD = 3;
+  const tight = box.width < 24 || box.height < 24;
+  const x0 = Math.max(0, Math.floor(box.x) - (tight ? PAD : 0));
+  const y0 = Math.max(0, Math.floor(box.y) - (tight ? PAD : 0));
+  const x1 = Math.min(png.width, Math.ceil(box.x + box.width) + (tight ? PAD : 0));
+  const y1 = Math.min(png.height, Math.ceil(box.y + box.height) + (tight ? PAD : 0));
   if (x1 <= x0 || y1 <= y0) return null;
 
   // Histogram luminance over a bounded grid. Track per-bin min/max of the actual
