@@ -93,7 +93,11 @@ export interface EngineNormalization {
   /** How the pixel measurement overrode axe's inferred contrast verdicts. A
    *  suppressed finding must be COUNTED — an instrument that silently deletes
    *  its own output is one nobody can audit. */
-  superseded: { cleared: number; upgraded: number; downgraded: number; ceded: number };
+  superseded: { cleared: number; upgraded: number; downgraded: number; ceded: number;
+    /** axe contrast nodes we took no measurement for. A measurement pass that
+     *  silently covers half the nodes is indistinguishable from one that covers
+     *  all of them, so the miss is counted and reported. */
+    unmatched: number };
 }
 
 export function normalizeEngineArtifacts(
@@ -157,7 +161,7 @@ export function normalizeEngineArtifacts(
   // Pixel measurements from the same captures, so axe's cascade-inferred
   // contrast verdicts can be reconciled against what actually rendered.
   const measuredContrast = indexMeasuredContrast(artifacts);
-  const superseded = { cleared: 0, upgraded: 0, downgraded: 0, ceded: 0 };
+  const superseded = { cleared: 0, upgraded: 0, downgraded: 0, ceded: 0, unmatched: 0 };
 
   for (const artifact of artifacts) {
     if (artifact.kind === 'static-scan') {
@@ -203,7 +207,9 @@ export function normalizeEngineArtifacts(
           let confidence = declaredConfidence;
           let measuredNote = '';
           if (rule.id === 'color-contrast') {
-            const verdict = reconcileAxeContrast(matchMeasured(measuredContrast, artifact.subject, node.box), confidence);
+            const match = matchMeasured(measuredContrast, artifact.subject, node.box);
+            if (!match) superseded.unmatched++;
+            const verdict = reconcileAxeContrast(match, confidence);
             if (verdict.action === 'drop') {
               if (verdict.reason.startsWith('non-flat')) superseded.ceded++;
               else superseded.cleared++;

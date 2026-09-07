@@ -153,5 +153,70 @@ export const GEOMETRY_INIT = (): void => {
     return { rects, topInset: Math.min(topInset, cap), bottomInset: Math.min(bottomInset, cap) };
   }
 
-  (window as unknown as { __ck?: unknown }).__ck = { contentBox, primaryScroller, scrollPrimaryTo, scrolls, obstructions };
+  /**
+   * The rect a reader can actually SEE for this element, or null.
+   *
+   * Two things stand between "it has a bounding box" and "you can look at it",
+   * and both produced whole classes of fictional contrast findings:
+   *
+   *  - Clipping. `getBoundingClientRect` reports where an element WOULD be.
+   *    Inside `overflow: hidden` — a fixed-height transcript panel, a masked
+   *    carousel, a collapsed section — the overflowing lines still lay out and
+   *    still report a position, but nothing of them is drawn. Sampling there
+   *    reads the section underneath.
+   *  - Occlusion. Something is painted on top. Rects cannot settle this: a
+   *    fixed header overlaps everything beneath it, but its OWN text is on top
+   *    and perfectly measurable, so rejecting by rectangle throws away the
+   *    header's contents along with what they cover.
+   *
+   * So: intersect with every clipping ancestor, then ask the compositor via
+   * `elementFromPoint`, which honours stacking contexts, z-index, clips and
+   * transforms. A hit counts when it is the element, a descendant (a glyph
+   * span), or an ancestor (the point fell between glyphs onto the element's own
+   * background — exactly the pixel we want to sample). Nine points, because one
+   * can land in a gap. Points outside the viewport cannot be hit-tested, so
+   * they are not evidence of occlusion; an element off-screen in this band is
+   * left for a band that has it on screen.
+   *
+   * Lives here so the contrast collector and the axe-target measurement pass
+   * cannot drift apart on it — they did, and the second one reintroduced the
+   * first one's bug.
+   */
+  function paintedBox(el: Element): { x: number; y: number; width: number; height: number } | null {
+    const rect = el.getBoundingClientRect();
+    let left = rect.left, top = rect.top, right = rect.right, bottom = rect.bottom;
+    let cur = el.parentElement;
+    while (cur) {
+      const cs = getComputedStyle(cur);
+      if (cs.overflowX !== 'visible' || cs.overflowY !== 'visible') {
+        const r = cur.getBoundingClientRect();
+        if (cs.overflowX !== 'visible') { left = Math.max(left, r.left); right = Math.min(right, r.right); }
+        if (cs.overflowY !== 'visible') { top = Math.max(top, r.top); bottom = Math.min(bottom, r.bottom); }
+        if (right - left < 1 || bottom - top < 1) return null;
+      }
+      cur = cur.parentElement;
+    }
+
+    const vw = document.documentElement.clientWidth;
+    const vh = document.documentElement.clientHeight;
+    let testable = 0;
+    for (let i = 1; i <= 3; i++) {
+      for (let j = 1; j <= 3; j++) {
+        const x = left + ((right - left) * i) / 4;
+        const y = top + ((bottom - top) * j) / 4;
+        if (x < 0 || y < 0 || x >= vw || y >= vh) continue;
+        testable++;
+        const hit = document.elementFromPoint(x, y);
+        if (!hit) continue;
+        if (hit === el || el.contains(hit) || hit.contains(el)) {
+          return { x: left, y: top, width: right - left, height: bottom - top };
+        }
+      }
+    }
+    // Nothing testable means we learned nothing, not that it is hidden.
+    if (testable === 0) return { x: left, y: top, width: right - left, height: bottom - top };
+    return null;
+  }
+
+  (window as unknown as { __ck?: unknown }).__ck = { contentBox, primaryScroller, scrollPrimaryTo, scrolls, obstructions, paintedBox };
 };

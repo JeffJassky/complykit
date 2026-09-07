@@ -112,14 +112,28 @@ async function scanOnce(
     // image was wrong on any still-loading page: one route's scroller grew from
     // 2208px to 3703px between capture and measurement, so boxes addressed
     // pixels that had moved and produced precise, confident, fictional ratios.
+    // axe runs BEFORE the capture, not after, so the elements it disputes can be
+    // measured inside a band like everything else. axe reports `incomplete` when
+    // it cannot walk to a background — a pseudo-element over the text, an
+    // overlapping box, a gradient — and those are exactly the elements the
+    // contrast collector drops, because the flat cascade says they pass. So
+    // nothing measured them and axe's "could not be determined" stood: 211
+    // findings on the client, every one of them a question the pixels can
+    // answer. Resolving them after the walk, as this used to, produced
+    // candidates with no measurement at all.
+    const axeArtifact = await runAxe(page, subject, capturedAt);
+    const axeResults = axeArtifact.kind === 'axe-result' ? axeArtifact.results : null;
+
     const measured = new Map<string, ContrastCandidate>();
+    let truncated = false;
     let candidates: ContrastCandidate[] = [];
     let contrast: Awaited<ReturnType<typeof collectContrast>> | null = null;
 
     const shot = await captureScreenshot(page, subject, {
       runId: opts.runId, cwd: opts.cwd, viewport: viewport.id as ViewportId, scheme, capturedAt,
-      onBand: async (bandPng, offset, _index, obstructions) => {
+      onBand: async (bandPng, offset) => {
         const pass = await collectContrast(page, subject, capturedAt);
+        if (pass.truncated) truncated = true;
         if (!contrast) contrast = pass; // keep the first artifact; results are merged below
         for (const c of pass.candidates) {
           // Identity is the ELEMENT, not where it happened to be. Including the
@@ -143,18 +157,12 @@ async function scanOnce(
             if (!already) measured.set(key, c);
             continue;
           }
-          // A screenshot records what the camera saw, not what the document
-          // says. Content scrolled under a fixed header is covered by the
-          // header's pixels, so measuring it here reports the header's colour
-          // as this element's background — the source of "near-black heading on
-          // a white hero, 1.24:1". Leave it for a band that parks it in the
-          // clear; if none does, it stays recorded and unproven.
-          if (obstructions.rects.some((o) =>
-            vb.x < o.x + o.width && vb.x + vb.width > o.x &&
-            vb.y < o.y + o.height && vb.y + vb.height > o.y)) {
-            if (!already) measured.set(key, c);
-            continue;
-          }
+          // Occlusion is decided in the collector, per element, by hit-testing
+          // the compositor — not here by rectangle. A fixed header overlaps
+          // everything beneath it, but its own text is painted on top and is
+          // perfectly measurable, and rejecting by rect threw that away too.
+          // Anything genuinely covered arrives with no viewportBox and was
+          // skipped above.
           // Measure EVERY candidate, flat stacks included: a flat cascade is not
           // proof of what rendered, and engines.ts reconciles axe's inferred
           // verdicts against these measurements.
@@ -176,6 +184,47 @@ async function scanOnce(
           }
           measured.set(key, c);
         }
+
+        // Now the elements axe disputed but our collector never offered — the
+        // flat-and-passing ones it drops. Same band, same instant, same pixel
+        // pass; the only difference is where the selector came from.
+        if (axeResults) {
+          try {
+            // Only MEASURED candidates count as already covered. Passing the
+            // whole map would exclude a target the moment it was seen once,
+            // even though it was off screen in that band and never measured —
+            // so it would never be revisited in the band that does have it on
+            // screen, and would sit unmeasured for the rest of the scan.
+            const covered = [...measured.values()].filter((c) => c.measuredBand);
+            const disputed = await measureAxeContrastTargets(page, axeResults, covered);
+            for (const c of disputed) {
+              const key = c.cssPath;
+              if (measured.get(key)?.measuredBand) continue;
+              const vb = c.viewportBox;
+              if (!vb || vb.y + vb.height <= 0 || vb.y >= bandPng.height) {
+                if (!measured.has(key)) measured.set(key, c);
+                continue;
+              }
+              const band = pixelBand(bandPng, c, vb);
+              if (band) {
+                Object.assign(c, {
+                  measuredBand: band.band,
+                  minRatio: band.minRatio,
+                  maxRatio: band.maxRatio,
+                  samples: band.samples.map((pt) => ({ x: pt.x, y: pt.y + offset })),
+                  fgColor: band.fgColor,
+                  bgLoColor: band.bgLoColor,
+                  bgHiColor: band.bgHiColor,
+                  ratioLo: band.ratioLo,
+                  ratioHi: band.ratioHi,
+                });
+              }
+              measured.set(key, c);
+            }
+          } catch {
+            /* best-effort — axe's own verdict stands unreconciled */
+          }
+        }
       },
     });
     artifacts.push(shot.artifact);
@@ -190,6 +239,11 @@ async function scanOnce(
 
     // Fall back to a single pass if the capture never invoked a band visitor.
     if (!contrast) contrast = await collectContrast(page, subject, capturedAt);
+    // The candidate cap truncated the page: text past it was never eligible for
+    // measurement, so axe's verdicts there stand unreconciled. Say so.
+    if (truncated) {
+      gaps.push({ reason: 'scroll-cap', subject, note: 'contrast candidate cap reached; text past it was not measured' });
+    }
     candidates = measured.size ? [...measured.values()] : contrast.candidates;
     // Re-read geometry at the page's resting state.
     //
@@ -227,6 +281,42 @@ async function scanOnce(
         /* best-effort — the band's box stands */
       }
     }
+    // axe's geometry needs the same treatment, and for the same reason: it ran
+    // BEFORE the band walk (so its disputed elements could be measured in one),
+    // and the walk fires reveals and settles lazy images, so the layout it saw
+    // is not the layout at rest. contrast-reconcile matches the two sets
+    // geometrically within 2px, so leaving axe on its old boxes threw away
+    // every measurement the walk had just taken — 1,258 unmatched nodes.
+    if (axeArtifact.kind === 'axe-result') {
+      try {
+        type AxeNode = { target?: string[]; box?: { x: number; y: number; width: number; height: number } };
+        const payload = axeArtifact.results as { violations?: Array<{ nodes?: AxeNode[] }>; incomplete?: Array<{ nodes?: AxeNode[] }> };
+        const nodes: AxeNode[] = [];
+        for (const list of [payload.violations, payload.incomplete]) {
+          for (const rule of list ?? []) for (const n of rule.nodes ?? []) nodes.push(n);
+        }
+        const sels = nodes.map((n) => n.target?.join(' ') ?? '');
+        const rested = (await page.evaluate((paths: string[]) => {
+          const ck = (window as unknown as { __ck?: { contentBox(e: Element): { x: number; y: number; width: number; height: number } } }).__ck;
+          return paths.map((sel) => {
+            if (!sel) return null;
+            let el: Element | null = null;
+            try { el = document.querySelector(sel); } catch { el = null; }
+            if (!el) return null;
+            if (ck) return ck.contentBox(el);
+            const r = el.getBoundingClientRect();
+            return { x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height };
+          });
+        }, sels)) as ({ x: number; y: number; width: number; height: number } | null)[];
+        for (let i = 0; i < nodes.length; i++) {
+          const box = rested[i];
+          if (box && box.width > 0 && box.height > 0) nodes[i].box = box;
+        }
+      } catch {
+        /* best-effort — unmatched nodes keep axe's own verdict */
+      }
+    }
+
     contrast.candidates = candidates;
     if (contrast.artifact.kind === 'style-probe') {
       contrast.artifact.results = candidates as unknown as Record<string, unknown>[];
@@ -237,21 +327,8 @@ async function scanOnce(
     await attributeGradientVars(page, contrast.candidates);
     artifacts.push(contrast.artifact);
 
-    const axeArtifact = await runAxe(page, subject, capturedAt);
     if (axeArtifact.kind === 'axe-result' && shot.artifact.kind === 'screenshot') {
       axeArtifact.screenshotPath = shot.artifact.path;
-    }
-    // Measure the elements axe could not resolve a background for. The contrast
-    // collector drops flat-and-passing candidates, which is exactly the set axe
-    // disputes when something overlaps the text — so measure those now and let
-    // the measurement govern axe's verdict downstream.
-    if (axeArtifact.kind === 'axe-result' && contrast.artifact.kind === 'style-probe') {
-      try {
-        const extra = await measureAxeContrastTargets(page, axeArtifact.results, contrast.candidates);
-        if (extra.length) contrast.artifact.results.push(...(extra as unknown as Record<string, unknown>[]));
-      } catch {
-        /* best-effort — axe's own verdict stands unreconciled */
-      }
     }
     artifacts.push(axeArtifact);
 

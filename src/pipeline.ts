@@ -151,7 +151,8 @@ export async function runBrowserScan(opts: BrowserScanOptions): Promise<BrowserS
   if (sup.cleared || sup.upgraded || sup.downgraded || sup.ceded) {
     opts.trace?.(
       `contrast: pixel measurement overrode axe on ${sup.cleared + sup.upgraded + sup.downgraded + sup.ceded} finding(s) ` +
-        `(${sup.cleared} cleared, ${sup.upgraded} upgraded to violation, ${sup.downgraded} downgraded, ${sup.ceded} ceded to contrast.text)`,
+        `(${sup.cleared} cleared, ${sup.upgraded} upgraded to violation, ${sup.downgraded} downgraded, ${sup.ceded} ceded to contrast.text)` +
+        (sup.unmatched ? `; ${sup.unmatched} axe node(s) had no measurement to compare` : ''),
     );
   }
   const raws = evaluate(collection.artifacts, ALL_RULES, { property: opts.property, tags });

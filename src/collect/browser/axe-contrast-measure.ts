@@ -79,6 +79,16 @@ export async function measureAxeContrastTargets(
           const cs = getComputedStyle(el);
           const r = el.getBoundingClientRect();
           const raw = (el.textContent ?? '').trim().replace(/\s+/g, ' ');
+          // The same visibility question the contrast collector asks, from the
+          // same shared helper: an element clipped out of a panel, or painted
+          // over by something else, has a rect but no pixels of its own, and
+          // measuring there reads whatever shows through. This pass resolves
+          // axe's selectors instead of walking text nodes, and it originally
+          // took the bare bounding rect — reintroducing exactly the bug the
+          // collector had just been fixed for: 21 fictional violations, all at
+          // a uniform 2.38:1.
+          const ckv = (window as unknown as { __ck?: { paintedBox(e: Element): { x: number; y: number; width: number; height: number } | null } }).__ck;
+          const painted = ckv?.paintedBox ? ckv.paintedBox(el) : { x: r.x, y: r.y, width: r.width, height: r.height };
           // Gradient text (`background-clip: text` + a transparent fill): the
           // glyphs ARE the background, so a pixel band compares the gradient
           // with itself and returns ~1.1:1 for a perfectly legible headline.
@@ -101,7 +111,7 @@ export async function measureAxeContrastTargets(
             textSample: raw ? (raw.length > 80 ? raw.slice(0, 80) + '…' : raw) : null,
             // Document-absolute, matching every other collector's geometry key.
             box: r.width >= 1 && r.height >= 1 ? ckBox(el, r) : null,
-            viewportBox: r.width >= 1 && r.height >= 1 ? { x: r.x, y: r.y, width: r.width, height: r.height } : null,
+            viewportBox: painted && painted.width >= 1 && painted.height >= 1 ? painted : null,
           };
         } catch {
           return { sel, textColor: '', fontSizePx: 16, bold: false, textSample: null, box: null, viewportBox: null };

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { collectContrast } from '../src/collect/browser/contrast.js';
+import { GEOMETRY_INIT } from '../src/collect/browser/geometry-init.js';
 
 // A contrast candidate has to be something a reader can actually see.
 //
@@ -33,7 +34,12 @@ suite('contrast candidates exclude what is not painted', () => {
   beforeAll(async () => {
     const { chromium } = await import('playwright');
     browser = await chromium.launch();
-    page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+    // The scanner installs these page-side helpers on every context, and the
+    // collector's visibility test lives in them — so the fixture has to have
+    // them too, or it is testing a degraded fallback rather than the product.
+    const ctx = await browser.newContext({ viewport: { width: 900, height: 700 } });
+    await ctx.addInitScript(GEOMETRY_INIT);
+    page = await ctx.newPage();
     await page.goto(PAGE_URL, { waitUntil: 'load' });
   }, 60_000);
 

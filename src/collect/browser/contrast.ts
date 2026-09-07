@@ -44,8 +44,9 @@ export interface ContrastCandidate {
   // against the band captured at this scroll position; `box` (capture space)
   // stays the stable identity/evidence coordinate.
   viewportBox?: { x: number; y: number; width: number; height: number };
-  /** True when an ancestor's overflow clips the element away entirely: it lays
-   *  out and reports a rect, but nothing of it is painted. */
+  /** True when nothing of the element reaches the screen: an ancestor's
+   *  overflow clips it away, or something is painted over it. Either way it
+   *  lays out and reports a rect that nobody can see. */
   clipped?: boolean;
   /** True when the glyphs are painted by the element's own background
    *  (`background-clip: text` + a transparent fill), which no pixel band can
@@ -65,7 +66,7 @@ export interface ContrastCandidate {
 }
 
 // This function is serialized and run INSIDE the page. Keep it self-contained.
-function collectInPage(): ContrastCandidate[] {
+function collectInPage(): { candidates: ContrastCandidate[]; truncated: boolean } {
   function parseRgb(s: string): [number, number, number, number] | null {
     const m = s.match(/rgba?\(([^)]+)\)/);
     if (!m) return null;
@@ -241,36 +242,16 @@ function collectInPage(): ContrastCandidate[] {
   }
 
   /**
-   * The part of the element that is actually painted: its rect intersected with
-   * every clipping ancestor.
-   *
-   * `getBoundingClientRect` reports where an element WOULD be. Inside a box with
-   * `overflow: hidden` — a fixed-height transcript panel, a masked carousel, a
-   * "read more" collapse — the overflowing lines still lay out and still report
-   * a position, but nothing of them is drawn. Sampling that position reads
-   * whatever the clip lets through, which is the section underneath: on the
-   * StoryFolder client, transcript words clipped out of a panel measured
-   * entirely against the near-white band below it, 261 of 355 contrast
-   * violations at a uniform 2.38:1.
-   *
-   * Returns null when nothing of the element survives the clip.
+   * The rect a reader can actually see, from the shared page-side helper: the
+   * element's box intersected with every clipping ancestor, then hit-tested
+   * against the compositor. Null means nothing of it reaches the screen.
+   * Lives in geometry-init so this pass and the axe-target pass cannot drift.
    */
-  function paintedRect(el: Element, rect: DOMRect): { x: number; y: number; width: number; height: number } | null {
-    let left = rect.left, top = rect.top, right = rect.right, bottom = rect.bottom;
-    let cur = el.parentElement;
-    while (cur) {
-      const cs = getComputedStyle(cur);
-      const clipsX = cs.overflowX !== 'visible';
-      const clipsY = cs.overflowY !== 'visible';
-      if (clipsX || clipsY) {
-        const r = cur.getBoundingClientRect();
-        if (clipsX) { left = Math.max(left, r.left); right = Math.min(right, r.right); }
-        if (clipsY) { top = Math.max(top, r.top); bottom = Math.min(bottom, r.bottom); }
-        if (right - left < 1 || bottom - top < 1) return null;
-      }
-      cur = cur.parentElement;
-    }
-    return { x: left, y: top, width: right - left, height: bottom - top };
+  function paintedBox(el: Element): { x: number; y: number; width: number; height: number } | null {
+    const ck = (window as unknown as { __ck?: { paintedBox(e: Element): { x: number; y: number; width: number; height: number } | null } }).__ck;
+    if (ck?.paintedBox) return ck.paintedBox(el);
+    const r = el.getBoundingClientRect();
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
   }
 
   function ckBox(el: Element, r: DOMRect): { x: number; y: number; width: number; height: number } {
@@ -278,6 +259,10 @@ function collectInPage(): ContrastCandidate[] {
     return ck ? ck.contentBox(el) : { x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height };
   }
 
+  // Real marketing pages run to a few thousand text elements; this is a guard
+  // against a pathological DOM, not a sampling strategy.
+  const MAX_CANDIDATES = 5000;
+  let truncated = false;
   const out: ContrastCandidate[] = [];
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   const seen = new Set<Element>();
@@ -316,7 +301,8 @@ function collectInPage(): ContrastCandidate[] {
     // still RECORDED, flagged, so the reconciliation can clear axe's finding
     // about text nobody can see — dropping it here would leave that finding
     // standing forever as "could not be proven".
-    const painted = paintedRect(el, rect);
+    const painted = paintedBox(el);
+    const hidden = painted === null;
 
     const fg = parseRgb(cs.color);
     if (!fg) continue;
@@ -375,23 +361,35 @@ function collectInPage(): ContrastCandidate[] {
       // (geometry-init.ts). Identical to rect + window.scroll when the document
       // scrolls; correct too when an inner container does.
       box: ckBox(el, rect),
-      clipped: painted === null ? true : undefined,
+      clipped: hidden ? true : undefined,
       paintedByBackground: paintedByBackground || undefined,
       // The PAINTED rect, not the laid-out one: the pixel pass must sample only
       // pixels this element actually put on screen.
       viewportBox:
-        painted && !paintedByBackground
+        painted && !hidden && !paintedByBackground
           ? { x: painted.x, y: painted.y, width: painted.width, height: painted.height }
           : undefined,
     });
-    if (out.length >= 400) break; // bound the payload
+    // Bound the payload, but say so when the bound bites. At 400 this silently
+    // stopped collecting slightly under halfway down the client's home page
+    // (400 of 756 text elements), so every axe node past that point had nothing
+    // to compare against and stayed "background could not be determined" —
+    // 691 of them on one run. A cap that truncates without a word is
+    // indistinguishable from a page that had nothing more to find.
+    if (out.length >= MAX_CANDIDATES) {
+      truncated = true;
+      break;
+    }
   }
-  return out;
+  return { candidates: out, truncated };
 }
 
 export interface ContrastCollection {
   artifact: Artifact;
   candidates: ContrastCandidate[];
+  /** The per-page candidate cap was hit: text below it was never eligible for
+   *  measurement, and the caller must record that as a coverage gap. */
+  truncated: boolean;
 }
 
 // Gradient variable attribution for NON-FLAT candidates — HIGH-CONFIDENCE ONLY.
@@ -485,9 +483,13 @@ export async function attributeGradientVars(page: Page, candidates: ContrastCand
 }
 
 export async function collectContrast(page: Page, subject: Subject, capturedAt: string): Promise<ContrastCollection> {
-  const candidates = (await page.evaluate(collectInPage)) as ContrastCandidate[];
+  const { candidates, truncated } = (await page.evaluate(collectInPage)) as {
+    candidates: ContrastCandidate[];
+    truncated: boolean;
+  };
   return {
     candidates,
+    truncated,
     artifact: {
       kind: 'style-probe',
       subject,

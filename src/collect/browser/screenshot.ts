@@ -68,6 +68,26 @@ async function readObstructions(page: Page): Promise<Obstructions> {
 }
 
 /**
+ * A screenshot that can fail without taking the whole cell with it.
+ *
+ * `page.screenshot()` waits for `document.fonts.ready`, so one webfont that
+ * never resolves stalls it — and under the page-wide default timeout that
+ * aborts the scan of that route entirely, turning a missing band into a
+ * `crash` gap and throwing away every finding for the cell. A band is worth
+ * less than that: if one cannot be captured, stop measuring and keep what the
+ * earlier bands found.
+ */
+const BAND_SHOT_TIMEOUT_MS = 8000;
+
+async function safeShot(page: Page): Promise<Buffer | null> {
+  try {
+    return await page.screenshot({ type: 'png', timeout: BAND_SHOT_TIMEOUT_MS });
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Wait until the page has stopped moving under us.
  *
  * A fixed `waitForTimeout` is a guess, and on a real marketing page it is the
@@ -114,7 +134,8 @@ async function settleLayout(page: Page, capMs = 1500): Promise<Buffer | null> {
       await page.waitForTimeout(80);
       continue;
     }
-    const frame = await page.screenshot({ type: 'png' });
+    const frame = await safeShot(page);
+    if (!frame) return lastFrame; // cannot compare frames; the DOM check stands
     if (lastFrame && lastFrame.equals(frame)) return frame;
     lastFrame = frame;
     await page.waitForTimeout(80);
@@ -160,12 +181,12 @@ async function measureInBands(page: Page, info: ScrollerInfo, onBand: BandVisito
     }, target)) as number;
     // The frame the page settled on IS the band image: taking another would
     // reopen the gap this is here to close.
-    const settled = await settleLayout(page);
+    const settled = (await settleLayout(page)) ?? (await safeShot(page));
+    if (!settled) break; // the page will not give us a frame; keep what we have
     // Obstructions are re-read per band: headers hide on scroll-down, banners
     // get dismissed, and a stale rect would reject good measurements.
     const bandObs = await readObstructions(page);
-    const band = PNG.sync.read(settled ?? (await page.screenshot({ type: 'png' })));
-    await onBand(band, actual, i, bandObs);
+    await onBand(PNG.sync.read(settled), actual, i, bandObs);
   }
 
   await page.evaluate(() => {
@@ -232,8 +253,9 @@ async function captureScrollableContent(
       const ck = (window as unknown as { __ck?: { scrollPrimaryTo(o: number): number } }).__ck;
       return ck ? ck.scrollPrimaryTo(offset) : 0;
     }, target)) as number;
-    const settled = await settleLayout(page);
-    const band = PNG.sync.read(settled ?? (await page.screenshot({ type: 'png' })));
+    const settled = (await settleLayout(page)) ?? (await safeShot(page));
+    if (!settled) break; // the page will not give us a frame; keep what we have
+    const band = PNG.sync.read(settled);
     // Copy only the scroller's rows; `actual` may differ from `target` at the
     // end of the range, so place the band where it really landed.
     const srcTop = Math.round(info.top);
