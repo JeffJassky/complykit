@@ -79,6 +79,20 @@ export async function measureAxeContrastTargets(
           const cs = getComputedStyle(el);
           const r = el.getBoundingClientRect();
           const raw = (el.textContent ?? '').trim().replace(/\s+/g, ' ');
+          // Gradient text (`background-clip: text` + a transparent fill): the
+          // glyphs ARE the background, so a pixel band compares the gradient
+          // with itself and returns ~1.1:1 for a perfectly legible headline.
+          // The collector already refuses to measure these; this path is the
+          // other way in, and it has to refuse too — otherwise axe's honest
+          // "incomplete" gets revised into a confident, wrong violation.
+          const fillRaw = (cs as CSSStyleDeclaration & { webkitTextFillColor?: string }).webkitTextFillColor;
+          const clipsToText =
+            cs.backgroundClip === 'text' ||
+            (cs as CSSStyleDeclaration & { webkitBackgroundClip?: string }).webkitBackgroundClip === 'text';
+          const transparentFill = !!fillRaw && /rgba?\([^)]*,\s*0\s*\)$/.test(fillRaw);
+          if (clipsToText || transparentFill) {
+            return { sel, textColor: '', fontSizePx: 16, bold: false, textSample: null, box: null, viewportBox: null };
+          }
           return {
             sel,
             textColor: cs.color,
