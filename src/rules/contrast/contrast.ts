@@ -9,7 +9,7 @@ import { asRuleId, asRequirementId } from '../../registry/index.js';
 // own them, no duplicate findings) and handles only the cases axe punts to
 // `incomplete` — a non-flat background (image/gradient/overlap). The collector's
 // pixel-band pass measured those; here a measured fail is a violation and an
-// ambiguous band is needs-review routed to C1. It never recomputes a ratio.
+// verdict is the worst pixel. It never recomputes a ratio.
 
 const Candidate = z.object({
   cssPath: z.string().optional(),
@@ -48,7 +48,7 @@ export const contrastText: Rule<readonly ['style-probe']> = {
   remediation:
     'Increase the contrast between the text and its background to at least 4.5:1 (3:1 for large text), or change the text/background colours.',
   falsePositives:
-    'Disabled controls, pure decoration, and logotypes are exempt. Text over a busy image may read fine to humans even at a low measured ratio — the ambiguous band routes to human/LLM review rather than asserting a violation.',
+    'Inactive controls, incidental text (pure decoration, or part of a picture with significant other content) and logotypes are exempt under 1.4.3 itself. Those are properties of the element, not of the pixels, so they are recorded once as dispositions rather than re-judged every run. There is no other human question here: the verdict is the worst pixel behind the text.',
   consumes: ['style-probe'] as const,
   evaluate(input: { 'style-probe': Artifact[] }, ctx: EvalContext): RawFinding[] {
     const out: RawFinding[] = [];
@@ -82,14 +82,19 @@ export const contrastText: Rule<readonly ['style-probe']> = {
         let detail: string;
         if (c.measuredBand === 'pass') {
           continue; // pixel-band cleared it
-        } else if (c.measuredBand === 'fail') {
+        } else if (c.measuredBand === 'fail' || c.measuredBand === 'ambiguous') {
+          // 'ambiguous' only appears in runs recorded before the worst-pixel
+          // rule; it meant "part of the text fails", which is a failure.
           confidence = 'violation';
-          detail = `pixel-measured ${c.minRatio}–${c.maxRatio}:1 (needs ${c.required}:1)`;
+          detail =
+            c.minRatio !== undefined && c.maxRatio !== undefined && c.minRatio !== c.maxRatio
+              ? `pixel-measured ${c.minRatio}–${c.maxRatio}:1 across the element; the worst pixel needs ${c.required}:1`
+              : `pixel-measured ${c.minRatio}–${c.maxRatio}:1 (needs ${c.required}:1)`;
         } else {
-          confidence = 'needs-review'; // ambiguous or unresolved -> C1
-          detail = c.measuredBand
-            ? `pixel-measured band ${c.minRatio}–${c.maxRatio}:1 spans the ${c.required}:1 threshold`
-            : `background is not a flat colour; ratio could not be proven`;
+          // No measurement at all. This is a coverage gap, not a judgement
+          // call, and the collector reports it as one; it should be rare.
+          confidence = 'needs-review';
+          detail = `background is not a flat colour and no pixel measurement was taken; see the run's coverage gaps`;
         }
         if (!confidence) continue;
 

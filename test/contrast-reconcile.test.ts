@@ -50,9 +50,12 @@ describe('contrast reconciliation', () => {
     expect(r).toHaveProperty('note', expect.stringContaining('1.9'));
   });
 
-  it('leaves an ambiguous band as needs-review for C1', () => {
+  it('a range that straddles the threshold is a failure: the worst pixel governs', () => {
+    // 'ambiguous' is what runs recorded before the worst-pixel rule called
+    // this. It meant "part of the text fails", and part failing is failing —
+    // WCAG 1.4.3 has no clause for text that passes on average.
     expect(reconcileAxeContrast(measured({ measuredBand: 'ambiguous', minRatio: 4.1, maxRatio: 5.2 }), 'needs-review'))
-      .toMatchObject({ action: 'revise', confidence: 'needs-review' });
+      .toMatchObject({ action: 'revise', confidence: 'violation', note: expect.stringContaining('worst pixel') });
   });
 
   it('yields non-flat elements to contrast.text instead of double-reporting', () => {

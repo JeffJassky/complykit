@@ -17,7 +17,7 @@ import type { Artifact, Subject } from './record/index.js';
 //                       becomes nothing; an axe `violation` (two methods
 //                       disagreeing) drops to needs-review carrying both numbers
 //   measured fail    -> violation, stated with the measured range
-//   ambiguous / none -> unchanged; the band straddles the threshold, C1's job
+//   none             -> unchanged; nothing was measured, and the run says so as a gap
 //
 // Matching is geometric, not by selector: axe's `target` selector and our
 // cssPath heuristic are different strings for the same element, but both boxes
@@ -128,8 +128,7 @@ export function reconcileAxeContrast(
       note: `axe inferred a failing ratio from the cascade, but the rendered pixels measure ${range} — confirm visually`,
     };
   }
-  if (measured.measuredBand === 'fail') {
-    return { action: 'revise', confidence: 'violation', note: `pixel-measured ${range}` };
-  }
-  return { action: 'revise', confidence: 'needs-review', note: `pixel-measured band ${range} spans the threshold` };
+  // 'fail' — and 'ambiguous' from runs recorded before the worst-pixel rule,
+  // which meant part of the text failed, and part failing is failing.
+  return { action: 'revise', confidence: 'violation', note: `pixel-measured ${range}; the worst pixel governs` };
 }

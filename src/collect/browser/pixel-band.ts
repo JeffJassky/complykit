@@ -202,10 +202,17 @@ export function pixelBand(png: PNG, candidate: ContrastCandidate, boxOverride?: 
   }
   const req = candidate.required;
 
-  let band: Band;
-  if (minRatio >= req) band = 'pass';
-  else if (maxRatio < req) band = 'fail';
-  else band = 'ambiguous';
+  // The verdict is the WORST pixel. WCAG 1.4.3 is the text against the
+  // background it is actually on; if part of the text sits on a pixel that
+  // fails, that part fails. There used to be a third band, 'ambiguous', for a
+  // range that straddled the threshold, routed to human review on the theory
+  // that text over a busy image can read fine at a low measured ratio — but
+  // the criterion has no such clause, and on a real site every one of the 152
+  // "ambiguous" findings was an authored gradient or glow, not a photograph.
+  // A measurement that straddles the line is a failure with a known extent,
+  // and that extent is reported in the range. The type keeps the old value so
+  // runs recorded before this still parse.
+  const band: Band = minRatio >= req ? 'pass' : 'fail';
 
   // Collect the background-classified pixels (luminance within the chosen band)
   // for the evidence overlay, plus the exact colours at the band extremes.
