@@ -291,11 +291,22 @@ export function measureGlyphs(input: GlyphInput): GlyphResult {
 
   const mask = new Uint8Array(maskRect.width * maskRect.height);
 
+  // Hiding glyphs can only take ink AWAY. A rendered glyph pixel is the text
+  // colour blended over its background, A = α·fg + (1−α)·B, so A is never
+  // farther from the text colour than B is. A pixel that moves TOWARD the text
+  // colour in B gained paint instead — something the hide step switched on,
+  // not a glyph. That happened in the field: a style write matched a page's
+  // `[style*=border-top-color]` rule and drew a black border in B, and every
+  // pixel of it measured the text against itself at 1:1. Such pixels are never
+  // glyphs, whatever caused them.
+  const addedPaint = (pa: Rgb, pb: Rgb): boolean => fg !== null && channelSum(pb, fg.rgb) < channelSum(pa, fg.rgb) - DIFF_FLOOR;
+
   // Step 1: maxDiff over every rect pixel.
   let maxDiff = 0;
   forEachRectPixel(rects, maskRect, a.width, a.height, (x, y) => {
     const pa = pixelAt(a, x, y);
     const pb = pixelAt(b, x, y);
+    if (addedPaint(pa, pb)) return;
     const d = channelSum(pa, pb);
     if (d > maxDiff) maxDiff = d;
   });
@@ -328,6 +339,7 @@ export function measureGlyphs(input: GlyphInput): GlyphResult {
     forEachRectPixel(rects, maskRect, a.width, a.height, (x, y) => {
       const pa = pixelAt(a, x, y);
       const pb = pixelAt(b, x, y);
+      if (addedPaint(pa, pb)) return;
       const d = channelSum(pa, pb);
       if (d < coreThreshold) return;
       coreCount++;
@@ -345,6 +357,7 @@ export function measureGlyphs(input: GlyphInput): GlyphResult {
   forEachRectPixel(rects, maskRect, a.width, a.height, (x, y, maskIdx) => {
     const pa = pixelAt(a, x, y);
     const pb = pixelAt(b, x, y);
+    if (addedPaint(pa, pb)) return;
     const d = channelSum(pa, pb);
     const isGlyph = d >= glyphThreshold;
     const isCore = d >= coreThreshold;

@@ -40,6 +40,13 @@
     font-size: 20px;
     padding: 32px 16px;
   }
+  /* WordPress core global styles (every WP site ships these). A scanner that
+     writes an inline border colour switches a border on through them. */
+  :where([style*=border-color]) { border-style: solid; }
+  :where([style*=border-top-color]) { border-top-style: solid; }
+  :where([style*=border-right-color]) { border-right-style: solid; }
+  :where([style*=border-bottom-color]) { border-bottom-style: solid; }
+  :where([style*=border-left-color]) { border-left-style: solid; }
 </style>
 </head>
 <body>

@@ -88,9 +88,14 @@
   #inner-scroll-shell { height: 300px; overflow-y: auto; border: 1px solid #ccc; }
   #inner-scroll-filler { height: 1000px; }
   #inner-scroll-target { color: rgb(40,40,40); }
+  /* WordPress core global styles: an inline border colour switches the border on. */
+  :where([style*=border-top-color]) { border-top-style: solid; }
+  :where([style*=border-bottom-color]) { border-bottom-style: solid; }
+  #wp-heading { color: #000; background: #fff; }
 </style>
 </head>
 <body>
+<section><h2 id="wp-heading">WordPress heading with no border</h2></section>
 
 <section>
   <p id="parent-span">Plain text <span>coloured child</span> more plain text.</p>

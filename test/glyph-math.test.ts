@@ -571,3 +571,31 @@ describe('regionChanged', () => {
     expect(regionChanged(a, a2, [{ x: 0, y: 0, width: 10, height: 10 }])).toBe(false);
   });
 });
+
+describe('measureGlyphs: paint that appears in B is never a glyph', () => {
+  // Field case (maxedmarketing.ai, WordPress): pinning an unpainted border
+  // colour matched `:where([style*=border-top-color]){border-top-style:solid}`
+  // and drew a black 3px line in B only. Those pixels moved TOWARD the text
+  // colour, so they are added paint, and must not become 1:1 "glyphs".
+  it('ignores a line that exists only in B and keeps the real glyphs at 21:1', () => {
+    const width = 60, height = 30;
+    const a = makePng(width, height, WHITE);
+    const b = makePng(width, height, WHITE);
+    fillRect(a, { x: 10, y: 10, width: 30, height: 12 }, BLACK); // the glyphs, removed in B
+    fillRect(b, { x: 0, y: 2, width: 60, height: 3 }, BLACK); // phantom border, B only
+    const result = measureGlyphs({ a, b, rects: [{ x: 0, y: 0, width, height }], fg: { rgb: BLACK, alpha: 1 }, opacity: 1, required: 4.5 });
+    expect(result.status).toBe('measured');
+    expect(result.hist.total).toBe(30 * 12);
+    expect(decideVerdict(result.hist, 4.5).verdict).toBe('pass');
+    expect(result.worst?.ratio).toBeCloseTo(21, 5);
+  });
+
+  it('reports no-diff when the only change is added paint', () => {
+    const width = 20, height = 20;
+    const a = makePng(width, height, WHITE);
+    const b = makePng(width, height, WHITE);
+    fillRect(b, { x: 0, y: 0, width: 20, height: 3 }, BLACK);
+    const result = measureGlyphs({ a, b, rects: [{ x: 0, y: 0, width, height }], fg: { rgb: BLACK, alpha: 1 }, opacity: 1, required: 4.5 });
+    expect(result.status).toBe('no-diff');
+  });
+});

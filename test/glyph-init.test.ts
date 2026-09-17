@@ -309,6 +309,26 @@ suite('glyph-init page API', () => {
       expect(pixelsEqual(before, afterRestore2)).toBe(true);
     }, 30_000);
 
+    it('hiding text never switches on paint through a page [style*=…] rule (WordPress border-color)', async () => {
+      // Field bug: pinning an unpainted border colour matched WordPress's
+      // `:where([style*=border-top-color]){border-top-style:solid}` and drew a
+      // black 3px border in the hidden screenshot, so every heading measured
+      // its text against that line at 1:1.
+      const owner = await page.$('#wp-heading');
+      await owner!.scrollIntoViewIfNeeded();
+      const { subjects } = await enumerateSubjects(page, { viewportOnly: true });
+      const subject = subjects.find((s) => s.kind === 'text' && s.cssPath.includes('wp-heading'));
+      expect(subject).toBeDefined();
+      const box = await owner!.boundingBox();
+      await hideKeys(page, [subject!.key]);
+      const hidden = await screenshotRect(box!, 6);
+      const inline = await page.evaluate(() => document.getElementById('wp-heading')!.getAttribute('style') ?? '');
+      await restoreAll(page);
+      expect(inline).not.toMatch(/border/);
+      // Text hidden and nothing drawn in its place: the whole box is background.
+      expect(hasAnyInk(hidden, [255, 255, 255])).toBe(false);
+    }, 30_000);
+
     it('restore puts back an exact pre-existing inline style, including !important', async () => {
       const before = await page.evaluate(() => document.getElementById('prestyled')!.getAttribute('style'));
       expect(before).toContain('red');

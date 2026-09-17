@@ -703,6 +703,37 @@ export const GLYPH_INIT = (): void => {
     journal.push({ type: 'style', styleEl });
   }
 
+  /** Whether `prop` currently paints anything on an element with this style. */
+  function pinIsPainted(cs: CSSStyleDeclaration, prop: string): boolean {
+    const none = (v: string): boolean => v === 'none' || v === 'hidden' || v === '';
+    const width = (v: string): boolean => (parseFloat(v) || 0) > 0;
+    const side = /^border-(top|right|bottom|left)-color$/.exec(prop);
+    if (side) {
+      return !none(cs.getPropertyValue(`border-${side[1]}-style`)) && width(cs.getPropertyValue(`border-${side[1]}-width`));
+    }
+    switch (prop) {
+      case 'outline-color':
+        return !none(cs.getPropertyValue('outline-style')) && width(cs.getPropertyValue('outline-width'));
+      case 'text-decoration-color':
+        return !none(cs.getPropertyValue('text-decoration-line'));
+      case 'text-emphasis-color':
+        return !none(cs.getPropertyValue('text-emphasis-style'));
+      case 'column-rule-color':
+        return !none(cs.getPropertyValue('column-rule-style')) && width(cs.getPropertyValue('column-rule-width'));
+      case 'box-shadow':
+      case 'text-shadow':
+        return !none(cs.getPropertyValue(prop));
+      case '-webkit-text-stroke-color':
+        return width(cs.getPropertyValue('-webkit-text-stroke-width'));
+      case 'fill':
+      case 'stroke':
+        // Only SVG content paints with these; on an HTML owner they are inert.
+        return false;
+      default:
+        return true;
+    }
+  }
+
   function hide(keys: string[]): void {
     if (!Array.isArray(keys) || keys.length === 0) return;
     const parsed: Array<{ el: Element; kind: SubjectKind }> = [];
@@ -736,12 +767,26 @@ export const GLYPH_INIT = (): void => {
     for (const { el, kind } of parsed) {
       if (kind === 'text' || kind === 'value') {
         const cs = getComputedStyle(el);
+        // Pin only paints that are actually DRAWN. A pin is meant to be a no-op
+        // (same value, now independent of `color`), but writing it into the
+        // style attribute is not free: WordPress core ships
+        // `:where([style*=border-top-color]){border-top-style:solid}`, so a
+        // pinned border colour on an element with no border made a 3px
+        // (medium) black border appear in screenshot B. Every heading and
+        // paragraph on a WordPress page then "measured" its text colour against
+        // that phantom line at 1:1 — 42 false failures on one route.
         const pins: Record<string, string> = {};
-        for (const p of PIN_PROPS) pins[p] = cs.getPropertyValue(p);
+        for (const p of PIN_PROPS) if (pinIsPainted(cs, p)) pins[p] = cs.getPropertyValue(p);
+        const ownColor = cs.color;
         const descendants: TextRead['descendants'] = [];
         for (const d of Array.from(el.querySelectorAll('*'))) {
           if (hiddenOwners.has(d)) continue; // that descendant's own glyphs are being hidden too
           const dcs = getComputedStyle(d);
+          // Only a descendant whose colour could be inherited from the owner
+          // needs pinning; one with its own different colour is unaffected, and
+          // every avoidable style-attribute write is another chance to match a
+          // page's `[style*=…]` selector.
+          if (dcs.color !== ownColor) continue;
           descendants.push({
             el: d,
             color: dcs.color,
@@ -761,7 +806,7 @@ export const GLYPH_INIT = (): void => {
         setProp(tr.el, 'color', 'transparent');
         setProp(tr.el, '-webkit-text-fill-color', 'transparent');
         if (tr.paintedByBg) setProp(tr.el, 'background-image', 'none');
-        for (const p of PIN_PROPS) setProp(tr.el, p, tr.pins[p]);
+        for (const p of Object.keys(tr.pins)) setProp(tr.el, p, tr.pins[p]);
         for (const d of tr.descendants) {
           setProp(d.el, 'color', d.color);
           if (d.fill) setProp(d.el, '-webkit-text-fill-color', d.fill);
