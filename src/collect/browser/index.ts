@@ -239,39 +239,51 @@ async function scanOnce(
     };
     artifacts.push(contrastArtifact);
 
-    // axe's geometry needs the same treatment, and for the same reason: it ran
-    // BEFORE the band walk (so its disputed elements could be measured in one),
-    // and the walk fires reveals and settles lazy images, so the layout it saw
-    // is not the layout at rest. contrast-reconcile matches the two sets
-    // geometrically within 2px, so leaving axe on its old boxes threw away
-    // every measurement the walk had just taken — 1,258 unmatched nodes.
+    // axe's boxes are re-read at rest for the same reason the refs are: axe ran
+    // BEFORE the walk, and the walk fires reveals and settles lazy images, so
+    // the layout axe saw is not the one the evidence image shows. The box is
+    // what crops an unsettled node's screenshot and what signal fusion
+    // (enrich/supersede.ts) matches on. Targets are walked hop by hop: joining a
+    // shadow path into one selector resolved `<p>` inside `<my-card>` to the
+    // FIRST `<p>` on the page, and stamped that element's box on the finding.
     if (axeArtifact.kind === 'axe-result') {
       try {
-        type AxeNode = { target?: string[]; box?: { x: number; y: number; width: number; height: number } };
+        type AxeNode = { target?: (string | string[])[]; box?: { x: number; y: number; width: number; height: number } };
         const payload = axeArtifact.results as { violations?: Array<{ nodes?: AxeNode[] }>; incomplete?: Array<{ nodes?: AxeNode[] }> };
         const nodes: AxeNode[] = [];
         for (const list of [payload.violations, payload.incomplete]) {
           for (const rule of list ?? []) for (const n of rule.nodes ?? []) nodes.push(n);
         }
-        const sels = nodes.map((n) => n.target?.join(' ') ?? '');
-        const rested = (await page.evaluate((paths: string[]) => {
+        const paths = nodes.map((n) => {
+          const t = n.target;
+          if (!t || t.length === 0) return [];
+          const nested = t.find((x): x is string[] => Array.isArray(x));
+          return nested ?? [(t as string[]).join(' ')];
+        });
+        const rested = (await page.evaluate((ps: string[][]) => {
           const ck = (window as unknown as { __ck?: { contentBox(e: Element): { x: number; y: number; width: number; height: number } } }).__ck;
-          return paths.map((sel) => {
-            if (!sel) return null;
+          return ps.map((path) => {
+            if (!path.length) return null;
+            let root: Document | ShadowRoot | null = document;
             let el: Element | null = null;
-            try { el = document.querySelector(sel); } catch { el = null; }
+            for (const sel of path) {
+              if (!root) return null;
+              try { el = root.querySelector(sel); } catch { return null; }
+              if (!el) return null;
+              root = el.shadowRoot;
+            }
             if (!el) return null;
             if (ck) return ck.contentBox(el);
             const r = el.getBoundingClientRect();
             return { x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height };
           });
-        }, sels)) as ({ x: number; y: number; width: number; height: number } | null)[];
+        }, paths)) as ({ x: number; y: number; width: number; height: number } | null)[];
         for (let i = 0; i < nodes.length; i++) {
           const box = rested[i];
           if (box && box.width > 0 && box.height > 0) nodes[i].box = box;
         }
       } catch {
-        /* best-effort — unmatched nodes keep axe's own verdict */
+        /* best-effort — nodes keep the box axe.ts resolved */
       }
     }
 

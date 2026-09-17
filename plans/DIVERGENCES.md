@@ -58,3 +58,46 @@ records the call and why. **None may be left unresolved at `/audit`** (done.md).
   interfaces live in `rules/`, which may import both record and registry. This
   matches the dependency law's intent — "registry imports nothing" — over the
   doc's heading grouping.
+
+## 5. Contrast measurement: pixel-band histogram → glyph-mask A/B diff — RESOLVED
+
+- **Design:** `browser-analysis-design.md` describes WCAG 1.4.3 contrast as a
+  histogram over a "largest contiguous luminance run" background guess
+  (`pixel-band.ts`), reconciled against axe's cascade-inferred colours by
+  `contrast-reconcile.ts`.
+- **Conflict:** field re-scan of maxedmarketing.ai (2026-09-16, HEAD 7d0f9af)
+  produced verdicts a person can refute by eye (a 17.42:1 pill reported as a
+  1–1.61:1 violation, an 18.38:1 subtitle never measured at all — see
+  `plans/glyph-contrast-plan.md` §1). Root cause: the histogram approach
+  infers background by statistics, not by isolating the glyph pixels
+  themselves, so bold anti-aliasing and a CTA's dark surround can outvote the
+  actual background.
+- **Call:** `plans/glyph-contrast-plan.md` (approved 2026-09-16, branch
+  `glyph-contrast`) replaces the histogram guess with a glyph-mask A/B pixel
+  diff: screenshot the subject, make only its glyphs transparent, screenshot
+  again, and treat every pixel where the two frames differ as an exact glyph
+  mask with the true background behind it (§2, §4.1 `measureGlyphs`). Per the
+  plan's authority note, this document wins over `browser-analysis-design.md`
+  wherever the two disagree on contrast measurement.
+- **Also:** axe's own `color-contrast` findings are no longer a second,
+  independently-reported source of truth. `engines.ts` now settles every axe
+  `color-contrast` node against the glyph-mask measurement of the same
+  element (`resolveAxeTargets`/`measureRefs`): any node with a measured match
+  is dropped and `contrast.text` is the single reporter for that element;
+  only unmatched axe nodes (nothing measured there) still report as axe found
+  them. This removes the old dual-reporter path where axe's cascade-based
+  ratio and the pixel-band ratio for the same text could disagree with no way
+  to tell which was right.
+- **Bug fixed along the way:** axe's shadow-DOM target shape (a target array
+  like `[["host", "p"]]` for `host >>> p`) failed the results schema in
+  `engines.ts`/`axe.ts` and silently dropped **every** axe finding on any page
+  with open shadow DOM — not just the shadow-rooted ones. Confirmed on the
+  ground-truth corpus: before the fix, `plans/contrast-truth-baseline.md`'s
+  first run scored TP 2 / FN 15 on a page with one shadow-DOM case; after the
+  fix (still on the old pixel-band scanner), TP 12 / FN 5. Regression test:
+  `test/axe-shadow-target.test.ts` (fixture
+  `test/fixtures/pages/axe-shadow-target.html`).
+- **Verified:** `node scripts/score-contrast-truth.mjs` on the finished
+  scanner — FP 0, FN 0, unresolved 0, ratio errors 0 over all non-`limitation`
+  corpus cases (`plans/contrast-truth-after.md`), versus FP 1, FN 5 on the
+  pre-change baseline (`plans/contrast-truth-baseline.md`).

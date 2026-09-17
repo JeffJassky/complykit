@@ -452,6 +452,11 @@ export interface HtmlOptions {
 }
 export function renderHtmlReport(run: Run, findings: Finding[], opts?: HtmlOptions): string;
 export function renderReport(run: Run, findings: Finding[], format: ReportFormat): string;
+export interface JsonReportOptions {
+  coverage?: CoverageMatrix[];
+  cwd?: string;
+}
+export function renderJsonReport(run: Run, findings: Finding[], opts?: JsonReportOptions): string;
 export function containsBannedVocabulary(text: string): boolean;
 export function assertReportVocabulary(text: string): void;
 

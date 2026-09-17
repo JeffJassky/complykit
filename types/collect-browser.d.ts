@@ -28,6 +28,13 @@ export interface RouteDiscovery {
 // dependency on playwright's types in the published contract.
 export function discoverRoutes(page: unknown, baseUrl: string, opts?: RouteDiscoveryOptions): Promise<RouteDiscovery>;
 
+// Structural page fingerprint (routes.ts dedup signal): hashes the DOM
+// skeleton (tags + roles, text/ids/classes stripped) so pages sharing one
+// layout are sampled, not scanned exhaustively. Typed as unknown here (not
+// Playwright's Page) to keep the published contract free of a hard
+// dependency on playwright's types.
+export function structuralFingerprint(page: unknown): Promise<string>;
+
 // A subject the glyph-mask contrast walk (glyph-measure.ts) found and either
 // measured directly off the rendered pixels or left unmeasured, with a
 // reason. One per text/pseudo-element/placeholder/value subject on the page;
