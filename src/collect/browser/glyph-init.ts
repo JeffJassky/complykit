@@ -70,6 +70,11 @@ export interface GlyphPageApi {
   resolveAxeTargets(targets: string[][]): GlyphAxeTarget[];
   describe(refs: number[]): GlyphDescribeResult[];
   scrollSubjectTo(ref: number, viewportY: number): Rect | null;
+  /** Elements painted OVER this subject's text at its current scroll position
+   *  (neither its ancestors nor its descendants), outermost only, as css paths.
+   *  With `hide`, each is also made transparent (journaled; undone by
+   *  `restore`). */
+  overlaysOver(key: string, hide: boolean): string[];
 }
 
 /**
@@ -1199,7 +1204,66 @@ export const GLYPH_INIT = (): void => {
   }
 
   // ---------------------------------------------------------------------------
-  const api: GlyphPageApi = { enumerate, hide, restore, settled, resolveAxeTargets, describe, scrollSubjectTo };
+  // overlaysOver
+  // ---------------------------------------------------------------------------
+  // What the browser itself says is stacked above the text: hit-test sample
+  // points across the subject's line boxes with elementsFromPoint, and keep
+  // every element above the owner that is not part of it. Stacking order,
+  // z-index, transforms and fixed/sticky/absolute positioning are all resolved
+  // by the browser, not re-derived here. `pointer-events:none` would drop a
+  // scrim out of the hit test, so it is overridden for the duration of the
+  // query. Only asked about text that already FAILED as rendered: whether an
+  // overlay matters is decided by re-measuring with it hidden, never by
+  // guessing from its opacity.
+  function overlaysOver(key: string, doHide: boolean): string[] {
+    const idx = key.indexOf(':');
+    if (idx < 0) return [];
+    const owner = elFromRef(parseInt(key.slice(0, idx), 10));
+    if (!owner || !owner.isConnected) return [];
+    const kind = key.slice(idx + 1);
+
+    let boxes: DOMRect[] = [];
+    if (kind === 'text') {
+      const range = document.createRange();
+      range.selectNodeContents(owner);
+      boxes = Array.from(range.getClientRects());
+      range.detach();
+    }
+    if (boxes.length === 0) boxes = Array.from(owner.getClientRects());
+
+    const root = owner.getRootNode();
+    const hitRoot: Document | ShadowRoot = root instanceof ShadowRoot ? root : document;
+    const vw = document.documentElement.clientWidth;
+    const vh = document.documentElement.clientHeight;
+    const pe = document.createElement('style');
+    pe.textContent = '*{pointer-events:auto!important}';
+    (root instanceof ShadowRoot ? root : document.head).appendChild(pe);
+    const found = new Set<Element>();
+    try {
+      for (const b of boxes.slice(0, 40)) {
+        if (b.width < 1 || b.height < 1) continue;
+        for (let i = 1; i <= 5; i++) {
+          const x = b.left + (b.width * i) / 6;
+          const y = b.top + b.height / 2;
+          if (x < 0 || y < 0 || x >= vw || y >= vh) continue;
+          for (const hit of hitRoot.elementsFromPoint(x, y)) {
+            if (hit === owner || containsAcrossShadow(hit, owner)) break; // reached the text's own layer
+            if (containsAcrossShadow(owner, hit)) continue; // the text's own children
+            if (hit === pe) continue;
+            found.add(hit);
+          }
+        }
+      }
+    } finally {
+      pe.remove();
+    }
+    const outer = Array.from(found).filter((el) => !Array.from(found).some((o) => o !== el && o.contains(el)));
+    if (doHide) for (const el of outer) setProp(el, 'visibility', 'hidden');
+    return outer.map(cssPath);
+  }
+
+  // ---------------------------------------------------------------------------
+  const api: GlyphPageApi = { enumerate, hide, restore, settled, resolveAxeTargets, describe, scrollSubjectTo, overlaysOver };
   const w = window as unknown as { __ckGlyph?: GlyphPageApi; __ck?: CkHelpers };
   w.__ckGlyph = api;
 

@@ -73,9 +73,14 @@ async function settle(page: import('playwright').Page, ms = 200): Promise<void> 
   await page.waitForTimeout(ms);
 }
 
+// Within 2 levels per channel: scrolling the page far away and back can leave
+// GPU raster noise of 1 level on a handful of antialiased text pixels (seen
+// after the overlay re-check scrolls to C28). A style left behind by a bad
+// restore changes pixels by far more than that.
 function pixelsEqual(a: PNG, b: PNG): boolean {
   if (a.width !== b.width || a.height !== b.height) return false;
-  return Buffer.compare(a.data, b.data) === 0;
+  for (let i = 0; i < a.data.length; i++) if (Math.abs(a.data[i] - b.data[i]) > 2) return false;
+  return true;
 }
 
 // Mirrors screenshot.ts's walkInnerScrollers: a scroll container (the C38/C39
@@ -235,7 +240,9 @@ suite('glyph-measure orchestration against the contrast-truth corpus', () => {
   it('measures every pass/fail case to the expected verdict, within 0.05 ratio where authored', () => {
     const failures: string[] = [];
     for (const r of rows) {
-      if (r.expect !== 'pass' && r.expect !== 'fail') continue;
+      if (r.expect !== 'pass' && r.expect !== 'fail' && r.expect !== 'review') continue;
+      // A review case fails as rendered; attributeOverlays then finds the overlay.
+      const want = r.expect === 'review' ? 'fail' : r.expect;
       if (!r.subject) {
         failures.push(`case ${r.id}: no measured subject found (textSample search)`);
         continue;
@@ -244,8 +251,12 @@ suite('glyph-measure orchestration against the contrast-truth corpus', () => {
         failures.push(`case ${r.id}: expected measured, got ${r.got}`);
         continue;
       }
-      if (r.subject.verdict !== r.expect) {
-        failures.push(`case ${r.id}: expected ${r.expect}, got ${r.subject.verdict} (ratio ${r.subject.ratio})`);
+      if (r.expect === 'review' && !(r.subject.obscuredBy?.length && r.subject.unobscured?.verdict === 'pass')) {
+        failures.push(`case ${r.id}: expected an overlay that the text passes without`);
+        continue;
+      }
+      if (r.subject.verdict !== want) {
+        failures.push(`case ${r.id}: expected ${want}, got ${r.subject.verdict} (ratio ${r.subject.ratio})`);
         continue;
       }
       if (r.expectedRatio !== null) {

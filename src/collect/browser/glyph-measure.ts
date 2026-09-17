@@ -65,6 +65,27 @@ export interface MeasuredSubject {
   overlayPath?: string;
   cropWidth?: number;
   cropHeight?: number;
+  /** Elements painted over the text when it was re-checked (see
+   *  attributeOverlays). Set only for text that failed, or could not be seen,
+   *  as rendered. */
+  obscuredBy?: string[];
+  /** The same text measured with `obscuredBy` hidden: its contrast against its
+   *  own background. */
+  unobscured?: UnobscuredMeasurement;
+}
+
+export interface UnobscuredMeasurement {
+  verdict: 'pass' | 'fail';
+  ratio: number;
+  minRatio: number;
+  medianRatio: number;
+  glyphPixels: number;
+  fgColor?: string;
+  worstBgColor?: string;
+  cropPath?: string;
+  overlayPath?: string;
+  cropWidth?: number;
+  cropHeight?: number;
 }
 
 export interface GlyphRunState {
@@ -108,6 +129,7 @@ interface CkWindow {
       settled(keys: string[]): { running: number; moved: number };
       describe(refs: number[]): GlyphDescribeResult[];
       scrollSubjectTo(ref: number, viewportY: number): Rect | null;
+      overlaysOver(key: string, hide: boolean): string[];
     };
     boxOf?(ref: number): Rect | null;
   };
@@ -128,6 +150,13 @@ async function pageHide(page: Page, keys: string[]): Promise<void> {
   await page.evaluate((k) => {
     (window as unknown as CkWindow).__ck?.glyph?.hide(k);
   }, keys);
+}
+
+async function pageOverlays(page: Page, key: string, hide: boolean): Promise<string[]> {
+  return page.evaluate(
+    ({ key, hide }) => (window as unknown as CkWindow).__ck?.glyph?.overlaysOver(key, hide) ?? [],
+    { key, hide },
+  );
 }
 
 async function pageRestore(page: Page): Promise<void> {
@@ -450,7 +479,14 @@ function buildEvidence(
   return { cropPath, overlayPath, cropWidth: target.width, cropHeight: target.height };
 }
 
-function finalizeMeasured(subject: PageTextSubject, result: GlyphResult, measuredAt: 'band' | 'rest', a: PNG, ctx: MeasureContext): MeasuredSubject {
+function finalizeMeasured(
+  subject: PageTextSubject,
+  result: GlyphResult,
+  measuredAt: 'band' | 'rest',
+  a: PNG,
+  ctx: MeasureContext,
+  evidence: 'fail' | 'always' = 'fail',
+): MeasuredSubject {
   const verdict = decideVerdict(result.hist, subject.required);
   const out: MeasuredSubject = {
     ...baseFields(subject),
@@ -474,7 +510,7 @@ function finalizeMeasured(subject: PageTextSubject, result: GlyphResult, measure
     worstBgColor: result.worst ? rgbString(result.worst.bg) : undefined,
     bestBgColor: result.best ? rgbString(result.best.bg) : undefined,
   };
-  if (verdict.verdict === 'fail') {
+  if (verdict.verdict === 'fail' || evidence === 'always') {
     const ev = buildEvidence(a, result, ctx);
     out.cropPath = ev.cropPath;
     out.overlayPath = ev.overlayPath;
@@ -571,25 +607,33 @@ type SingleOutcome =
 // Shared by the plain single-subject path and each slice of a tall subject:
 // settle, then attempt A/hide/B/restore/A2 up to 3 times while the page keeps
 // moving under us (regionChanged), then classify the result.
-async function measureRectsOnce(page: Page, subject: PageTextSubject, rects: Rect[]): Promise<SingleOutcome> {
+// With `withoutOverlays`, whatever is painted over the subject is made
+// transparent for every shot (A, B and A2 alike), so the measurement is of the
+// text against its own background.
+async function measureRectsOnce(page: Page, subject: PageTextSubject, rects: Rect[], withoutOverlays = false): Promise<SingleOutcome> {
   try {
     await pollSettled(page, [subject.key], 5000);
+
+    const shoot = async (hideGlyphs: boolean): Promise<[PNG | null, PNG | null]> => {
+      try {
+        if (withoutOverlays) await pageOverlays(page, subject.key, true);
+        const first = await shootOrNull(page);
+        if (!first || !hideGlyphs) return [first, null];
+        await pageHide(page, [subject.key]);
+        return [first, await shootOrNull(page)];
+      } finally {
+        await pageRestore(page);
+      }
+    };
 
     let a: PNG | null = null;
     let b: PNG | null = null;
     let a2: PNG | null = null;
     let changed = true;
     for (let attempt = 0; attempt < 3 && changed; attempt++) {
-      a = await shootOrNull(page);
-      if (!a) return { kind: 'error' };
-      try {
-        await pageHide(page, [subject.key]);
-        b = await shootOrNull(page);
-      } finally {
-        await pageRestore(page);
-      }
-      if (!b) return { kind: 'error' };
-      a2 = await shootOrNull(page);
+      [a, b] = await shoot(true);
+      if (!a || !b) return { kind: 'error' };
+      [a2] = await shoot(false);
       if (!a2) return { kind: 'error' };
       changed = regionChanged(a, a2, rects) || !(await confirmNotMoving(page, [subject.key]));
     }
@@ -687,6 +731,74 @@ async function measureAtRest(page: Page, subject: PageTextSubject, ctx: MeasureC
   return measureTallSubject(page, subject, ctx, vh, clear);
 }
 
+// ---------------------------------------------------------------------------
+// attributeOverlays
+// ---------------------------------------------------------------------------
+// Text that failed as rendered, or that could not be seen at all (hiding it
+// changed no pixels), is re-checked once at rest with anything painted over it
+// hidden: a cookie banner, a scrim, a sticky bar. An overlay alone decides
+// nothing (it may be fully transparent); only the second measurement does.
+//
+//   still fails without the overlay  -> the text itself fails (kept as is)
+//   passes without the overlay       -> obscuredBy + unobscured: the rule
+//                                       reports needs-review, naming the overlay
+//   nothing over it, passes now      -> the earlier fail was read while
+//                                       something transient covered it at that
+//                                       scroll position; the at-rest pass stands
+const MAX_OVERLAY_CHECKS = 150;
+
+async function attributeOverlays(
+  page: Page,
+  state: GlyphRunState,
+  ctx: MeasureContext,
+  vh: number,
+): Promise<{ obscured: number; cleared: number }> {
+  const counts = { obscured: 0, cleared: 0 };
+  const clear = Math.max(1, vh - ctx.obstructions.topInset - ctx.obstructions.bottomInset);
+  const candidates = Array.from(state.done.values()).filter(
+    (m) => (m.status === 'measured' && m.verdict === 'fail') || (m.status === 'unmeasured' && m.unmeasuredReason === 'occluded'),
+  );
+  for (const m of candidates.slice(0, MAX_OVERLAY_CHECKS)) {
+    try {
+      if ((await pageScrollSubjectTo(page, m.ref, ctx.obstructions.topInset + 8)) === null) continue;
+      const fresh = (await pageEnumerate(page, { refs: [m.ref] })).subjects.find((s) => s.key === m.key);
+      if (!fresh || boundsOfRects(fresh.rects).height > clear) continue;
+      const overlays = await pageOverlays(page, fresh.key, false);
+
+      const outcome = await measureRectsOnce(page, fresh, fresh.rects, overlays.length > 0);
+      if (outcome.kind !== 'measured') continue;
+      const again = finalizeMeasured(fresh, outcome.result, 'rest', outcome.a, ctx, overlays.length ? 'always' : 'fail');
+
+      if (overlays.length === 0) {
+        if (again.verdict === 'pass' && m.status === 'measured') {
+          state.done.set(m.key, again);
+          counts.cleared++;
+        }
+        continue;
+      }
+      if (again.verdict === 'fail' && m.status === 'measured') continue; // the text fails on its own
+      m.obscuredBy = overlays;
+      m.unobscured = {
+        verdict: again.verdict as 'pass' | 'fail',
+        ratio: again.ratio as number,
+        minRatio: again.minRatio as number,
+        medianRatio: again.medianRatio as number,
+        glyphPixels: again.glyphPixels as number,
+        fgColor: again.fgColor,
+        worstBgColor: again.worstBgColor,
+        cropPath: again.cropPath,
+        overlayPath: again.overlayPath,
+        cropWidth: again.cropWidth,
+        cropHeight: again.cropHeight,
+      };
+      counts.obscured++;
+    } catch {
+      /* best-effort: the original result stands */
+    }
+  }
+  return counts;
+}
+
 export async function measureRemaining(page: Page, state: GlyphRunState, ctx: MeasureContext): Promise<void> {
   const startedAt = Date.now();
   const budgetMs = ctx.budgetMs ?? 120_000;
@@ -753,6 +865,8 @@ export async function measureRemaining(page: Page, state: GlyphRunState, ctx: Me
   }
   state.pending.clear();
 
+  const attributed = await attributeOverlays(page, state, ctx, vh);
+
   // Every subject in `done` — measured in an earlier band, measured here, or
   // unmeasured — gets its cascade diagnostics and an at-rest box re-read, so
   // callers emit exactly one list with no second describe() pass needed.
@@ -790,7 +904,8 @@ export async function measureRemaining(page: Page, state: GlyphRunState, ctx: Me
     ctx.trace(
       `glyph-measure: rest pass measured ${measured} text element(s) (${pass} pass, ${fail} fail), ` +
         `${unmeasured} unmeasured [never-stable ${reasonCounts['never-stable']}, occluded ${reasonCounts.occluded}, ` +
-        `cap ${reasonCounts.cap}, error ${reasonCounts.error}], ${iterations} rest iteration(s), ${Date.now() - startedAt}ms`,
+        `cap ${reasonCounts.cap}, error ${reasonCounts.error}], ${iterations} rest iteration(s), ` +
+        `${attributed.obscured} obscured by an overlay, ${attributed.cleared} cleared on re-check, ${Date.now() - startedAt}ms`,
     );
   }
 }

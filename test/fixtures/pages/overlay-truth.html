@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Overlay attribution corpus</title>
+<style>
+  body { margin: 0; font: 16px/1.4 Arial, sans-serif; background: #fff; }
+  .case { position: relative; padding: 16px; margin: 0 0 24px; }
+  .case p { margin: 0; }
+  .cover { position: absolute; inset: 0; }
+</style>
+</head>
+<body>
+<!-- Text covered by something painted over it. The overlay alone never decides
+     anything; each expectation is what re-measuring WITHOUT it shows.
+     data-expect: obscured = needs-review naming the overlay
+                  pass     = no finding
+                  fail     = plain violation (fails on its own background too)
+                  covered  = needs-review, cannot be evaluated as rendered -->
+
+<!-- O1: lime on near-black, under a dark scrim that ignores the pointer. -->
+<section class="case" data-case="O1" data-expect="obscured" style="background:#0a0f14;">
+  <p style="color:#c3fd34;">O1 lime text under a dark translucent scrim</p>
+  <div class="cover" id="o1-scrim" style="background:rgba(0,0,0,0.85);pointer-events:none;"></div>
+</section>
+
+<!-- O2: an overlay that is there but barely tints anything. -->
+<section class="case" data-case="O2" data-expect="pass">
+  <p style="color:#000;">O2 black text under a nearly transparent overlay</p>
+  <div class="cover" style="background:rgba(255,255,255,0.1);"></div>
+</section>
+
+<!-- O3: an overlay over text that fails without it too. -->
+<section class="case" data-case="O3" data-expect="fail">
+  <p style="color:#aaa;">O3 light gray text under a faint white overlay</p>
+  <div class="cover" id="o3-cover" style="background:rgba(255,255,255,0.05);"></div>
+</section>
+
+<!-- O4: an almost opaque cover; hiding the text changes no visible pixel. -->
+<section class="case" data-case="O4" data-expect="covered" style="background:#000;">
+  <p style="color:#fff;">O4 white text under an almost opaque gray cover</p>
+  <div class="cover" id="o4-cover" style="background:rgba(128,128,128,0.995);"></div>
+</section>
+
+<div style="height:1600px;"></div>
+
+<!-- O5: a consent banner injected after load, fixed over the footer, which
+     cannot be scrolled out from under it. O6 is the banner's own text. -->
+<footer data-case="O5" data-expect="obscured" style="background:#0a0f14;padding:24px 16px 20px;">
+  <a href="#" style="color:#c3fd34;text-decoration:none;">O5 footer link</a>
+</footer>
+<div id="o5-banner" hidden style="position:fixed;left:0;right:0;bottom:0;height:90px;background:rgba(0,0,0,0.8);display:flex;align-items:center;padding:0 16px;z-index:50;">
+  <p data-case="O6" data-expect="pass" style="color:#fff;margin:0;">O6 cookie banner text</p>
+</div>
+<script>
+  setTimeout(function () { document.getElementById('o5-banner').hidden = false; }, 300);
+</script>
+</body>
+</html>

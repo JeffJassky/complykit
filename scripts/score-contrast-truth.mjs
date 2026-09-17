@@ -228,6 +228,9 @@ async function main() {
       verdict = got === 'violation' ? 'FP' : got === 'needs-review' ? 'unresolved' : 'TN';
     } else if (c.expect === 'fail') {
       verdict = got === 'violation' ? 'TP' : got === 'needs-review' ? 'unresolved' : 'FN';
+    } else if (c.expect === 'review') {
+      // Fails as rendered, passes with the overlay painted over it hidden.
+      verdict = got === 'needs-review' ? 'TP' : got === 'violation' ? 'unresolved' : 'FN';
     } else if (c.expect === 'none') {
       verdict = got === 'violation' || got === 'needs-review' ? 'FP' : 'TN';
     } else if (c.expect === 'gap-ok') {

@@ -221,7 +221,9 @@ async function scanOnce(
     }
     const unmeasuredReasonCounts = new Map<string, number>();
     for (const m of measuredSubjects) {
-      if (m.status === 'unmeasured' && m.unmeasuredReason) {
+      // Covered text that was re-checked with its overlay hidden is reported by
+      // contrast.text as needs-review, naming the overlay; it is not a gap.
+      if (m.status === 'unmeasured' && m.unmeasuredReason && !m.unobscured) {
         unmeasuredReasonCounts.set(m.unmeasuredReason, (unmeasuredReasonCounts.get(m.unmeasuredReason) ?? 0) + 1);
       }
     }

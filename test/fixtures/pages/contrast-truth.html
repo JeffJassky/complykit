@@ -89,7 +89,11 @@
   <p style="color:#000;">C08 solid black text on white sitting inside an ancestor with fifty percent opacity, compositing down to mid-gray on the white page behind it.</p>
 </section>
 
-<section class="case" data-case="C09" data-expect="fail" style="position:relative;">
+<!-- C09 expects needs-review: it fails as rendered, but the shade is a separate
+     element painted over the text, and without it the text passes. Whether that
+     overlay legitimately covers the text is a human call (glyph-measure
+     attributeOverlays). -->
+<section class="case" data-case="C09" data-expect="review" style="position:relative;">
   <p style="color:#000;position:relative;">C09 solid black text on white, lightened by an absolutely positioned translucent white shade drawn on top of it without changing the text's own CSS color — the rendered ink has to be measured, not the declared color.</p>
   <div style="position:absolute;inset:0;background:rgba(255,255,255,.7);"></div>
 </section>
