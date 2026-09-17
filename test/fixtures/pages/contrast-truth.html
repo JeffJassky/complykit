@@ -103,7 +103,7 @@
   <p style="color:#000;margin:0;">black on white text that continues on with <span data-case="C14" data-expect="fail" data-ratio="2.32" style="color:#aaa;">C14 grey span, the only token-bearing content in this paragraph and the only part that should be scored</span></p>
 </div>
 
-<section class="case" data-case="C20" data-expect="fail" data-ratio="1.92">
+<section class="case" data-case="C20" data-expect="fail" data-ratio="2.32">
   <p id="c20">Element with pseudo before-content, ordinary black text on white following the injected pseudo-content.</p>
 </section>
 
@@ -219,12 +219,12 @@
   <p id="c43" style="color:#000;margin:0;">C43 black text laid directly over the same light, noisy photograph background.</p>
 </section>
 
-<section class="case" data-case="C44" data-expect="fail" style="background:linear-gradient(90deg,#fff,#444);">
-  <p style="color:#000;margin:0;">C44 black text over a gradient background running from white to dark gray, failing where the gradient turns dark.</p>
+<section class="case" data-case="C44" data-expect="fail">
+  <p style="color:#000;margin:0;display:inline-block;background:linear-gradient(90deg,#fff,#444);">C44 black text over a gradient background running from white to dark gray, failing where the gradient turns dark.</p>
 </section>
 
-<section class="case" data-case="C45" data-expect="pass" style="background:linear-gradient(90deg,#fff,#bbb);">
-  <p style="color:#000;margin:0;">C45 black text over a gradient background running from white to light gray, still passing at its darkest point.</p>
+<section class="case" data-case="C45" data-expect="pass">
+  <p style="color:#000;margin:0;display:inline-block;background:linear-gradient(90deg,#fff,#bbb);">C45 black text over a gradient background running from white to light gray, still passing at its darkest point.</p>
 </section>
 
 <script>
