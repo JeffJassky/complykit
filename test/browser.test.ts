@@ -77,20 +77,35 @@ suite('collect/browser passive pass', () => {
     expect(reqs.has('wcag22.3.1.1')).toBe(true); // html-has-lang
   });
 
-  it('flags the low-contrast paragraph under 1.4.3 (axe owns flat-colour contrast)', () => {
+  it('flags the low-contrast paragraph under 1.4.3 via contrast.text — the glyph-mask measurement settles axe', () => {
     const contrast143 = findings.filter((f) => String(f.requirementId) === 'wcag22.1.4.3');
     expect(contrast143.length).toBeGreaterThanOrEqual(1);
-    // axe (engine) reports the flat-colour case; our rule defers to it.
-    expect(contrast143.some((f) => f.producer.type === 'engine')).toBe(true);
+    // The glyph-mask walk measures every text subject directly off the
+    // rendered pixels, so `contrast.text` (producer: rule) is the SINGLE
+    // reporter for this element now — axe's own `color-contrast` node for the
+    // same text is settled (dropped) in engines.ts rather than duplicating or
+    // contradicting the measured verdict.
+    expect(contrast143.every((f) => f.producer.type === 'rule' && String(f.ruleId) === 'contrast.text')).toBe(true);
+    expect(contrast143.some((f) => f.producer.type === 'engine')).toBe(false);
   });
 
-  it('our contrast.text rule does not duplicate axe on flat-colour text', () => {
-    // Both paragraphs are flat-colour, so contrast.text (non-flat only) stays quiet.
+  it('contrast.text carries crop and overlay evidence for the measured failure', () => {
+    const finding = findings.find((f) => String(f.ruleId) === 'contrast.text');
+    expect(finding).toBeDefined();
+    const shotEvidence = finding?.evidence.find((e) => e.kind === 'screenshot');
+    expect(shotEvidence, 'expected screenshot evidence with a crop of the measured glyphs').toBeDefined();
+    if (shotEvidence?.kind === 'screenshot') {
+      expect(shotEvidence.path).toBeTruthy();
+      expect(fs.existsSync(path.join(cwd, '.comply', 'runs', 't', shotEvidence.path))).toBe(true);
+      expect((shotEvidence as { overlayPath?: string }).overlayPath).toBeTruthy();
+    }
+  });
+
+  it('does not report the good-contrast paragraph as a failure', () => {
     const ours = findings.filter((f) => String(f.ruleId) === 'contrast.text');
     for (const f of ours) {
       const d = JSON.stringify(f.details);
       expect(d.includes('Good contrast')).toBe(false);
-      expect(d.includes('Low contrast')).toBe(false);
     }
   });
 

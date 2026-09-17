@@ -208,12 +208,26 @@ async function measureInBands(page: Page, info: ScrollerInfo, onBand: BandVisito
   const walked = new Set<number>();
   const obs = await readObstructions(page);
   const clear = Math.max(1, info.clientHeight - obs.topInset - obs.bottomInset);
-  const needed = Math.ceil(info.scrollHeight / clear);
+  // Bands overlap by 25% of the clear height instead of tiling edge to edge.
+  // A tiled walk puts an ordinary element's rects fully inside SOME band only
+  // by luck: anything straddling a tile boundary (a heading whose top half
+  // lands in one band and bottom half in the next) is never fully within any
+  // single band's clear strip, so measureBand's "every rect fully on screen"
+  // eligibility test never admits it — it falls through to the far slower
+  // rest pass for content that was on screen all along.
+  const step = Math.max(1, Math.round(clear * 0.75));
+  const needed = info.scrollHeight <= clear ? 1 : Math.ceil((info.scrollHeight - clear) / step) + 1;
   const bands = Math.min(Math.max(needed, 1), MAX_MEASURE_BANDS);
 
   for (let i = 0; i < bands; i++) {
     // Park so the rows this band is responsible for land below the top chrome.
-    const target = Math.max(0, i * clear - obs.topInset);
+    // The last band is pulled up so its clear strip still reaches the very
+    // bottom of the document — stepping by less than the clear height would
+    // otherwise leave scrollHeight - (bands-1)*step - clear pixels that no
+    // band's strip ever covers.
+    const maxScroll = Math.max(0, info.scrollHeight - clear);
+    const rawTop = Math.min(i * step, maxScroll);
+    const target = Math.max(0, rawTop - obs.topInset);
     const actual = (await page.evaluate((offset: number) => {
       const ck = (window as unknown as { __ck?: { scrollPrimaryTo(o: number): number } }).__ck;
       if (ck) return ck.scrollPrimaryTo(offset);

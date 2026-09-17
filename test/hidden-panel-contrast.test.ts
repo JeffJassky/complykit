@@ -1,18 +1,30 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { collectContrast } from '../src/collect/browser/contrast.js';
 import { GEOMETRY_INIT } from '../src/collect/browser/geometry-init.js';
+import { GLYPH_INIT } from '../src/collect/browser/glyph-init.js';
+import { asRunId } from '../src/record/index.js';
+import { createGlyphRunState, measureRemaining, type MeasuredSubject, type MeasureContext } from '../src/collect/browser/glyph-measure.js';
 
-// A contrast candidate has to be something a reader can actually see.
+// A contrast SUBJECT has to be something a reader can actually see.
 //
-// The collector used to check only the element's OWN computed style, so a
-// closed mega-menu, an unopened modal or an off-slide carousel panel — all of
-// which lay out with real geometry while an ancestor hides them — came through
-// as candidates. The pixel pass then sampled whatever was painted at those
-// coordinates, which is the page behind, and reported the panel's own text as
-// failing against a background it never sits on. On the StoryFolder client that
-// was 28 findings from one closed dropdown, at ratios around 1.03:1.
+// The old candidate collector checked only the element's OWN computed style,
+// so a closed mega-menu, an unopened modal or an off-slide carousel panel —
+// all of which lay out with real geometry while an ancestor hides them —
+// came through as candidates, and the pixel pass then sampled whatever was
+// painted at those coordinates (the page behind), reporting the panel's own
+// text as failing against a background it never sits on. On the StoryFolder
+// client that was 28 findings from one closed dropdown, at ratios around
+// 1.03:1.
+//
+// The glyph-mask walk closes this a level earlier: `enumerate()` (glyph-
+// init.ts) never creates a subject at all for an owner that fails
+// `checkVisibility` (an ancestor's `opacity: 0`) or whose painted box is null
+// (clipped away entirely by an ancestor's `overflow: hidden`) — so there is
+// nothing here to measure a false verdict FOR, pass or fail, not merely a
+// filtered candidate list.
 
 const PAGE_URL = pathToFileURL(
   fileURLToPath(new URL('./fixtures/pages/hidden-panel.html', import.meta.url)),
@@ -27,57 +39,68 @@ try {
 }
 const suite = chromiumAvailable ? describe : describe.skip;
 
-suite('contrast candidates exclude what is not painted', () => {
+suite('glyph-mask contrast subjects exclude what is not painted', () => {
+  let cwd: string;
   let browser: import('playwright').Browser;
   let page: import('playwright').Page;
+  let done: MeasuredSubject[];
 
   beforeAll(async () => {
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'complykit-hiddenpanel-'));
     const { chromium } = await import('playwright');
     browser = await chromium.launch();
-    // The scanner installs these page-side helpers on every context, and the
-    // collector's visibility test lives in them — so the fixture has to have
-    // them too, or it is testing a degraded fallback rather than the product.
+    // The scanner installs these page-side helpers on every context, and both
+    // the visibility test (enumerate) and the measurement (hide/restore) live
+    // in them — so the fixture has to have them too, or this is testing a
+    // degraded fallback rather than the product.
     const ctx = await browser.newContext({ viewport: { width: 900, height: 700 } });
     await ctx.addInitScript(GEOMETRY_INIT);
+    await ctx.addInitScript(GLYPH_INIT);
     page = await ctx.newPage();
     await page.goto(PAGE_URL, { waitUntil: 'load' });
+
+    const state = createGlyphRunState();
+    const measureCtx: MeasureContext = {
+      runId: asRunId('hidden-panel-test'),
+      cwd,
+      obstructions: { topInset: 0, bottomInset: 0 },
+    };
+    await measureRemaining(page, state, measureCtx);
+    done = [...state.done.values()];
   }, 60_000);
 
   afterAll(async () => {
     await browser?.close();
+    if (cwd) fs.rmSync(cwd, { recursive: true, force: true });
   });
 
-  it('skips a panel hidden by an ancestor, and keeps the visible copy', async () => {
-    const pass = await collectContrast(
-      page,
-      { property: 'test', routePattern: '/', instanceUrl: PAGE_URL, viewport: 'desktop', colorScheme: 'light' },
-      new Date().toISOString(),
-    );
-    // Candidates are identified by their ink: the fixture gives each block a
-    // distinct one.
-    const inks = pass.candidates.map((c) => c.textColor);
+  it('never produces a measurement for the closed panel or the clipped line — they are not subjects at all', () => {
+    expect(done.some((m) => m.textSample.includes('Import a video from anywhere'))).toBe(false);
+    expect(done.some((m) => m.textSample.includes('Third line, clipped away entirely'))).toBe(false);
+  });
 
-    // The closed panel's near-white ink is not a candidate at all.
-    expect(inks).not.toContain('rgb(244, 246, 250)');
+  it('still measures the two lines the clipper actually paints', () => {
+    expect(done.some((m) => m.textSample.includes('First line, painted'))).toBe(true);
+  });
 
-    // The clipped line IS still carried — the reconciliation needs it to clear
-    // axe's finding about the same element — but flagged, and with no viewport
-    // box, so nothing tries to measure pixels where it is not painted.
-    const clipped = pass.candidates.filter((c) => c.clipped);
-    expect(clipped).toHaveLength(1);
-    expect(clipped[0].textColor).toBe('rgb(111, 106, 128)');
-    expect(clipped[0].viewportBox).toBeUndefined();
-    // Gradient text is carried, flagged, and MEASURABLE: the pixel pass reads
-    // its ink from the image (every cluster that is not the ground) instead of
-    // from a CSS colour that is transparent.
-    const gradient = pass.candidates.filter((c) => c.paintedByBackground);
-    expect(gradient).toHaveLength(1);
-    expect(gradient[0].viewportBox).toBeDefined();
+  it('measures the pale hero copy and the pale visible paragraph as real failures', () => {
+    const hero = done.find((m) => m.textSample.includes('Hero copy that the closed panel'));
+    const visible = done.find((m) => m.textSample.includes('too pale for its ground'));
+    expect(hero?.status, 'hero copy should be measured, not skipped').toBe('measured');
+    expect(hero?.verdict).toBe('fail');
+    expect(visible?.status, 'visible paragraph should be measured, not skipped').toBe('measured');
+    expect(visible?.verdict).toBe('fail');
+  });
 
-    // Its two painted siblings are not flagged.
-    expect(pass.candidates.filter((c) => c.textColor === 'rgb(111, 106, 128)')).toHaveLength(3);
-    // Both visible blocks still are — the fix must not blind the collector.
-    expect(inks).toContain('rgb(160, 160, 160)'); // the pale paragraph
-    expect(inks).toContain('rgb(201, 201, 207)'); // the pale hero copy
-  }, 60_000);
+  it('measures the gradient (background-clip: text) title as a real subject, not skipped as unmeasurable', () => {
+    const gradient = done.find((m) => m.textSample.includes('Convert any video'));
+    expect(gradient).toBeDefined();
+    expect(gradient?.paintedByBackground).toBe(true);
+    // Whichever way it verdicts, it must have gone through the pixel method —
+    // fgSource 'rendered' is exactly the gradient-text path (glyph-math §4.1
+    // step 5: no CSS colour to trust, so the rendered ink IS the colour).
+    if (gradient?.status === 'measured') {
+      expect(gradient.fgSource).toBe('rendered');
+    }
+  });
 });

@@ -28,18 +28,49 @@ export interface RouteDiscovery {
 // dependency on playwright's types in the published contract.
 export function discoverRoutes(page: unknown, baseUrl: string, opts?: RouteDiscoveryOptions): Promise<RouteDiscovery>;
 
-export interface ContrastCandidate {
+// A subject the glyph-mask contrast walk (glyph-measure.ts) found and either
+// measured directly off the rendered pixels or left unmeasured, with a
+// reason. One per text/pseudo-element/placeholder/value subject on the page;
+// carried in the `style-probe` (`check: 'contrast'`) artifact's `results`.
+export interface MeasuredSubject {
+  key: string;
+  ref: number;
+  kind: 'text' | 'before' | 'after' | 'placeholder' | 'value';
   cssPath: string;
   textSample: string;
+  sourceFile: string | null;
+  scopeId: string | null;
+  fgVars?: string[];
+  bgVars?: string[];
+  bgImageVars?: string[];
+  textColor: string;
   fontSizePx: number;
   bold: boolean;
   large: boolean;
-  textColor: string;
-  bgColor: string | null;
-  flat: boolean;
-  ratio: number | null;
   required: number;
+  paintedByBackground?: boolean;
+  flat: boolean;
+  bgColor: string | null;
+  cascadeRatio: number | null;
   box: { x: number; y: number; width: number; height: number };
+  status: 'measured' | 'unmeasured';
+  unmeasuredReason?: 'never-stable' | 'occluded' | 'cap' | 'error';
+  measuredAt?: 'band' | 'rest';
+  verdict?: 'pass' | 'fail';
+  ratio?: number;
+  minRatio?: number;
+  medianRatio?: number;
+  maxRatio?: number;
+  glyphPixels?: number;
+  failingPixels?: number;
+  fgSource?: 'css' | 'rendered';
+  fgColor?: string;
+  worstBgColor?: string;
+  bestBgColor?: string;
+  cropPath?: string;
+  overlayPath?: string;
+  cropWidth?: number;
+  cropHeight?: number;
 }
 
 export interface CollectBrowserOptions {

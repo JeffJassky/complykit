@@ -11,17 +11,15 @@ import { launchBrowser, openMeasurementContext, applyMeasurementCell, newPage, V
 import { settle } from './settle.js';
 import { scrollThrough } from './scroll.js';
 import { runAxe } from './axe.js';
-import { collectContrast, attributeGradientVars, type ContrastCandidate } from './contrast.js';
-import { pixelBand } from './pixel-band.js';
-import { measureAxeContrastTargets } from './axe-contrast-measure.js';
-import { captureScreenshot } from './screenshot.js';
+import { captureScreenshot, type Obstructions } from './screenshot.js';
 import { captureSnapshot } from './snapshot.js';
 import { keyboardWalk } from './keyboard.js';
 import { captureConsent } from './consent.js';
 import { discoverRoutes, type RouteDiscoveryOptions, type TraceFn } from './routes.js';
+import { createGlyphRunState, measureBand, measureRemaining, type MeasuredSubject, type MeasureContext } from './glyph-measure.js';
 
 export { VIEWPORT_PRESETS } from './session.js';
-export type { ContrastCandidate } from './contrast.js';
+export type { MeasuredSubject } from './glyph-measure.js';
 export { discoverRoutes } from './routes.js';
 export type { RouteDiscovery, RouteDiscoveryOptions, TraceFn } from './routes.js';
 export { structuralFingerprint } from './fingerprint.js';
@@ -112,119 +110,34 @@ async function scanOnce(
     // image was wrong on any still-loading page: one route's scroller grew from
     // 2208px to 3703px between capture and measurement, so boxes addressed
     // pixels that had moved and produced precise, confident, fictional ratios.
-    // axe runs BEFORE the capture, not after, so the elements it disputes can be
-    // measured inside a band like everything else. axe reports `incomplete` when
-    // it cannot walk to a background — a pseudo-element over the text, an
-    // overlapping box, a gradient — and those are exactly the elements the
-    // contrast collector drops, because the flat cascade says they pass. So
-    // nothing measured them and axe's "could not be determined" stood: 211
-    // findings on the client, every one of them a question the pixels can
-    // answer. Resolving them after the walk, as this used to, produced
-    // candidates with no measurement at all.
+    // axe runs BEFORE the capture, not after, so its color-contrast targets
+    // exist for the later at-rest resolution pass below, in the same DOM the
+    // glyph walk measured.
     const axeArtifact = await runAxe(page, subject, capturedAt);
-    const axeResults = axeArtifact.kind === 'axe-result' ? axeArtifact.results : null;
 
-    const measured = new Map<string, ContrastCandidate>();
-    let truncated = false;
-    let candidates: ContrastCandidate[] = [];
-    let contrast: Awaited<ReturnType<typeof collectContrast>> | null = null;
+    // Glyph-mask contrast walk (plans/glyph-contrast-plan.md §4.3): each band
+    // hides exactly the on-screen, non-overlapping subjects' glyphs and diffs
+    // against the pixels behind them — no cascade guess, no background image
+    // blind spot, no wrong-instant read of a still-revealing element. `state`
+    // accumulates `done`/`pending` across every band AND the rest pass below.
+    const state = createGlyphRunState();
+    const measureCtx: MeasureContext = {
+      runId: opts.runId,
+      cwd: opts.cwd,
+      obstructions: { topInset: 0, bottomInset: 0 },
+      trace: opts.trace,
+    };
 
     const shot = await captureScreenshot(page, subject, {
       runId: opts.runId, cwd: opts.cwd, viewport: viewport.id as ViewportId, scheme, capturedAt,
-      onBand: async (bandPng, offset) => {
-        const pass = await collectContrast(page, subject, capturedAt);
-        if (pass.truncated) truncated = true;
-        if (!contrast) contrast = pass; // keep the first artifact; results are merged below
-        for (const c of pass.candidates) {
-          // Identity is the ELEMENT, not where it happened to be. Including the
-          // box in the key looked harmless while every page was visited once,
-          // but a band walk re-reads the DOM at each offset, and a page with
-          // sticky sections, scroll-linked pinning or reveal transforms puts
-          // the same element at a different contentBox in every band. Each band
-          // then minted a new key for it: one client route went from ~900
-          // findings to ~45,000, the same text over and over at the offsets it
-          // travelled through.
-          const key = c.cssPath;
-          const already = measured.get(key);
-          if (already?.measuredBand) continue; // already measured in an earlier band
-          const vb = c.viewportBox;
-          // Only elements actually ON SCREEN in this band can be measured from
-          // it. An element off-screen in every band still gets RECORDED, without
-          // a band — it surfaces as "ratio could not be proven" rather than
-          // disappearing. Dropping the candidates we failed to measure would
-          // turn a coverage hole into a clean bill of health.
-          if (!vb || vb.y + vb.height <= 0 || vb.y >= bandPng.height) {
-            if (!already) measured.set(key, c);
-            continue;
-          }
-          // Occlusion is decided in the collector, per element, by hit-testing
-          // the compositor — not here by rectangle. A fixed header overlaps
-          // everything beneath it, but its own text is painted on top and is
-          // perfectly measurable, and rejecting by rect threw that away too.
-          // Anything genuinely covered arrives with no viewportBox and was
-          // skipped above.
-          // Measure EVERY candidate, flat stacks included: a flat cascade is not
-          // proof of what rendered, and engines.ts reconciles axe's inferred
-          // verdicts against these measurements.
-          const band = pixelBand(bandPng, c, vb);
-          if (band) {
-            Object.assign(c, {
-              measuredBand: band.band,
-              minRatio: band.minRatio,
-              maxRatio: band.maxRatio,
-              // Overlay markers are stored in capture space, so shift the
-              // band-relative sample points by this band's scroll offset.
-              samples: band.samples.map((pt) => ({ x: pt.x, y: pt.y + offset })),
-              fgColor: band.fgColor,
-              bgLoColor: band.bgLoColor,
-              bgHiColor: band.bgHiColor,
-              ratioLo: band.ratioLo,
-              ratioHi: band.ratioHi,
-            });
-          }
-          measured.set(key, c);
-        }
-
-        // Now the elements axe disputed but our collector never offered — the
-        // flat-and-passing ones it drops. Same band, same instant, same pixel
-        // pass; the only difference is where the selector came from.
-        if (axeResults) {
-          try {
-            // Only MEASURED candidates count as already covered. Passing the
-            // whole map would exclude a target the moment it was seen once,
-            // even though it was off screen in that band and never measured —
-            // so it would never be revisited in the band that does have it on
-            // screen, and would sit unmeasured for the rest of the scan.
-            const covered = [...measured.values()].filter((c) => c.measuredBand);
-            const disputed = await measureAxeContrastTargets(page, axeResults, covered);
-            for (const c of disputed) {
-              const key = c.cssPath;
-              if (measured.get(key)?.measuredBand) continue;
-              const vb = c.viewportBox;
-              if (!vb || vb.y + vb.height <= 0 || vb.y >= bandPng.height) {
-                if (!measured.has(key)) measured.set(key, c);
-                continue;
-              }
-              const band = pixelBand(bandPng, c, vb);
-              if (band) {
-                Object.assign(c, {
-                  measuredBand: band.band,
-                  minRatio: band.minRatio,
-                  maxRatio: band.maxRatio,
-                  samples: band.samples.map((pt) => ({ x: pt.x, y: pt.y + offset })),
-                  fgColor: band.fgColor,
-                  bgLoColor: band.bgLoColor,
-                  bgHiColor: band.bgHiColor,
-                  ratioLo: band.ratioLo,
-                  ratioHi: band.ratioHi,
-                });
-              }
-              measured.set(key, c);
-            }
-          } catch {
-            /* best-effort — axe's own verdict stands unreconciled */
-          }
-        }
+      onBand: async (_bandPng, _offset, _index, obstructions: Obstructions) => {
+        // measureBand reads ctx.obstructions itself (it needs topInset/
+        // bottomInset to decide which subjects are fully clear of page chrome
+        // at THIS scroll position) — refresh it from what the capture just
+        // read for this exact band, the same obstructions screenshot.ts used
+        // to park the band in the first place.
+        measureCtx.obstructions = obstructions;
+        await measureBand(page, state, measureCtx);
       },
     });
     artifacts.push(shot.artifact);
@@ -237,48 +150,95 @@ async function scanOnce(
       gaps.push({ reason: 'scroll-cap', subject, note: `${Math.round(shot.cappedPx)}px below the capture cap` });
     }
 
-    // Fall back to a single pass if the capture never invoked a band visitor.
-    if (!contrast) contrast = await collectContrast(page, subject, capturedAt);
-    // The candidate cap truncated the page: text past it was never eligible for
-    // measurement, so axe's verdicts there stand unreconciled. Say so.
-    if (truncated) {
-      gaps.push({ reason: 'scroll-cap', subject, note: 'contrast candidate cap reached; text past it was not measured' });
-    }
-    candidates = measured.size ? [...measured.values()] : contrast.candidates;
-    // Re-read geometry at the page's resting state.
-    //
-    // A candidate's box is whatever contentBox said in the band that measured
-    // it. Sticky sections, scroll-linked pinning and reveal transforms move an
-    // element between bands, so that box can be hundreds of pixels from where
-    // the same element sits at rest. That matters because contrast-reconcile
-    // matches axe's findings to our measurements GEOMETRICALLY, within 2px, and
-    // axe runs once, at rest: a stale box means no match, so a measurement we
-    // actually took never gets to answer axe's "background could not be
-    // determined" and the finding stays needs-review. On the client's marketing
-    // routes that was ~1,600 findings' worth of measurement thrown away.
-    //
-    // The ratios stay as measured — those are the pixels the element really had.
-    // Only where it is gets refreshed. (`samples` are overlay markers in the
-    // capture space of that band and are deliberately left alone.)
-    if (measured.size) {
+    // Mop-up pass: whatever the band walk left pending (never fully on screen
+    // at rest, overlapping another subject, or the page never invoked a band
+    // visitor at all — the `!info` fallback already called measureBand once
+    // at offset 0 via the same onBand callback) gets scrolled to and measured
+    // individually, tall subjects sliced, everything else marked unmeasured
+    // with a reason rather than silently dropped.
+    await measureRemaining(page, state, measureCtx);
+    const measuredSubjects: MeasuredSubject[] = [...state.done.values()];
+
+    // axe's color-contrast nodes are settled against these measurements
+    // (contrast-reconcile.ts / engines.ts): resolve each node's element (and
+    // its text-owning descendants) to page-side refs, AT REST, in the same
+    // DOM the glyph walk just measured — not the layout axe saw before the
+    // walk fired reveals and settled lazy images.
+    if (axeArtifact.kind === 'axe-result') {
       try {
-        // By element handle, never by cssPath: the path is a positional
-        // fingerprint that matches many nodes, and re-resolving it landed on
-        // the wrong one — a measured, passing "for macOS · Apple Silicon" was
-        // stamped with the box of some other span 9,000px away and then
-        // reported as unresolved because axe's node no longer matched it.
-        const rested = (await page.evaluate((refs: (number | null)[]) => {
-          const ck = (window as unknown as { __ck?: { boxOf(ref: number): { x: number; y: number; width: number; height: number } | null } }).__ck;
-          return refs.map((ref) => (ref == null || !ck?.boxOf ? null : ck.boxOf(ref)));
-        }, candidates.map((c) => (typeof c.ref === 'number' ? c.ref : null)))) as ({ x: number; y: number; width: number; height: number } | null)[];
-        for (let i = 0; i < candidates.length; i++) {
-          const box = rested[i];
-          if (box && box.width > 0 && box.height > 0) candidates[i].box = box;
+        type AxeContrastNode = { target?: (string | string[])[]; measureRefs?: number[] | null };
+        const payload = axeArtifact.results as {
+          violations?: Array<{ id: string; nodes?: AxeContrastNode[] }>;
+          incomplete?: Array<{ id: string; nodes?: AxeContrastNode[] }>;
+        };
+        const nodes: AxeContrastNode[] = [];
+        for (const list of [payload.violations, payload.incomplete]) {
+          for (const rule of list ?? []) {
+            if (rule.id !== 'color-contrast') continue;
+            for (const n of rule.nodes ?? []) nodes.push(n);
+          }
+        }
+        if (nodes.length) {
+          // Same conversion axe.ts uses: a nested array entry IS the shadow
+          // path; a flat array of strings is one plain-DOM path.
+          const paths = nodes.map((n) => {
+            const t = n.target;
+            if (!t || t.length === 0) return [];
+            const nested = t.find((x): x is string[] => Array.isArray(x));
+            return nested ?? (t as string[]);
+          });
+          const resolved = (await page.evaluate((ps: string[][]) => {
+            const glyph = (window as unknown as { __ck?: { glyph?: { resolveAxeTargets(t: string[][]): Array<{ ref: number | null; measureRefs: number[] }> } } }).__ck?.glyph;
+            return glyph ? glyph.resolveAxeTargets(ps) : ps.map(() => ({ ref: null, measureRefs: [] }));
+          }, paths)) as Array<{ ref: number | null; measureRefs: number[] }>;
+          for (let i = 0; i < nodes.length; i++) {
+            nodes[i].measureRefs = resolved[i]?.measureRefs ?? [];
+          }
         }
       } catch {
-        /* best-effort — the band's box stands */
+        /* best-effort — unresolved nodes keep axe's own verdict (unmatched) */
       }
     }
+
+    // Coverage gaps for what the walk could not measure: unmeasured is never a
+    // silent pass. One gap per unmeasured reason, plus SVG `<text>` (outside
+    // this method's scope entirely — canvas/image text is unchanged non-goal
+    // territory) and the subject-cap truncation, both from one final
+    // whole-page enumerate() now that the page is at rest.
+    try {
+      const enumResult = (await page.evaluate(() => {
+        const glyph = (window as unknown as { __ck?: { glyph?: { enumerate(o: object): { truncated: boolean; svgTextCount: number } } } }).__ck?.glyph;
+        return glyph ? glyph.enumerate({}) : { truncated: false, svgTextCount: 0 };
+      })) as { truncated: boolean; svgTextCount: number };
+      if (enumResult.truncated) {
+        gaps.push({ reason: 'scroll-cap', subject, note: 'text subject cap (5000) reached; text past it was not measured' });
+      }
+      if (enumResult.svgTextCount > 0) {
+        gaps.push({ reason: 'contrast-unmeasured', subject, note: `${enumResult.svgTextCount} SVG text element(s) not measured` });
+      }
+    } catch {
+      /* best-effort — no gap recorded rather than a crashed cell */
+    }
+    const unmeasuredReasonCounts = new Map<string, number>();
+    for (const m of measuredSubjects) {
+      if (m.status === 'unmeasured' && m.unmeasuredReason) {
+        unmeasuredReasonCounts.set(m.unmeasuredReason, (unmeasuredReasonCounts.get(m.unmeasuredReason) ?? 0) + 1);
+      }
+    }
+    for (const [reason, n] of unmeasuredReasonCounts) {
+      gaps.push({ reason: 'contrast-unmeasured', subject, note: `${n} text element(s): ${reason}` });
+    }
+
+    const contrastArtifact: Artifact = {
+      kind: 'style-probe',
+      subject,
+      capturedAt,
+      check: 'contrast',
+      results: measuredSubjects as unknown as Record<string, unknown>[],
+      screenshotPath: shot.artifact.kind === 'screenshot' ? shot.artifact.path : undefined,
+    };
+    artifacts.push(contrastArtifact);
+
     // axe's geometry needs the same treatment, and for the same reason: it ran
     // BEFORE the band walk (so its disputed elements could be measured in one),
     // and the walk fires reveals and settles lazy images, so the layout it saw
@@ -314,16 +274,6 @@ async function scanOnce(
         /* best-effort — unmatched nodes keep axe's own verdict */
       }
     }
-
-    contrast.candidates = candidates;
-    if (contrast.artifact.kind === 'style-probe') {
-      contrast.artifact.results = candidates as unknown as Record<string, unknown>[];
-      contrast.artifact.screenshotPath = shot.artifact.kind === 'screenshot' ? shot.artifact.path : undefined;
-    }
-    // Name the CSS variables the AUTHORED gradient declarations actually use,
-    // while the element is still on this load.
-    await attributeGradientVars(page, contrast.candidates);
-    artifacts.push(contrast.artifact);
 
     if (axeArtifact.kind === 'axe-result' && shot.artifact.kind === 'screenshot') {
       axeArtifact.screenshotPath = shot.artifact.path;

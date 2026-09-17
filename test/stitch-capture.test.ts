@@ -5,7 +5,9 @@ import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { PNG } from 'pngjs';
 import { GEOMETRY_INIT } from '../src/collect/browser/geometry-init.js';
-import { captureScreenshot } from '../src/collect/browser/screenshot.js';
+import { GLYPH_INIT } from '../src/collect/browser/glyph-init.js';
+import { captureScreenshot, type Obstructions } from '../src/collect/browser/screenshot.js';
+import { createGlyphRunState, measureBand, measureRemaining, type MeasureContext } from '../src/collect/browser/glyph-measure.js';
 import { asRunId } from '../src/index.js';
 
 // An app shell that pins the document and scrolls an inner container: the case
@@ -34,6 +36,7 @@ suite('stitched capture of an inner scroll container', () => {
     browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 400, height: 600 } });
     await ctx.addInitScript(GEOMETRY_INIT);
+    await ctx.addInitScript(GLYPH_INIT);
     page = await ctx.newPage();
     await page.goto(PAGE_URL, { waitUntil: 'load' });
   }, 60_000);
@@ -94,5 +97,35 @@ suite('stitched capture of an inner scroll container', () => {
     expect(r).toBeGreaterThan(200);
     expect(g).toBeGreaterThan(200);
     expect(b).toBeGreaterThan(200);
+  }, 60_000);
+
+  it('measures the low-contrast text reachable only by scrolling the inner container', async () => {
+    // captureScreenshot above already scrolled back to 0 (captureScrollableContent
+    // resets scrollPrimaryTo(0) when it finishes), so this starts from the top
+    // exactly like a real scanOnce would after the evidence capture.
+    //
+    // `#deep` is never enumerable at scroll position 0: enumerate()'s painted-
+    // box check reflects what is ACTUALLY visible right now, and at rest it
+    // sits far below the inner `.scroller`'s current viewport — indistinguish-
+    // able, to that check alone, from something permanently clipped away.
+    // What makes it reachable is exactly what production scanOnce does: drive
+    // measureBand off captureScreenshot's onBand, which (screenshot.ts's
+    // walkInnerScrollers) steps the SAME inner container through its own
+    // scrollTop range and re-enumerates at each stop — discovering `#deep` the
+    // moment it scrolls into view, not by asking measureRemaining to find it
+    // unassisted.
+    const state = createGlyphRunState();
+    const measureCtx: MeasureContext = { runId: asRunId('inner-scroller-test'), cwd, obstructions: { topInset: 0, bottomInset: 0 } };
+    await captureScreenshot(page, { property: 'test' }, {
+      runId: asRunId('inner-scroller-test-shot'), cwd, viewport: 'desktop', scheme: 'light', capturedAt: '',
+      onBand: async (_png, _offset, _index, obstructions: Obstructions) => {
+        measureCtx.obstructions = obstructions;
+        await measureBand(page, state, measureCtx);
+      },
+    });
+    await measureRemaining(page, state, measureCtx);
+    const deep = [...state.done.values()].find((m) => m.textSample.includes('low contrast text below the fold'));
+    expect(deep?.status, 'the below-fold text should be reachable via the inner scroller, not left unmeasured').toBe('measured');
+    expect(deep?.verdict).toBe('fail');
   }, 60_000);
 });

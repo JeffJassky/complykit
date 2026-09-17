@@ -23,7 +23,9 @@ function axeSource(): string {
 }
 
 interface AxeNode {
-  target?: string[];
+  // A flat array of selectors for a plain element; an OPEN shadow root nests
+  // one hop as a string[] entry (see axeTargetToPath below).
+  target?: (string | string[])[];
   html?: string;
   failureSummary?: string;
   // Source localization added post-run (not axe's own): the owning Vue SFC via
@@ -87,17 +89,37 @@ export async function runAxe(page: Page, subject: Subject, capturedAt: string): 
     }
     return { fg: null, bg: null };
   };
-  const targets: Array<{ i: number; j: number; sel: string; fg: string | null; bg: string | null }> = [];
+  // axe's `target` for a plain element is a flat array of selector strings
+  // (join with a space: a single node addressed across, say, a media-query
+  // boundary). For an element inside an OPEN shadow root it instead NESTS one
+  // hop: `[["my-card", "p"]]` means `document.querySelector("my-card")
+  // .shadowRoot.querySelector("p")` — the nested array element IS the path,
+  // one entry per shadow hop. The old code did `n.target.join(' ')`
+  // regardless of shape: `Array.prototype.join` stringifies a nested array
+  // element with ITS OWN default separator (comma), so a shadow target became
+  // a selector LIST like `"my-card,p"` — which `document.querySelector`
+  // resolves to the FIRST element in the WHOLE DOCUMENT matching EITHER
+  // branch, silently quoting some unrelated element's text and box instead of
+  // the shadow element at all (test/axe-shadow-target.test.ts reproduces this
+  // against real axe-core output). Convert to the hop-path shape up front and
+  // walk it explicitly in the page.
+  function axeTargetToPath(target: (string | string[])[] | undefined): string[] | null {
+    if (!target || target.length === 0) return null;
+    const nested = target.find((t): t is string[] => Array.isArray(t));
+    if (nested) return nested;
+    return target as string[];
+  }
+  const targets: Array<{ i: number; j: number; path: string[]; fg: string | null; bg: string | null }> = [];
   const all = [...result.violations.map((r, i) => ({ r, list: 'v' as const, i })), ...result.incomplete.map((r, i) => ({ r, list: 'i' as const, i }))];
   for (const { r, list, i } of all) {
     r.nodes.forEach((n, j) => {
-      const sel = n.target?.join(' ');
-      if (sel) targets.push({ i: list === 'v' ? i : i + result.violations.length, j, sel, ...nodeColors(n) });
+      const path = axeTargetToPath(n.target);
+      if (path) targets.push({ i: list === 'v' ? i : i + result.violations.length, j, path, ...nodeColors(n) });
     });
   }
   if (targets.length) {
     try {
-      const resolved = (await page.evaluate((ts: Array<{ i: number; j: number; sel: string; fg: string | null; bg: string | null }>) => {
+      const resolved = (await page.evaluate((ts: Array<{ i: number; j: number; path: string[]; fg: string | null; bg: string | null }>) => {
         function cssVarNames(): string[] {
           const w = window as unknown as { __ckVarNames?: string[] };
           if (w.__ckVarNames) return w.__ckVarNames;
@@ -182,9 +204,28 @@ export async function runAxe(page: Page, subject: Subject, capturedAt: string): 
           }
           return null;
         }
+        // Walk the shadow path hop by hop: `document.querySelector(path[0])`,
+        // then `.shadowRoot.querySelector(path[1])`, … A step that fails to
+        // find an element, or a hop into a CLOSED shadow root (no
+        // `.shadowRoot`), means the path cannot be honestly resolved — return
+        // null rather than fall back to a plain-DOM lookup that could match
+        // some unrelated element and quote its text/box instead.
+        function resolveTarget(path: string[]): Element | null {
+          let root: Document | ShadowRoot = document;
+          let el: Element | null = null;
+          for (let i = 0; i < path.length; i++) {
+            el = root.querySelector(path[i]);
+            if (!el) return null;
+            if (i < path.length - 1) {
+              if (!el.shadowRoot) return null;
+              root = el.shadowRoot;
+            }
+          }
+          return el;
+        }
         return ts.map((t) => {
           try {
-            const el = document.querySelector(t.sel);
+            const el = resolveTarget(t.path);
             if (!el) return { ...t, file: null, scope: null, box: null, text: null, fgVars: [], bgVars: [] };
             const r = el.getBoundingClientRect();
             // Document-absolute (viewport rect + scroll), matching how the

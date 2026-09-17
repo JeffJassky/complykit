@@ -1,5 +1,6 @@
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { GEOMETRY_INIT } from './geometry-init.js';
+import { GLYPH_INIT } from './glyph-init.js';
 
 // The ONLY place Playwright is imported (dependency law). Session + profile
 // management. Two profiles exist by design (browser-analysis-design pitfall #3):
@@ -73,8 +74,15 @@ export async function openMeasurementContext(
 
   // Geometry helpers first: every collector locates elements through these, so
   // one definition of "where is this element in the capture" serves document-
-  // scrolling pages and inner-scroller app shells alike.
+  // scrolling pages and inner-scroller app shells alike. GLYPH_INIT is
+  // installed right after: the glyph-mask contrast walk (glyph-measure.ts)
+  // needs both `window.__ck` (registry, boxOf, obstructions) and
+  // `window.__ck.glyph` (enumerate/hide/restore/settled) on every navigation,
+  // and GLYPH_INIT's own property-descriptor trick (see its header comment)
+  // means the two survive in either install order — but this order is the one
+  // the corpus tests run under, so it stays canonical.
   await context.addInitScript(GEOMETRY_INIT);
+  await context.addInitScript(GLYPH_INIT);
 
   await context.addInitScript((css: string) => {
     const apply = (): void => {

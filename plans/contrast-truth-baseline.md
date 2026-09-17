@@ -1,7 +1,7 @@
 # Contrast ground-truth scoring
 
 CLI: `../../../../../../private/tmp/claude-501/-Users-jeffjassky-Projects-foundry/4326ae29-0d4c-4a1a-8078-9fa229e5d7f9/scratchpad/ck-base/dist/cli.js`
-Scan exit: 0, report exit: 0, wall time: 9653ms
+Scan exit: 0, report exit: 0, wall time: 10078ms
 
 | id | expect | exp.ratio | got | got.ratio | verdict | ratio-err |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -20,7 +20,7 @@ Scan exit: 0, report exit: 0, wall time: 9653ms
 | C12 | pass | 21 | none |  | TN |  |
 | C13 | pass | 3.09 | none |  | TN |  |
 | C14 | fail | 2.32 | violation | 2.32 | TP |  |
-| C20 | fail | 1.92 | none |  | FN |  |
+| C20 | fail | 2.32 | none |  | FN |  |
 | C21 | pass | 4.54 | none |  | TN |  |
 | C22 | fail | 1.92 | none |  | FN |  |
 | C23 | fail | 2.85 | violation | 2.84 | TP |  |
@@ -44,8 +44,7 @@ Scan exit: 0, report exit: 0, wall time: 9653ms
 | C44 | fail |  | violation | 1 | TP |  |
 | C45 | pass |  | none |  | TN |  |
 
-**Totals** — TP: 12, TN: 19, FP: 1, FN: 5, unresolved: 0, ratio errors: 1, limitation (unscored): 1, wall time: 9653ms
-
+**Totals** — TP: 12, TN: 19, FP: 1, FN: 5, unresolved: 0, ratio errors: 1, limitation (unscored): 1, wall time: 10078ms
 ## Notes (orchestrator, 2026-09-16)
 
 - Scanner = HEAD before the glyph-mask change (`a96fb13`), rebuilt with ONE fix

@@ -1,0 +1,29 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>axe shadow-DOM target resolution</title>
+<style>
+  body { margin: 0; font: 16px/1.4 system-ui, sans-serif; background: #ffffff; }
+</style>
+<!--
+  Reproduces the axe.ts post-run localization bug directly: axe reports a
+  shadow-DOM node's `target` as a NESTED array (one entry per shadow hop, e.g.
+  `[["axe-shadow-el", "p"]]`). The old code did `n.target.join(' ')`, and
+  Array.prototype.join stringifies a nested array element with ITS OWN default
+  separator (comma) — so the whole thing became a selector LIST like
+  "axe-shadow-el,p", which document.querySelector resolves to the FIRST
+  element in the WHOLE DOCUMENT matching EITHER branch. This decoy paragraph
+  sits earlier in the document and matches the bare "p" branch, so the old
+  code quoted the decoy's text and box for the shadow paragraph's own
+  contrast violation — a completely different element.
+-->
+<p id="decoy">Decoy paragraph with good contrast, earlier in the document.</p>
+<div id="host"></div>
+<script>
+  customElements.define('axe-shadow-el', class extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<p style="color:#e5e5e5;background:#ffffff">Low contrast text inside a shadow root.</p>';
+    }
+  });
+  document.getElementById('host').appendChild(document.createElement('axe-shadow-el'));
+</script>
