@@ -102,7 +102,12 @@ type ScreenshotSwatches = Array<{ label: string; color: string; ratio?: number }
 // colour swatches behind the verdict — so "1.04–8.58" becomes something you can
 // see rather than trust. The SVG shares the crop's pixel coordinate system via
 // viewBox, so markers land on the exact pixels regardless of display scaling.
-function contrastFigure(img: InlinedImage, samples: ScreenshotSamples, swatches: ScreenshotSwatches): string {
+function contrastFigure(
+  img: InlinedImage,
+  samples: ScreenshotSamples,
+  swatches: ScreenshotSwatches,
+  overlay?: InlinedImage,
+): string {
   const r = Math.max(1.5, img.width / 90);
   const dots = (samples ?? [])
     .map((s) => {
@@ -112,8 +117,15 @@ function contrastFigure(img: InlinedImage, samples: ScreenshotSamples, swatches:
       return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#00e5ff" stroke-width="${r * 0.6}" paint-order="stroke"/><circle cx="${cx}" cy="${cy}" r="${r * 0.35}" fill="#00e5ff"/>`;
     })
     .join('');
-  const overlay = dots
+  // Old (pixel-band) evidence carries `samples` — sampled-point dots, hidden
+  // until hover. New (glyph-mask) evidence carries `overlay` — a same-size RGBA
+  // mask of every glyph pixel, shown by default and hidden on hover so the
+  // reader can see the raw pixels underneath (see glyph-contrast-plan.md §4.5).
+  const dotOverlay = dots
     ? `<svg class="ov" viewBox="0 0 ${img.width} ${img.height}" preserveAspectRatio="none" aria-hidden="true">${dots}</svg>`
+    : '';
+  const maskOverlay = overlay
+    ? `<img class="ov-mask" src="${overlay.uri}" alt="glyph pixel overlay" aria-hidden="true">`
     : '';
   const chips = (swatches ?? [])
     .map(
@@ -123,9 +135,10 @@ function contrastFigure(img: InlinedImage, samples: ScreenshotSamples, swatches:
     .join('');
   return `<figure class="cfig">
   <div class="shot" style="max-width:${Math.min(280, img.width)}px">
-    <img src="${img.uri}" alt="sampled region">${overlay}
+    <img src="${img.uri}" alt="sampled region">${maskOverlay}${dotOverlay}
   </div>
   ${chips ? `<div class="swatches">${chips}</div>` : ''}
+  ${overlay ? `<div class="legend">magenta = glyph pixels below the requirement · cyan = glyph pixels passing · hover to see raw pixels</div>` : ''}
 </figure>`;
 }
 
@@ -149,8 +162,13 @@ function evidenceHtml(f: Finding, runDirPath: string): string {
       // Render-layer guard: already-stored runs benefit without a rescan.
       if (e.region.width < 8 || e.region.height < 8) continue;
       const img = inlineImage(runDirPath, e.path, e.region);
-      if (img && img.width >= 12 && img.height >= 12)
-        parts.push(exhibit('p-shot', 'screenshot', contrastFigure(img, e.samples, e.swatches)));
+      if (img && img.width >= 12 && img.height >= 12) {
+        // The overlay is a plain PNG the same size as the already-cropped file
+        // at e.path (no region math needed — see glyph-measure's MeasuredSubject
+        // contract), so it is inlined uncropped and stacked with CSS.
+        const overlayImg = e.overlayPath ? inlineImage(runDirPath, e.overlayPath) : null;
+        parts.push(exhibit('p-shot', 'screenshot', contrastFigure(img, e.samples, e.swatches, overlayImg ?? undefined)));
+      }
     } else if (e.kind === 'computed-style') {
       // Render each property as a row; when the value is a colour literal, prefix
       // a swatch so there is always a colour to look at — even for findings whose
@@ -411,6 +429,9 @@ blockquote cite{display:block;margin-top:5px;font-style:normal;font:11px var(--m
    was measured. */
 .shot .ov{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:0;transition:opacity .12s ease}
 .finding:hover .ov{opacity:1}
+.shot .ov-mask{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:.85;transition:opacity .12s ease}
+.cfig:hover .ov-mask{opacity:0}
+.legend{font-size:11px;color:var(--muted);margin-top:4px}
 .swatches{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;line-height:1.4}
 .swatch{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted)}
 .swatch i{width:14px;height:14px;border-radius:3px;border:1px solid var(--line);display:inline-block}

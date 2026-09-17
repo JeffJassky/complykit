@@ -91,6 +91,9 @@ export const Evidence = z.discriminatedUnion('kind', [
     // coords) and the colours behind the verdict, so a report can draw markers
     // and swatches on the crop instead of asking the reader to trust a ratio.
     samples: z.array(z.object({ x: z.number(), y: z.number() })).optional(),
+    // Glyph-mask overlay PNG (same dimensions as the crop at `path`): magenta =
+    // failing glyph pixels, cyan = passing. Stacked over the crop by the report.
+    overlayPath: z.string().optional(),
     swatches: z
       .array(z.object({ label: z.string(), color: z.string(), ratio: z.number().optional() }))
       .optional(),
@@ -209,6 +212,7 @@ export const CoverageGap = z.object({
     'scroll-cap',
     'no-key',
     'crash',
+    'contrast-unmeasured',
   ]),
   subject: Subject,
   note: z.string().optional(),

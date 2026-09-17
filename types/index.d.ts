@@ -62,7 +62,7 @@ export interface Subject {
 
 // --- evidence ---------------------------------------------------------------
 export type Evidence =
-  | { kind: 'screenshot'; path: string; region?: Box; pageState?: string }
+  | { kind: 'screenshot'; path: string; region?: Box; pageState?: string; overlayPath?: string }
   | { kind: 'dom-snippet'; html: string; locator?: StructuralLocator }
   | { kind: 'computed-style'; properties: Record<string, string> }
   | {
@@ -174,7 +174,8 @@ export interface CoverageGap {
     | 'bot-blocked'
     | 'scroll-cap'
     | 'no-key'
-    | 'crash';
+    | 'crash'
+    | 'contrast-unmeasured';
   subject: Subject;
   note?: string;
 }

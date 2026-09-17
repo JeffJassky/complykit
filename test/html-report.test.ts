@@ -1,4 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { PNG } from 'pngjs';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   renderHtmlReport,
   containsBannedVocabulary,
@@ -8,6 +12,8 @@ import {
   asRuleId,
   asRequirementId,
   fingerprint,
+  putEvidence,
+  writeRun,
   REGISTRY_VERSION,
   type Run,
   type Finding,
@@ -84,5 +90,73 @@ describe('static HTML report', () => {
     const out = renderHtmlReport(run, [evil]);
     expect(out).not.toContain('<img src=x onerror=alert(1)>');
     expect(out).toContain('&lt;img src=x');
+  });
+});
+
+// Glyph-mask overlay: a same-size RGBA mask stacked exactly over the crop
+// (see glyph-contrast-plan.md §4.5). Uses real PNGs on disk under a temp
+// runDir, the same way inlineImage reads them in a real run.
+describe('static HTML report — glyph-mask overlay evidence', () => {
+  let cwd: string;
+
+  afterEach(() => {
+    if (cwd) fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
+  function png(w: number, h: number, rgba: [number, number, number, number]): Buffer {
+    const p = new PNG({ width: w, height: h });
+    for (let i = 0; i < w * h; i++) {
+      p.data[i * 4] = rgba[0];
+      p.data[i * 4 + 1] = rgba[1];
+      p.data[i * 4 + 2] = rgba[2];
+      p.data[i * 4 + 3] = rgba[3];
+    }
+    return PNG.sync.write(p);
+  }
+
+  it('stacks the inlined overlay image over the inlined crop and adds the legend', () => {
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'complykit-html-'));
+    writeRun(run, cwd);
+    const cropPath = putEvidence(run.id, png(40, 40, [0, 0, 0, 255]), 'png', cwd);
+    const overlayPath = putEvidence(run.id, png(40, 40, [255, 0, 200, 235]), 'png', cwd);
+    const f: Finding = {
+      ...finding,
+      evidence: [
+        {
+          kind: 'screenshot',
+          path: cropPath,
+          region: { x: 0, y: 0, width: 40, height: 40 },
+          overlayPath,
+          swatches: [{ label: 'text', color: '#000000' }],
+        },
+      ],
+    };
+    const html = renderHtmlReport(run, [f], { cwd });
+    expect(html).toContain('ov-mask');
+    expect(html).toContain('hover to see raw pixels');
+    // both images inlined as data URIs, not external file references
+    expect(html.match(/data:image\/png;base64,/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('renders old-shape `samples` dot evidence unchanged when there is no overlayPath', () => {
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'complykit-html-'));
+    writeRun(run, cwd);
+    const shotPath = putEvidence(run.id, png(40, 40, [0, 0, 0, 255]), 'png', cwd);
+    const f: Finding = {
+      ...finding,
+      evidence: [
+        {
+          kind: 'screenshot',
+          path: shotPath,
+          region: { x: 0, y: 0, width: 40, height: 40 },
+          samples: [{ x: 5, y: 5 }],
+          swatches: [{ label: 'text', color: '#000000' }],
+        },
+      ],
+    };
+    const html = renderHtmlReport(run, [f], { cwd });
+    expect(html).not.toContain('class="ov-mask"');
+    expect(html).not.toContain('hover to see raw pixels');
+    expect(html).toContain('class="ov"');
   });
 });

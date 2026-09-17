@@ -54,4 +54,34 @@ describe('normalizeEngineArtifacts', () => {
     expect(findings).toHaveLength(2);
     expect(findings[0].fingerprint).not.toBe(findings[1].fingerprint);
   });
+  it('keeps every axe finding on a page when one node sits inside an open shadow root', () => {
+    // axe nests a shadow-root target as [["host", "p"]]. That used to fail the
+    // schema for the whole results object and silently drop the page's report.
+    const art: Artifact = {
+      kind: 'axe-result',
+      subject: { property: 'shop', routePattern: '/', instanceUrl: 'http://x/', viewport: 'desktop', colorScheme: 'light' },
+      capturedAt: '2026-09-16T00:00:00.000Z',
+      results: {
+        violations: [
+          { id: 'html-has-lang', help: 'html needs lang', nodes: [{ target: ['html'] }] },
+          { id: 'color-contrast', help: 'contrast', nodes: [{ target: [['my-card', 'p']] }, { target: ['p.low'] }] },
+        ],
+        incomplete: [],
+      },
+    } as unknown as Artifact;
+    const { findings } = normalizeEngineArtifacts([art], { runId: asRunId('r') });
+    expect(findings.map((f) => String(f.ruleId)).sort()).toEqual(['axe-core:color-contrast', 'axe-core:color-contrast', 'axe-core:html-has-lang']);
+    expect(findings.some((f) => f.subject.locator?.cssPath === 'my-card >>> p')).toBe(true);
+  });
+
+  it('drops only a malformed axe node, not its siblings', () => {
+    const art = {
+      kind: 'axe-result',
+      subject: { property: 'shop', routePattern: '/', instanceUrl: 'http://x/', viewport: 'desktop', colorScheme: 'light' },
+      capturedAt: '2026-09-16T00:00:00.000Z',
+      results: { violations: [{ id: 'html-has-lang', nodes: [{ target: 42 }, { target: ['html'] }] }], incomplete: [] },
+    } as unknown as Artifact;
+    const { findings } = normalizeEngineArtifacts([art], { runId: asRunId('r') });
+    expect(findings).toHaveLength(1);
+  });
 });

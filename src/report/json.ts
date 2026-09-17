@@ -30,6 +30,7 @@ type EvidenceRef =
       region?: { x: number; y: number; width: number; height: number }; // element box within it
       samples?: Array<{ x: number; y: number }>; // pixels the measurement read
       swatches?: Array<{ label: string; color: string; ratio?: number }>;
+      overlayPath?: string; // glyph-mask overlay PNG, same dimensions as the crop
     }
   | { type: 'agent-verdict'; cropPath: string; model: string; verdict: string; reason: string }
   | { type: 'cookie'; name: string; domain: string; phase: string; classification?: string };
@@ -44,6 +45,7 @@ function evidenceRefs(f: Finding): EvidenceRef[] {
         ...(e.region ? { region: e.region } : {}),
         ...(e.samples?.length ? { samples: e.samples } : {}),
         ...(e.swatches?.length ? { swatches: e.swatches } : {}),
+        ...(e.overlayPath ? { overlayPath: e.overlayPath } : {}),
       });
     } else if (e.kind === 'verdict') {
       out.push({ type: 'agent-verdict', cropPath: e.cropPath, model: e.model, verdict: e.verdict, reason: e.reason });

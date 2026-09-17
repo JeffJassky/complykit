@@ -1,0 +1,275 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Contrast ground-truth corpus</title>
+<style>
+  html, body { margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+    color: #000;
+    background: #fff;
+    padding-top: 76px; /* clears the fixed C31 header so nothing starts hidden under it at scroll 0 */
+  }
+  .case {
+    min-height: 140px;
+    box-sizing: border-box;
+    padding: 24px 16px;
+    border-bottom: 1px solid #eee;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  #c20::before { content: "C20 pseudo before-content"; color: #aaa; }
+  #c21-input::placeholder { color: #767676; opacity: 1; }
+  #c22-input::placeholder { color: #bbb; opacity: 1; }
+  #c23-input { color: #999; }
+  #c38-39-box { height: 200px; overflow: auto; border: 1px solid #ddd; }
+  #c42, #c43 {
+    background-image: url('contrast-truth-photo.png');
+    background-size: cover;
+    background-position: center;
+    font-size: 20px;
+    padding: 32px 16px;
+  }
+</style>
+</head>
+<body>
+
+<header id="c31-header" data-case="C31" data-expect="pass" data-ratio="18.88"
+  style="position:fixed;top:0;left:0;right:0;height:60px;background:#111;color:#fff;
+         display:flex;align-items:center;padding:0 16px;font-size:16px;z-index:1000;">
+  C31 header text pinned to the top of the viewport, opaque background
+</header>
+
+<section class="case" data-case="C01" data-expect="pass" data-ratio="4.54">
+  <p style="color:#767676;">C01 medium gray body text at the default sixteen pixel size, just over the four point five to one small-text requirement on a plain white background.</p>
+</section>
+
+<section class="case" data-case="C02" data-expect="fail" data-ratio="4.48">
+  <p style="color:#777777;">C02 medium gray body text one shade darker than C01, just under the four point five to one small-text requirement on a plain white background.</p>
+</section>
+
+<section class="case" data-case="C03" data-expect="pass" data-ratio="3.03">
+  <p style="color:#949494;font-size:24px;">C03 large twenty four pixel gray text, passing the three to one large-text requirement on white.</p>
+</section>
+
+<section class="case" data-case="C04" data-expect="fail" data-ratio="2.96">
+  <p style="color:#969696;font-size:24px;">C04 large twenty four pixel gray text chosen just under the three to one large-text requirement on white.</p>
+</section>
+
+<section class="case" data-case="C05" data-expect="pass" data-ratio="3.03">
+  <p style="color:#949494;font-size:19px;font-weight:700;">C05 nineteen pixel bold gray text, large by the bold-text size threshold, passing the three to one requirement.</p>
+</section>
+
+<section class="case" data-case="C06" data-expect="fail" data-ratio="3.03">
+  <p style="color:#949494;font-size:18px;font-weight:700;">C06 eighteen pixel bold gray text, one pixel under the bold-text large threshold, so it needs four point five to one and fails.</p>
+</section>
+
+<section class="case" data-case="C07" data-expect="fail" data-ratio="2.85">
+  <p style="color:rgba(0,0,0,.4);">C07 translucent black text at forty percent alpha over a white background, compositing down to a light gray that fails.</p>
+</section>
+
+<section class="case" data-case="C08" data-expect="fail" data-ratio="3.95" style="opacity:.5;">
+  <p style="color:#000;">C08 solid black text on white sitting inside an ancestor with fifty percent opacity, compositing down to mid-gray on the white page behind it.</p>
+</section>
+
+<section class="case" data-case="C09" data-expect="fail" style="position:relative;">
+  <p style="color:#000;position:relative;">C09 solid black text on white, lightened by an absolutely positioned translucent white shade drawn on top of it without changing the text's own CSS color — the rendered ink has to be measured, not the declared color.</p>
+  <div style="position:absolute;inset:0;background:rgba(255,255,255,.7);"></div>
+</section>
+
+<section class="case" data-case="C10" data-expect="fail">
+  <p style="background:linear-gradient(90deg,#fff,#eee);background-clip:text;-webkit-background-clip:text;color:transparent;-webkit-text-fill-color:transparent;font-size:28px;font-weight:700;">C10 gradient text painted white fading to near-white, unreadable on the white background behind it.</p>
+</section>
+
+<section class="case" data-case="C11" data-expect="pass">
+  <p style="background:linear-gradient(90deg,#000,#333);background-clip:text;-webkit-background-clip:text;color:transparent;-webkit-text-fill-color:transparent;font-size:28px;font-weight:700;">C11 gradient text painted black fading to dark gray, easily readable on the white background behind it.</p>
+</section>
+
+<section class="case" data-case="C12" data-expect="pass" data-ratio="21.00">
+  <h2 style="font-size:36px;font-weight:700;color:#000;margin:0;">C12 heading text in solid black, <span data-case="C13" data-expect="pass" data-ratio="3.09" style="color:#0096ff;">C13 blue span inheriting the same large bold size</span></h2>
+</section>
+
+<div class="case">
+  <p style="color:#000;margin:0;">black on white text that continues on with <span data-case="C14" data-expect="fail" data-ratio="2.32" style="color:#aaa;">C14 grey span, the only token-bearing content in this paragraph and the only part that should be scored</span></p>
+</div>
+
+<section class="case" data-case="C20" data-expect="fail" data-ratio="1.92">
+  <p id="c20">Element with pseudo before-content, ordinary black text on white following the injected pseudo-content.</p>
+</section>
+
+<section class="case" data-case="C21" data-expect="pass" data-ratio="4.54">
+  <input id="c21-input" type="text" placeholder="C21 placeholder text on a white input" style="font-size:16px;font-family:inherit;border:1px solid #ccc;padding:8px;width:100%;box-sizing:border-box;">
+</section>
+
+<section class="case" data-case="C22" data-expect="fail" data-ratio="1.92">
+  <input id="c22-input" type="text" placeholder="C22 placeholder text too light to read comfortably" style="font-size:16px;font-family:inherit;border:1px solid #ccc;padding:8px;width:100%;box-sizing:border-box;">
+</section>
+
+<section class="case" data-case="C23" data-expect="fail" data-ratio="2.85">
+  <input id="c23-input" type="text" value="C23 value text sitting inside an input's own value" readonly style="font-size:16px;font-family:inherit;border:1px solid #ccc;padding:8px;width:100%;box-sizing:border-box;">
+</section>
+
+<section class="case" data-case="C24" data-expect="pass" data-ratio="19.56">
+  <button style="background:#ff0;color:#000;border:3px solid currentColor;font-size:16px;font-family:inherit;padding:10px 16px;">C24 button label in black on yellow with a matching currentColor border</button>
+</section>
+
+<section class="case" data-case="C25" data-expect="pass" data-ratio="8.53">
+  <a href="#" style="color:#fff;background:#0645ad;display:inline-flex;align-items:center;gap:8px;padding:10px 16px;text-decoration:none;font-size:16px;">
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="currentColor"></circle></svg>
+    C25 link text in white on a blue background with a same-color icon
+  </a>
+</section>
+
+<section class="case" data-case="C26" data-expect="limitation">
+  <p style="color:#fff;text-shadow:0 0 4px #000;">C26 white text carrying a black blur text-shadow on a white background — legible thanks to the shadow, a documented measurement limitation this corpus records but does not score.</p>
+</section>
+
+<section class="case" data-case="C27" data-expect="fail" data-ratio="1.00">
+  <p style="color:#fff;">C27 invisible white text on a white background, roughly a one to one contrast ratio.</p>
+</section>
+
+<section class="case" data-case="C28" data-expect="gap-ok" style="position:relative;">
+  <p style="color:#777;position:relative;margin:0;">C28 low-contrast text fully covered by an opaque positioned div placed exactly over it, so it never actually reaches a reader's eye.</p>
+  <div style="position:absolute;inset:0;background:#fff;"></div>
+</section>
+
+<section class="case" data-case="C29" data-expect="none">
+  <span class="sr-only" style="color:#fff;background:#fff;">C29 sr-only text for screen readers only, clipped to one pixel and never painted for sighted readers</span>
+  <p style="margin:0;">Visible sibling copy with no token, present only so the section is not empty of ordinary text.</p>
+</section>
+
+<section class="case" data-case="C30" data-expect="none">
+  <div style="visibility:hidden;">
+    <p style="color:#c9c9cf;margin:0;">C30 text inside a visibility hidden ancestor panel that lays out with real geometry but never paints.</p>
+  </div>
+  <p style="margin:0;">Visible sibling copy with no token, present only so the section is not empty of ordinary text.</p>
+</section>
+
+<section class="case" data-case="C32" data-expect="pass" data-ratio="21.00">
+  <p id="c32-target" style="color:#000;opacity:0;margin:0;">C32 solid black text on white, revealed by an IntersectionObserver-triggered opacity fade driven by requestAnimationFrame rather than a CSS transition.</p>
+</section>
+
+<section class="case" data-case="C33" data-expect="pass" data-ratio="17.42" style="background:#0a0f14;padding:48px 24px;">
+  <a href="#" id="c33-target" style="opacity:0;display:inline-block;background:#c3fd34;color:#000;font-size:16px;font-weight:700;font-family:inherit;text-transform:uppercase;padding:14px 28px;border-radius:999px;box-shadow:0 0 24px rgba(195,253,52,.45);text-decoration:none;">C33 START THE TRIAL</a>
+</section>
+
+<section class="case" data-case="C36" data-expect="pass" data-ratio="7.00">
+  <p style="color:#595959;margin:0;">C36 tall paragraph in dark gray, passing. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height.</p>
+</section>
+
+<section class="case" data-case="C37" data-expect="fail" data-ratio="2.85">
+  <p style="color:#999999;margin:0;">C37 tall paragraph in light gray, failing. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height. Repeated filler copy for the tall paragraph contrast case, describing ordinary scrolling behavior at enough length that the block naturally grows past fourteen hundred pixels tall without any explicit height.</p>
+</section>
+
+<section class="case">
+  <div id="c38-39-box">
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 1, no token, just ordinary body copy to pad the box out.</p>
+      <p data-case="C39" data-expect="pass" data-ratio="12.63" style="color:#333;margin:0 0 8px;">C39 line two of the scroll box, dark gray and easy to read.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 3, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 4, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 5, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 6, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 7, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 8, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 9, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 10, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 11, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 12, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 13, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 14, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 15, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 16, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 17, no token, just ordinary body copy to pad the box out.</p>
+      <p data-case="C38" data-expect="fail" data-ratio="2.32" style="color:#aaa;margin:0 0 8px;">C38 line eighteen of the scroll box, light gray and hard to read.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 19, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 20, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 21, no token, just ordinary body copy to pad the box out.</p>
+      <p style="color:#333;margin:0 0 8px;">Scroll box filler line 22, no token, just ordinary body copy to pad the box out.</p>
+  </div>
+</section>
+
+<section class="case" data-case="C40" data-expect="fail" data-ratio="1.92">
+  <ck-shadow40></ck-shadow40>
+</section>
+
+<section class="case" data-case="C41" data-expect="none">
+  <div style="width:300px;overflow:hidden;position:relative;">
+    <div style="display:flex;width:600px;">
+      <div style="width:300px;flex:0 0 300px;padding:16px;box-sizing:border-box;">Visible carousel slide with no token, currently in view.</div>
+      <div style="width:300px;flex:0 0 300px;padding:16px;box-sizing:border-box;">C41 carousel slide text, clipped out of view by the track's overflow hidden.</div>
+    </div>
+  </div>
+</section>
+
+<section class="case" data-case="C42" data-expect="fail">
+  <p id="c42" style="color:#fff;margin:0;">C42 white text laid directly over a light, noisy photograph background.</p>
+</section>
+
+<section class="case" data-case="C43" data-expect="pass">
+  <p id="c43" style="color:#000;margin:0;">C43 black text laid directly over the same light, noisy photograph background.</p>
+</section>
+
+<section class="case" data-case="C44" data-expect="fail" style="background:linear-gradient(90deg,#fff,#444);">
+  <p style="color:#000;margin:0;">C44 black text over a gradient background running from white to dark gray, failing where the gradient turns dark.</p>
+</section>
+
+<section class="case" data-case="C45" data-expect="pass" style="background:linear-gradient(90deg,#fff,#bbb);">
+  <p style="color:#000;margin:0;">C45 black text over a gradient background running from white to light gray, still passing at its darkest point.</p>
+</section>
+
+<script>
+  // Open shadow root for C40 — must stay OPEN so the glyph walk can descend
+  // into it (a closed root is an existing, unrelated coverage gap).
+  class CkShadow40 extends HTMLElement {
+    connectedCallback() {
+      var root = this.attachShadow({ mode: 'open' });
+      var p = document.createElement('p');
+      p.style.color = '#bbb';
+      p.textContent = 'C40 shadow DOM text in light gray on a white background, inside an open shadow root.';
+      root.appendChild(p);
+    }
+  }
+  customElements.define('ck-shadow40', CkShadow40);
+
+  // C32/C33 reveal: IntersectionObserver -> 300ms delay -> rAF opacity ramp
+  // over 600ms. Deliberately NOT a CSS transition — the scanner freezes CSS
+  // animations/transitions, so only a JS-driven opacity change exercises the
+  // "wait until actually painted" path this corpus is here to test.
+  function setupReveal(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        io.unobserve(entry.target);
+        setTimeout(function () {
+          var start = null;
+          var duration = 600;
+          function step(ts) {
+            if (start === null) start = ts;
+            var p = Math.min(1, (ts - start) / duration);
+            el.style.opacity = String(p);
+            if (p < 1) requestAnimationFrame(step);
+          }
+          requestAnimationFrame(step);
+        }, 300);
+      });
+    });
+    io.observe(el);
+  }
+  setupReveal('c32-target');
+  setupReveal('c33-target');
+</script>
+
+</body>
+</html>

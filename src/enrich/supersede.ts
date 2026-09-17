@@ -14,11 +14,11 @@ import type { Finding, Artifact } from '../record/index.js';
 // reports it with the measurement attached, so the flag is a duplicate.
 //
 // NOTE: axe's `color-contrast` no longer reaches this pass — engines.ts settles
-// it earlier against the same measurements (contrast-reconcile.ts), because a
-// blanket drop is wrong for it: a FLAT background that measures as failing has
-// no other reporter (contrast.text owns only non-flat), so the flag must be
-// upgraded to a violation rather than dropped. This pass remains the general
-// rule for every other producer's shrug.
+// it earlier against the same glyph-mask measurements (contrast-reconcile.ts):
+// any measured subject drops the axe node outright, because `contrast.text` is
+// the single reporter for a measured element (fail is already reported there;
+// pass has nothing to report). This pass remains the general rule for every
+// other producer's shrug.
 //
 // What NEVER supersedes: absence of evidence. A page state that simply wasn't
 // rendered, an element the probe never reached — those keep their heuristic
@@ -33,7 +33,7 @@ import type { Finding, Artifact } from '../record/index.js';
 //
 // Providers are the extension point: each declares which requirements its
 // measurement can clear and extracts the measured geometry per page cell from
-// the run's artifacts. Today pixel-band contrast is the only one; a future
+// the run's artifacts. Today glyph-mask contrast is the only one; a future
 // focus-screenshot differ or target-size prober plugs in beside it.
 
 interface Box {
@@ -68,12 +68,14 @@ export interface MeasurementProvider {
   measured(artifacts: Artifact[]): Map<string, Box[]>;
 }
 
-/** Pixel-band contrast: the collector escalates non-flat candidates to a real
- *  pixel measurement over the screenshot and mutates `measuredBand` onto them.
- *  Anything it measured supersedes an engine's "background could not be
- *  determined" on the same element. */
-export const pixelBandContrast: MeasurementProvider = {
-  id: 'pixel-band-contrast',
+/** Glyph-mask contrast: the collector's glyph walk measures every text
+ *  subject's rendered pixels directly (glyph-measure.ts), not just axe's
+ *  targets. Anything it actually measured (`status === 'measured'`) supersedes
+ *  an engine's "background could not be determined" shrug on the same
+ *  element — `unmeasured` subjects carry no evidence and must NOT supersede
+ *  anything (see the "what never supersedes" note above). */
+export const glyphContrast: MeasurementProvider = {
+  id: 'glyph-contrast',
   requirements: ['wcag22.1.4.3'],
   ownRules: ['contrast.text'],
   measured(artifacts) {
@@ -82,8 +84,8 @@ export const pixelBandContrast: MeasurementProvider = {
       if (a.kind !== 'style-probe' || a.check !== 'contrast') continue;
       const key = cellKey(a.subject);
       for (const raw of a.results) {
-        const c = raw as { measuredBand?: unknown; box?: Box };
-        if (typeof c.measuredBand !== 'string' || !c.box) continue;
+        const c = raw as { status?: unknown; box?: Box };
+        if (c.status !== 'measured' || !c.box) continue;
         let list = byCell.get(key);
         if (!list) byCell.set(key, (list = []));
         list.push(c.box);
@@ -93,7 +95,7 @@ export const pixelBandContrast: MeasurementProvider = {
   },
 };
 
-export const DEFAULT_PROVIDERS: readonly MeasurementProvider[] = [pixelBandContrast];
+export const DEFAULT_PROVIDERS: readonly MeasurementProvider[] = [glyphContrast];
 
 export interface SupersedeResult {
   findings: Finding[];

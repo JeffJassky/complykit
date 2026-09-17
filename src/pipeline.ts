@@ -33,6 +33,30 @@ function gateByTags(findings: Finding[], tags: readonly string[]): Finding[] {
   });
 }
 
+/** Tally the glyph-mask walk's own results (style-probe/contrast artifacts),
+ *  independent of what the rules/engines pass did with them — the trace line
+ *  should say what was MEASURED even if every measured fail also produced a
+ *  finding, and even if a run has zero contrast findings at all. */
+function contrastCounts(artifacts: Artifact[]): { measured: number; pass: number; fail: number; unmeasured: number } {
+  let measured = 0;
+  let pass = 0;
+  let fail = 0;
+  let unmeasured = 0;
+  for (const a of artifacts) {
+    if (a.kind !== 'style-probe' || a.check !== 'contrast') continue;
+    for (const raw of a.results as Array<Record<string, unknown>>) {
+      if (raw.status === 'measured') {
+        measured++;
+        if (raw.verdict === 'pass') pass++;
+        else if (raw.verdict === 'fail') fail++;
+      } else if (raw.status === 'unmeasured') {
+        unmeasured++;
+      }
+    }
+  }
+  return { measured, pass, fail, unmeasured };
+}
+
 /** Resolve a rule's RawFindings into stored Findings (producer: rule). */
 function resolveRuleFindings(
   raws: ReturnType<typeof evaluate>,
@@ -148,12 +172,15 @@ export async function runBrowserScan(opts: BrowserScanOptions): Promise<BrowserS
   const engineVersions = { 'axe-core': AXE_VERSION };
   const engine = normalizeEngineArtifacts(collection.artifacts, { runId: opts.runId, engineVersions });
   const sup = engine.superseded;
-  if (sup.cleared || sup.upgraded || sup.downgraded || sup.ceded) {
+  const cc = contrastCounts(collection.artifacts);
+  if (cc.measured || cc.unmeasured || sup.settled || sup.unmatched) {
     opts.trace?.(
-      `contrast: pixel measurement overrode axe on ${sup.cleared + sup.upgraded + sup.downgraded + sup.ceded} finding(s) ` +
-        `(${sup.cleared} cleared, ${sup.upgraded} upgraded to violation, ${sup.downgraded} downgraded, ${sup.ceded} ceded to contrast.text)` +
-        (sup.unmatched ? `; ${sup.unmatched} axe node(s) had no measurement to compare` : ''),
+      `contrast: measured ${cc.measured} text element(s) (${cc.pass} pass, ${cc.fail} fail), ${cc.unmeasured} unmeasured; ` +
+        `axe: ${sup.settled} node(s) settled by measurement, ${sup.unmatched} unmatched, ${sup.disagreements} disagreement(s)`,
     );
+    for (const ex of sup.examples) {
+      opts.trace?.(`  disagreement: ${ex.selector} — axe ${ex.axe}:1, measured ${ex.measured}:1`);
+    }
   }
   const raws = evaluate(collection.artifacts, ALL_RULES, { property: opts.property, tags });
   const ruleFindings = resolveRuleFindings(raws, opts.runId, opts.packageVersion);

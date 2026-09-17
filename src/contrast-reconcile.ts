@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { Artifact, Subject } from './record/index.js';
 
 // Measured pixels outrank inferred colours (WCAG 1.4.3).
@@ -6,129 +7,123 @@ import type { Artifact, Subject } from './record/index.js';
 // text, or the background is an image/gradient, that walk cannot prove a colour
 // and axe reports `incomplete` — "background color could not be determined
 // because it is overlapped by another element". That is an INFERENCE FAILURE,
-// not evidence of low contrast: the rendered pixels may read at 12:1.
+// not evidence of low contrast: the rendered pixels may read at 12:1. And when
+// axe DOES report a flat-colour violation, it is still only inference over the
+// cascade — the glyph-mask measurement is ground truth for what a reader sees.
 //
-// Our pixel-band pass already measures those exact pixels off the cell's
-// screenshot (see collect/browser/pixel-band.ts). This module lets that
-// measurement decide the axe finding's fate:
+// The glyph-mask walk (glyph-measure.ts) measures every text subject on the
+// page directly off the pixels, not just axe's targets. Wave 3 resolves each
+// axe `color-contrast` node's element (and its text-owning descendants) to a
+// list of `measureRefs`; this module looks those refs up against the
+// MeasuredSubject index and settles the node:
 //
-//   non-flat stack   -> drop; `contrast.text` owns non-flat and already reported
-//   measured pass    -> the pixels clear the threshold. An axe `incomplete`
-//                       becomes nothing; an axe `violation` (two methods
-//                       disagreeing) drops to needs-review carrying both numbers
-//   measured fail    -> violation, stated with the measured range
-//   none             -> unchanged; nothing was measured, and the run says so as a gap
+//   any measured subject among measureRefs -> drop the node. `contrast.text`
+//     is the SINGLE reporter for that element, whatever the measurement found
+//     (pass = nothing to report; fail = contrast.text already reports it with
+//     the measured range) — axe would otherwise duplicate or contradict it.
+//   no measured subject (unmatched, or all still unmeasured) -> keep the node
+//     exactly as axe declared it; the run's `contrast-unmeasured` coverage gap
+//     already says why.
 //
-// Matching is geometric, not by selector: axe's `target` selector and our
-// cssPath heuristic are different strings for the same element, but both boxes
-// are document-absolute against the same capture.
+// Matching is by ref, not geometry: refs are page-side identities assigned by
+// `__ck.register`, stable within one page load — the geometric box-matching
+// this module used before (a) required both collectors to agree on a boxing
+// convention and (b) still confused an element with whatever overlapped it,
+// which is exactly the bug measurement was supposed to fix.
 
-export interface MeasuredContrast {
-  box: { x: number; y: number; width: number; height: number };
-  flat: boolean;
-  /** An ancestor's overflow clips this element away: it lays out, but nothing
-   *  of it is painted. */
-  clipped?: boolean;
-  measuredBand?: 'pass' | 'fail' | 'ambiguous';
-  minRatio?: number;
-  maxRatio?: number;
-  required: number;
-}
+const MeasuredSubjectShape = z.object({
+  ref: z.number(),
+  status: z.enum(['measured', 'unmeasured']),
+  verdict: z.enum(['pass', 'fail']).optional(),
+  flat: z.boolean(),
+  fgSource: z.enum(['css', 'rendered']).optional(),
+  ratio: z.number().optional(),
+  minRatio: z.number().optional(),
+  medianRatio: z.number().optional(),
+  maxRatio: z.number().optional(),
+});
+/** The subset of glyph-measure.ts's `MeasuredSubject` this module needs — kept
+ *  loose (safeParse, extra fields ignored) so it never breaks when Wave 2's
+ *  contract grows a field this reconciliation doesn't care about. */
+export type MeasuredSubject = z.infer<typeof MeasuredSubjectShape>;
 
-export type MeasuredIndex = Map<string, MeasuredContrast[]>;
+export type MeasuredIndex = Map<string, MeasuredSubject[]>;
 
 /** Cell key — a measurement only speaks for the render it was taken from. */
 export function cellKey(subject: Pick<Subject, 'routePattern' | 'instanceUrl' | 'viewport' | 'colorScheme'>): string {
   return [subject.routePattern ?? subject.instanceUrl ?? '', subject.viewport ?? '', subject.colorScheme ?? ''].join('|');
 }
 
-/** Collect every contrast candidate that carries a box, keyed by cell. */
-export function indexMeasuredContrast(artifacts: Artifact[]): MeasuredIndex {
+/** Collect every contrast subject (measured or not) from the style-probe
+ *  artifacts, keyed by cell. */
+export function indexMeasuredSubjects(artifacts: Artifact[]): MeasuredIndex {
   const index: MeasuredIndex = new Map();
   for (const artifact of artifacts) {
     if (artifact.kind !== 'style-probe' || artifact.check !== 'contrast') continue;
     const key = cellKey(artifact.subject);
     const bucket = index.get(key) ?? [];
-    for (const raw of artifact.results as Array<Record<string, unknown>>) {
-      const box = raw.box as MeasuredContrast['box'] | undefined;
-      if (!box || typeof box.x !== 'number' || !(box.width > 0) || !(box.height > 0)) continue;
-      bucket.push({
-        box,
-        flat: raw.flat === true,
-        clipped: raw.clipped === true,
-        measuredBand: raw.measuredBand as MeasuredContrast['measuredBand'],
-        minRatio: typeof raw.minRatio === 'number' ? raw.minRatio : undefined,
-        maxRatio: typeof raw.maxRatio === 'number' ? raw.maxRatio : undefined,
-        required: typeof raw.required === 'number' ? raw.required : 4.5,
-      });
+    for (const raw of artifact.results as unknown[]) {
+      const parsed = MeasuredSubjectShape.safeParse(raw);
+      if (!parsed.success) continue; // old-shape (no `status`) result — not this pass's business
+      bucket.push(parsed.data);
     }
     index.set(key, bucket);
   }
   return index;
 }
 
-/**
- * The measurement for the same element, if we took one. Same-element means the
- * boxes essentially coincide: centres within 2px and each dimension within 2px.
- * A loose match would let a parent's measurement speak for its child, which is
- * exactly the confusion (element vs the thing overlapping it) this resolves.
- */
-export function matchMeasured(
-  index: MeasuredIndex,
-  subject: Pick<Subject, 'routePattern' | 'instanceUrl' | 'viewport' | 'colorScheme'>,
-  box: MeasuredContrast['box'] | null | undefined,
-): MeasuredContrast | undefined {
-  if (!box) return undefined;
-  const bucket = index.get(cellKey(subject));
-  if (!bucket) return undefined;
-  const TOL = 2;
-  const cx = box.x + box.width / 2;
-  const cy = box.y + box.height / 2;
-  let best: MeasuredContrast | undefined;
-  let bestDist = Infinity;
-  for (const m of bucket) {
-    if (Math.abs(m.box.width - box.width) > TOL || Math.abs(m.box.height - box.height) > TOL) continue;
-    const dist = Math.hypot(m.box.x + m.box.width / 2 - cx, m.box.y + m.box.height / 2 - cy);
-    if (dist <= TOL && dist < bestDist) {
-      best = m;
-      bestDist = dist;
-    }
-  }
-  return best;
+export interface AxeContrastNode {
+  /** For the disagreement example — axe's own selector string for the node. */
+  selector: string;
+  /** From `resolveAxeTargets`: the element's ref plus every text-owning
+   *  descendant's ref. Missing/empty = axe's node couldn't be resolved to a
+   *  page-side identity (e.g. a stale selector) — never matches. */
+  measureRefs?: number[] | null;
+  /** axe's own computed ratio for this node, when its check data carried one —
+   *  used only to detect and record a disagreement, never to decide drop/keep. */
+  axeRatio?: number;
 }
 
-export type Reconciliation =
-  | { action: 'drop'; reason: string }
-  | { action: 'keep' }
-  | { action: 'revise'; confidence: 'violation' | 'needs-review'; note: string };
+export interface ContrastDisagreement {
+  selector: string;
+  axe: number;
+  measured: number;
+}
 
-/** Apply the precedence above to one axe color-contrast node. */
-export function reconcileAxeContrast(
-  measured: MeasuredContrast | undefined,
-  axeConfidence: 'violation' | 'needs-review',
-): Reconciliation {
-  if (!measured) return { action: 'keep' };
-  // Nothing of this element is drawn — an ancestor's overflow clips it away. A
-  // contrast ratio for text no one can see is not a finding; whether hiding it
-  // that way is itself a problem is a different rule's question.
-  if (measured.clipped) {
-    return { action: 'drop', reason: 'clipped out by an ancestor’s overflow — not painted' };
-  }
-  if (!measured.flat) return { action: 'drop', reason: 'non-flat background — contrast.text owns this element' };
-  if (!measured.measuredBand) return { action: 'keep' };
+export type ContrastSettlement =
+  | { action: 'drop'; disagreement?: ContrastDisagreement }
+  | { action: 'keep' };
 
-  const range = `${measured.minRatio ?? '?'}–${measured.maxRatio ?? '?'}:1 (needs ${measured.required}:1)`;
-  if (measured.measuredBand === 'pass') {
-    if (axeConfidence === 'needs-review') {
-      return { action: 'drop', reason: `pixel-measured ${range} — the rendered text clears the threshold` };
+/**
+ * Settle one axe `color-contrast` node against the glyph-mask measurements of
+ * the same page cell. See the module comment for the precedence.
+ */
+export function settleAxeContrastNode(
+  index: MeasuredIndex,
+  subject: Pick<Subject, 'routePattern' | 'instanceUrl' | 'viewport' | 'colorScheme'>,
+  node: AxeContrastNode,
+): ContrastSettlement {
+  const refs = node.measureRefs;
+  if (!refs || refs.length === 0) return { action: 'keep' };
+  const bucket = index.get(cellKey(subject));
+  if (!bucket || bucket.length === 0) return { action: 'keep' };
+  const refSet = new Set(refs);
+  const matched = bucket.filter((m) => refSet.has(m.ref));
+  const measured = matched.filter((m) => m.status === 'measured');
+  if (measured.length === 0) return { action: 'keep' };
+
+  // A disagreement is diagnostic, not a decision: axe's own flat-stack ratio
+  // vs our measured median, when both exist for the same (flat, CSS-colour)
+  // subject and differ by more than rounding — worth surfacing, never worth
+  // keeping the node over (the glyph mask is ground truth either way).
+  let disagreement: ContrastDisagreement | undefined;
+  if (node.axeRatio != null) {
+    for (const m of measured) {
+      if (m.flat && m.fgSource === 'css' && m.medianRatio != null && Math.abs(node.axeRatio - m.medianRatio) > 0.1) {
+        disagreement = { selector: node.selector, axe: node.axeRatio, measured: m.medianRatio };
+        break;
+      }
     }
-    return {
-      action: 'revise',
-      confidence: 'needs-review',
-      note: `axe inferred a failing ratio from the cascade, but the rendered pixels measure ${range} — confirm visually`,
-    };
   }
-  // 'fail' — and 'ambiguous' from runs recorded before the worst-pixel rule,
-  // which meant part of the text failed, and part failing is failing.
-  return { action: 'revise', confidence: 'violation', note: `pixel-measured ${range}; the worst pixel governs` };
+  return { action: 'drop', disagreement };
 }

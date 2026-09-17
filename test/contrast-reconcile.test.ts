@@ -1,69 +1,112 @@
 import { describe, it, expect } from 'vitest';
-import { indexMeasuredContrast, matchMeasured, reconcileAxeContrast, type MeasuredContrast } from '../src/contrast-reconcile.js';
+import {
+  indexMeasuredSubjects,
+  settleAxeContrastNode,
+  cellKey,
+  type MeasuredSubject,
+} from '../src/contrast-reconcile.js';
 import type { Artifact } from '../src/record/index.js';
 
 const subject = { routePattern: '/app/aeo/topics', instanceUrl: 'http://x/app/aeo/topics', viewport: 'desktop', colorScheme: 'light' as const };
-const box = { x: 100, y: 200, width: 40, height: 26 };
 
-function probe(results: Array<Record<string, unknown>>): Artifact {
-  return { kind: 'style-probe', check: 'contrast', subject, capturedAt: '', results } as unknown as Artifact;
+function probe(results: Array<Record<string, unknown>>, over: Partial<typeof subject> = {}): Artifact {
+  return { kind: 'style-probe', check: 'contrast', subject: { ...subject, ...over }, capturedAt: '', results } as unknown as Artifact;
 }
 
-const measured = (over: Partial<MeasuredContrast> = {}): MeasuredContrast => ({ box, flat: true, required: 4.5, ...over });
+const passSubject = (ref: number, over: Partial<MeasuredSubject> = {}): Record<string, unknown> => ({
+  ref,
+  status: 'measured',
+  verdict: 'pass',
+  flat: true,
+  fgSource: 'css',
+  ratio: 9.1,
+  minRatio: 9.1,
+  medianRatio: 9.3,
+  maxRatio: 9.4,
+  ...over,
+});
+
+const failSubject = (ref: number, over: Partial<MeasuredSubject> = {}): Record<string, unknown> => ({
+  ref,
+  status: 'measured',
+  verdict: 'fail',
+  flat: true,
+  fgSource: 'css',
+  ratio: 1.9,
+  minRatio: 1.9,
+  medianRatio: 2.1,
+  maxRatio: 2.4,
+  ...over,
+});
+
+const unmeasuredSubject = (ref: number): Record<string, unknown> => ({ ref, status: 'unmeasured', flat: true });
 
 describe('contrast reconciliation', () => {
-  it('indexes candidates that carry a box, skipping degenerate ones', () => {
-    const index = indexMeasuredContrast([probe([
-      { box, flat: true, required: 4.5, measuredBand: 'pass' },
-      { box: { x: 0, y: 0, width: 0, height: 10 }, flat: true, required: 4.5 },
-      { flat: false, required: 3 },
-    ])]);
-    expect(index.get('/app/aeo/topics|desktop|light')).toHaveLength(1);
-  });
-
-  it('matches the same element and refuses a differently-sized box', () => {
-    const index = indexMeasuredContrast([probe([{ box, flat: true, required: 4.5, measuredBand: 'fail' }])]);
-    expect(matchMeasured(index, subject, { x: 101, y: 201, width: 40, height: 26 })?.measuredBand).toBe('fail');
-    // A parent wrapping the same text must not inherit the child's measurement.
-    expect(matchMeasured(index, subject, { x: 100, y: 200, width: 400, height: 26 })).toBeUndefined();
-    expect(matchMeasured(index, subject, undefined)).toBeUndefined();
+  it('indexes valid MeasuredSubject results and drops old-shape ones', () => {
+    const index = indexMeasuredSubjects([
+      probe([passSubject(1), { flat: true, required: 4.5 } /* old shape: no status/ref */]),
+    ]);
+    expect(index.get(cellKey(subject))).toHaveLength(1);
   });
 
   it('does not speak for another viewport or scheme', () => {
-    const index = indexMeasuredContrast([probe([{ box, flat: true, required: 4.5, measuredBand: 'pass' }])]);
-    expect(matchMeasured(index, { ...subject, colorScheme: 'dark' as const }, box)).toBeUndefined();
+    const index = indexMeasuredSubjects([probe([passSubject(1)])]);
+    expect(index.get(cellKey({ ...subject, colorScheme: 'dark' }))).toBeUndefined();
   });
 
-  it('drops an unprovable axe finding when the pixels clear the threshold', () => {
-    expect(reconcileAxeContrast(measured({ measuredBand: 'pass', minRatio: 9.1, maxRatio: 9.4 }), 'needs-review'))
-      .toMatchObject({ action: 'drop' });
+  it('keeps a node with no measureRefs', () => {
+    const index = indexMeasuredSubjects([probe([passSubject(1)])]);
+    expect(settleAxeContrastNode(index, subject, { selector: '.x' })).toEqual({ action: 'keep' });
+    expect(settleAxeContrastNode(index, subject, { selector: '.x', measureRefs: [] })).toEqual({ action: 'keep' });
   });
 
-  it('downgrades rather than drops when axe asserted a violation the pixels contradict', () => {
-    const r = reconcileAxeContrast(measured({ measuredBand: 'pass', minRatio: 9.1, maxRatio: 9.4 }), 'violation');
-    expect(r).toMatchObject({ action: 'revise', confidence: 'needs-review' });
+  it('drops a node whose measureRefs match a measured pass', () => {
+    const index = indexMeasuredSubjects([probe([passSubject(1)])]);
+    const r = settleAxeContrastNode(index, subject, { selector: '.x', measureRefs: [1] });
+    expect(r).toMatchObject({ action: 'drop' });
   });
 
-  it('keeps a measured failure as a violation with the measured range', () => {
-    const r = reconcileAxeContrast(measured({ measuredBand: 'fail', minRatio: 1.9, maxRatio: 2.4 }), 'needs-review');
-    expect(r).toMatchObject({ action: 'revise', confidence: 'violation' });
-    expect(r).toHaveProperty('note', expect.stringContaining('1.9'));
+  it('drops a node whose measureRefs match a measured fail (contrast.text reports it)', () => {
+    const index = indexMeasuredSubjects([probe([failSubject(2)])]);
+    const r = settleAxeContrastNode(index, subject, { selector: '.x', measureRefs: [2] });
+    expect(r).toMatchObject({ action: 'drop' });
   });
 
-  it('a range that straddles the threshold is a failure: the worst pixel governs', () => {
-    // 'ambiguous' is what runs recorded before the worst-pixel rule called
-    // this. It meant "part of the text fails", and part failing is failing —
-    // WCAG 1.4.3 has no clause for text that passes on average.
-    expect(reconcileAxeContrast(measured({ measuredBand: 'ambiguous', minRatio: 4.1, maxRatio: 5.2 }), 'needs-review'))
-      .toMatchObject({ action: 'revise', confidence: 'violation', note: expect.stringContaining('worst pixel') });
+  it('keeps a node whose measureRefs match only unmeasured subjects', () => {
+    const index = indexMeasuredSubjects([probe([unmeasuredSubject(3)])]);
+    const r = settleAxeContrastNode(index, subject, { selector: '.x', measureRefs: [3] });
+    expect(r).toEqual({ action: 'keep' });
   });
 
-  it('yields non-flat elements to contrast.text instead of double-reporting', () => {
-    expect(reconcileAxeContrast(measured({ flat: false, measuredBand: 'fail' }), 'violation')).toMatchObject({ action: 'drop' });
+  it('keeps a node whose measureRefs match nothing in this cell (different cell never matches)', () => {
+    const index = indexMeasuredSubjects([probe([passSubject(1)], { routePattern: '/other' })]);
+    const r = settleAxeContrastNode(index, subject, { selector: '.x', measureRefs: [1] });
+    expect(r).toEqual({ action: 'keep' });
   });
 
-  it('changes nothing when no measurement exists or the band is missing', () => {
-    expect(reconcileAxeContrast(undefined, 'violation')).toEqual({ action: 'keep' });
-    expect(reconcileAxeContrast(measured(), 'violation')).toEqual({ action: 'keep' });
+  it('counts a disagreement when axe and the measured median differ by more than rounding, on a flat CSS-colour subject', () => {
+    const index = indexMeasuredSubjects([probe([failSubject(4, { medianRatio: 2.1 })])]);
+    const r = settleAxeContrastNode(index, subject, { selector: '.cta', measureRefs: [4], axeRatio: 2.8 });
+    expect(r).toMatchObject({
+      action: 'drop',
+      disagreement: { selector: '.cta', axe: 2.8, measured: 2.1 },
+    });
+  });
+
+  it('does not report a disagreement within rounding tolerance', () => {
+    const index = indexMeasuredSubjects([probe([failSubject(5, { medianRatio: 2.1 })])]);
+    const r = settleAxeContrastNode(index, subject, { selector: '.cta', measureRefs: [5], axeRatio: 2.15 });
+    expect(r).toMatchObject({ action: 'drop' });
+    expect((r as { disagreement?: unknown }).disagreement).toBeUndefined();
+  });
+
+  it('does not report a disagreement for a non-flat or rendered-ink subject', () => {
+    const index = indexMeasuredSubjects([
+      probe([failSubject(6, { flat: false, medianRatio: 2.1 }), failSubject(7, { fgSource: 'rendered', medianRatio: 2.1 })]),
+    ]);
+    const r1 = settleAxeContrastNode(index, subject, { selector: '.a', measureRefs: [6], axeRatio: 5 });
+    const r2 = settleAxeContrastNode(index, subject, { selector: '.b', measureRefs: [7], axeRatio: 5 });
+    expect((r1 as { disagreement?: unknown }).disagreement).toBeUndefined();
+    expect((r2 as { disagreement?: unknown }).disagreement).toBeUndefined();
   });
 });

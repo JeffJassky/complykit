@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { resolveFinding, type Artifact, type Finding, type RunId, type Subject } from './record/index.js';
 import { getEngineMapping, getRequirement } from './registry/index.js';
-import { indexMeasuredContrast, matchMeasured, reconcileAxeContrast } from './contrast-reconcile.js';
+import { indexMeasuredSubjects, settleAxeContrastNode, type ContrastDisagreement } from './contrast-reconcile.js';
 
 // Engine normalization: turn engine-output artifacts (a11y-linter `static-scan`,
 // axe `axe-result`) into canonical Findings with `producer: engine` — "eslint
@@ -22,7 +22,13 @@ const StaticScanItem = z.object({
 });
 
 const AxeNode = z.object({
-  target: z.array(z.string()).optional(),
+  // axe's target is a selector path. Inside an open shadow root it nests: the
+  // element `<p>` in `<my-card>`'s shadow is `[["my-card", "p"]]`. Declaring
+  // this as string[] made the whole results object fail to parse, and the
+  // parse failure dropped EVERY axe finding on the page — one web component
+  // silently erased a route's accessibility report (found on the contrast
+  // ground-truth corpus, where 11 contrast violations became 0).
+  target: z.array(z.union([z.string(), z.array(z.string())])).optional(),
   html: z.string().optional(),
   failureSummary: z.string().optional(),
   sourceFile: z.string().nullable().optional(), // Vue __file, when the dev runtime exposed it
@@ -31,6 +37,10 @@ const AxeNode = z.object({
     .object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() })
     .nullable()
     .optional(), // document-absolute geometry, for cross-collector matching
+  // The node's element and every text-owning descendant, resolved to page-side
+  // refs by `resolveAxeTargets` — how this node is matched against glyph-mask
+  // measurements (contrast-reconcile.ts). Missing/empty = unresolved.
+  measureRefs: z.array(z.number()).nullable().optional(),
   // The element's visible text, captured post-run — a text-level finding quotes
   // what reads badly instead of only pointing at it.
   text: z.string().nullable().optional(),
@@ -72,11 +82,27 @@ function axeColorData(node: z.infer<typeof AxeNode>): AxeColorData | undefined {
   }
   return undefined;
 }
+// Nodes are parsed one at a time for the same reason: a node shape nobody
+// anticipated must cost that node, never the page.
 const AxeRuleResult = z.object({
   id: z.string(),
   help: z.string().optional(),
-  nodes: z.array(AxeNode).default([]),
+  nodes: z
+    .array(z.unknown())
+    .default([])
+    .transform((nodes) =>
+      nodes.flatMap((n) => {
+        const parsed = AxeNode.safeParse(n);
+        return parsed.success ? [parsed.data] : [];
+      }),
+    ),
 });
+
+/** A readable selector for an axe target; shadow-root hops are joined with ` >>> `. */
+function targetSelector(target: z.infer<typeof AxeNode>['target']): string | undefined {
+  if (!target?.length) return undefined;
+  return target.map((t) => (Array.isArray(t) ? t.join(' >>> ') : t)).join(' ');
+}
 const AxeResults = z.object({
   violations: z.array(AxeRuleResult).default([]),
   incomplete: z.array(AxeRuleResult).default([]),
@@ -90,14 +116,23 @@ export interface NormalizeEngineOptions {
 export interface EngineNormalization {
   findings: Finding[];
   unmapped: Array<{ engine: string; engineRule: string; count: number }>;
-  /** How the pixel measurement overrode axe's inferred contrast verdicts. A
+  /** How the glyph-mask measurement settled axe's `color-contrast` nodes. A
    *  suppressed finding must be COUNTED — an instrument that silently deletes
    *  its own output is one nobody can audit. */
-  superseded: { cleared: number; upgraded: number; downgraded: number; ceded: number;
-    /** axe contrast nodes we took no measurement for. A measurement pass that
-     *  silently covers half the nodes is indistinguishable from one that covers
-     *  all of them, so the miss is counted and reported. */
-    unmatched: number };
+  superseded: {
+    /** axe nodes dropped because a measurement exists for the element (or a
+     *  text-owning descendant) — `contrast.text` is the single reporter. */
+    settled: number;
+    /** axe contrast nodes with no measured match — kept exactly as axe
+     *  declared. A measurement pass that silently covers half the nodes is
+     *  indistinguishable from one that covers all of them, so the miss is
+     *  counted and reported. */
+    unmatched: number;
+    /** Settled nodes where axe's own flat-stack ratio disagreed with the
+     *  measured median by more than rounding. */
+    disagreements: number;
+    examples: ContrastDisagreement[];
+  };
 }
 
 export function normalizeEngineArtifacts(
@@ -158,10 +193,10 @@ export function normalizeEngineArtifacts(
     return n;
   };
 
-  // Pixel measurements from the same captures, so axe's cascade-inferred
-  // contrast verdicts can be reconciled against what actually rendered.
-  const measuredContrast = indexMeasuredContrast(artifacts);
-  const superseded = { cleared: 0, upgraded: 0, downgraded: 0, ceded: 0, unmatched: 0 };
+  // Glyph-mask measurements from the same captures, so axe's cascade-inferred
+  // color-contrast nodes can be settled against what actually rendered.
+  const measuredSubjects = indexMeasuredSubjects(artifacts);
+  const superseded = { settled: 0, unmatched: 0, disagreements: 0, examples: [] as ContrastDisagreement[] };
 
   for (const artifact of artifacts) {
     if (artifact.kind === 'static-scan') {
@@ -200,38 +235,36 @@ export function normalizeEngineArtifacts(
       const screenshotPath = artifact.screenshotPath;
       const handle = (rule: z.infer<typeof AxeRuleResult>, declaredConfidence: 'violation' | 'needs-review'): void => {
         for (const node of rule.nodes) {
-          // Measurement beats inference: axe cannot resolve a background it
-          // cannot walk to (overlap, gradient, image), and says so as
-          // `incomplete`. Where our pixel-band read those same pixels, its
-          // verdict governs — clearing, confirming, or re-grading this node.
-          let confidence = declaredConfidence;
-          let measuredNote = '';
+          // Measurement beats inference: the glyph-mask walk (Wave 2/3) measures
+          // this element's text directly off the pixels. When a measurement
+          // exists, `contrast.text` is the single reporter for it — settle
+          // (drop) this node rather than let axe's cascade-inferred verdict
+          // stand beside, or contradict, the measured one.
+          const confidence = declaredConfidence;
+          const cd = axeColorData(node);
           if (rule.id === 'color-contrast') {
-            const match = matchMeasured(measuredContrast, artifact.subject, node.box);
-            if (!match) superseded.unmatched++;
-            const verdict = reconcileAxeContrast(match, confidence);
-            if (verdict.action === 'drop') {
-              if (verdict.reason.startsWith('non-flat')) superseded.ceded++;
-              else superseded.cleared++;
+            const settlement = settleAxeContrastNode(measuredSubjects, artifact.subject, {
+              selector: targetSelector(node.target) ?? '',
+              measureRefs: node.measureRefs,
+              axeRatio: cd?.contrastRatio,
+            });
+            if (settlement.action === 'drop') {
+              superseded.settled++;
+              if (settlement.disagreement) {
+                superseded.disagreements++;
+                if (superseded.examples.length < 5) superseded.examples.push(settlement.disagreement);
+              }
               continue;
             }
-            if (verdict.action === 'revise') {
-              if (verdict.confidence === 'violation' && confidence === 'needs-review') superseded.upgraded++;
-              else if (verdict.confidence === 'needs-review' && confidence === 'violation') superseded.downgraded++;
-              confidence = verdict.confidence;
-              measuredNote = verdict.note;
-            }
+            superseded.unmatched++;
           }
           const ordinal = nextOrdinal(`${engine}:${rule.id}:${routeKey}:${confidence}`);
-          const message = (
-            [rule.help, measuredNote || node.failureSummary].filter(Boolean).join(' — ') || rule.id
-          ).slice(0, 300);
+          const message = ([rule.help, node.failureSummary].filter(Boolean).join(' — ') || rule.id).slice(0, 300);
           // The element's crop out of the cell's full-page capture — the same
           // "show, don't tell" evidence the contrast rule carries.
           // Skip degenerate or page-sized boxes — a crop of everything shows nothing.
           const b = node.box;
           const cropWorthy = b && b.width > 0 && b.height > 0 && b.width * b.height <= 1_500_000;
-          const cd = axeColorData(node);
           const swatches = cd
             ? [
                 { label: 'text', color: cd.fgColor },
@@ -275,7 +308,7 @@ export function normalizeEngineArtifacts(
               colorScheme: artifact.subject.colorScheme,
               // axe's target IS a CSS selector — put it in the structured cssPath
               // (what an agent keys off) as well as the display name.
-              locator: { role: 'element', name: node.target?.join(' '), cssPath: node.target?.join(' '), ordinal },
+              locator: { role: 'element', name: targetSelector(node.target), cssPath: targetSelector(node.target), ordinal },
               // Source file from the framework runtime (Vue __file); raw path —
               // the pipeline relativizes it against the configured repo.
               file: node.sourceFile ? { path: node.sourceFile } : undefined,

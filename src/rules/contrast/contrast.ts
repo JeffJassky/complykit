@@ -3,39 +3,46 @@ import type { RawFinding, Artifact } from '../../record/index.js';
 import type { Rule, EvalContext } from '../types.js';
 import { asRuleId, asRequirementId } from '../../registry/index.js';
 
-// WCAG 1.4.3 contrast, from the collector's computed-style probe (family B).
-// This rule is the value-ADD OVER axe: axe already reports flat-colour contrast
-// violations reliably, so this rule deliberately SKIPS flat stacks (letting axe
-// own them, no duplicate findings) and handles only the cases axe punts to
-// `incomplete` — a non-flat background (image/gradient/overlap). The collector's
-// pixel-band pass measured those; here a measured fail is a violation and an
-// verdict is the worst pixel. It never recomputes a ratio.
+// WCAG 1.4.3 contrast, from the collector's glyph-mask walk (glyph-measure.ts):
+// every text subject on the page is measured directly off its rendered pixels
+// — the glyph mask isolates exactly which pixels are ink (A vs B, the subject's
+// glyphs made transparent) and what's behind each one, so the verdict never
+// depends on inferring a background from the cascade. This rule is the SINGLE
+// reporter for anything measured: axe's `color-contrast` is settled (dropped)
+// against the same measurements in engines.ts/contrast-reconcile.ts, whatever
+// this rule does or doesn't report for that element. A measured PASS is simply
+// not reported; a measured FAIL is reported here, flat background or not — the
+// old "skip flat, let axe own it" split is gone because axe no longer owns any
+// measured element.
+//
+// Unmeasured subjects are never a pass: the collector emits a
+// `contrast-unmeasured` coverage gap for them, and this rule stays silent
+// (needs-review noise would just be a worse gap notice).
 
-const Candidate = z.object({
+const MeasuredSubject = z.object({
+  status: z.enum(['measured', 'unmeasured']),
+  verdict: z.enum(['pass', 'fail']).optional(),
   cssPath: z.string().optional(),
   sourceFile: z.string().nullable().optional(), // Vue __file from the dev runtime
   scopeId: z.string().nullable().optional(), // data-v style-scope fallback
-  fgVars: z.array(z.string()).optional(), // CSS variables behind the colours
-  bgVars: z.array(z.string()).optional(),
-  bgImageVars: z.array(z.string()).optional(), // vars the authored gradient uses
   textSample: z.string().optional(),
   textColor: z.string().optional(),
-  bgColor: z.string().nullable().optional(),
-  flat: z.boolean(),
-  clipped: z.boolean().optional(),
-  paintedByBackground: z.boolean().optional(),
-  ratio: z.number().nullable().optional(),
   required: z.number(),
-  measuredBand: z.enum(['pass', 'fail', 'ambiguous']).optional(),
+  ratio: z.number().optional(),
   minRatio: z.number().optional(),
+  medianRatio: z.number().optional(),
   maxRatio: z.number().optional(),
-  box: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }).optional(),
-  samples: z.array(z.object({ x: z.number(), y: z.number() })).optional(),
+  glyphPixels: z.number().optional(),
+  failingPixels: z.number().optional(),
+  fgSource: z.enum(['css', 'rendered']).optional(),
   fgColor: z.string().optional(),
-  bgLoColor: z.string().optional(),
-  bgHiColor: z.string().optional(),
-  ratioLo: z.number().optional(),
-  ratioHi: z.number().optional(),
+  worstBgColor: z.string().optional(),
+  bestBgColor: z.string().optional(),
+  box: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }).optional(),
+  cropPath: z.string().optional(),
+  overlayPath: z.string().optional(),
+  cropWidth: z.number().optional(),
+  cropHeight: z.number().optional(),
 });
 
 export const contrastText: Rule<readonly ['style-probe']> = {
@@ -48,55 +55,22 @@ export const contrastText: Rule<readonly ['style-probe']> = {
   remediation:
     'Increase the contrast between the text and its background to at least 4.5:1 (3:1 for large text), or change the text/background colours.',
   falsePositives:
-    'Inactive controls, incidental text (pure decoration, or part of a picture with significant other content) and logotypes are exempt under 1.4.3 itself. Those are properties of the element, not of the pixels, so they are recorded once as dispositions rather than re-judged every run. There is no other human question here: the verdict is the worst pixel behind the text.',
+    'Inactive controls, incidental text (pure decoration, or part of a picture with significant other content) and logotypes are exempt under 1.4.3 itself. Those are properties of the element, not of the pixels, so they are recorded once as dispositions rather than re-judged every run. There is no other human question here: each glyph pixel is measured directly against the exact background rendered behind it (A/B screenshot diff with the subject\'s own text made transparent), and the verdict is the 1st-percentile pixel — never an inferred cascade colour, never a guessed background.',
   consumes: ['style-probe'] as const,
   evaluate(input: { 'style-probe': Artifact[] }, ctx: EvalContext): RawFinding[] {
     const out: RawFinding[] = [];
     let ordinal = 0;
     for (const artifact of input['style-probe']) {
       if (artifact.kind !== 'style-probe' || artifact.check !== 'contrast') continue;
-      const screenshotPath = artifact.screenshotPath;
       for (const raw of artifact.results) {
-        const parsed = Candidate.safeParse(raw);
-        if (!parsed.success) continue;
+        const parsed = MeasuredSubject.safeParse(raw);
+        if (!parsed.success) continue; // old-shape result (pre glyph-mask run) — ignored, not re-judged
         const c = parsed.data;
 
-        // Flat-colour stacks are axe's job (axe color-contrast handles them
-        // reliably) — skip them here so the two engines don't double-report 1.4.3.
-        if (c.flat) continue;
-
-        // Clipped away by an ancestor's overflow: it lays out and reports a
-        // rect, but nothing of it is drawn. There is no rendered contrast to
-        // report, and "ratio could not be proven" would be a finding about text
-        // no one can see. The candidate is still carried so the reconciliation
-        // can clear axe's finding on the same element.
-        if (c.clipped) continue;
-
-        // Gradient text is measured with its ink read from the pixels (see
-        // pixel-band.ts). Only when that produced nothing does axe's own
-        // verdict stand.
-        if (c.paintedByBackground && !c.measuredBand) continue;
-
-        // Non-flat only: decide the verdict from the pixel-band measurement.
-        let confidence: 'violation' | 'needs-review' | null = null;
-        let detail: string;
-        if (c.measuredBand === 'pass') {
-          continue; // pixel-band cleared it
-        } else if (c.measuredBand === 'fail' || c.measuredBand === 'ambiguous') {
-          // 'ambiguous' only appears in runs recorded before the worst-pixel
-          // rule; it meant "part of the text fails", which is a failure.
-          confidence = 'violation';
-          detail =
-            c.minRatio !== undefined && c.maxRatio !== undefined && c.minRatio !== c.maxRatio
-              ? `pixel-measured ${c.minRatio}–${c.maxRatio}:1 across the element; the worst pixel needs ${c.required}:1`
-              : `pixel-measured ${c.minRatio}–${c.maxRatio}:1 (needs ${c.required}:1)`;
-        } else {
-          // No measurement at all. This is a coverage gap, not a judgement
-          // call, and the collector reports it as one; it should be rare.
-          confidence = 'needs-review';
-          detail = `background is not a flat colour and no pixel measurement was taken; see the run's coverage gaps`;
-        }
-        if (!confidence) continue;
+        // Only a measured fail is a finding. A measured pass has nothing to
+        // report; unmeasured is a coverage gap, not a verdict either way.
+        if (c.status !== 'measured' || c.verdict !== 'fail') continue;
+        if (c.ratio == null || c.minRatio == null || c.medianRatio == null || c.maxRatio == null || c.glyphPixels == null) continue;
 
         out.push({
           ruleId: asRuleId('contrast.text'),
@@ -111,46 +85,40 @@ export const contrastText: Rule<readonly ['style-probe']> = {
             // Raw runtime path — the pipeline relativizes it against the repo.
             file: c.sourceFile ? { path: c.sourceFile } : undefined,
           },
-          confidence,
-          message: `Text may not meet ${c.required}:1 contrast — ${detail}.`,
-          details: { cssPath: c.cssPath, textSample: c.textSample, ...(c.scopeId ? { vueScopeId: c.scopeId } : {}) },
+          confidence: 'violation',
+          message: `Text contrast ${c.ratio}:1 is below the required ${c.required}:1 — measured over ${c.glyphPixels} glyph pixels (worst ${c.minRatio}:1, median ${c.medianRatio}:1).`,
+          details: { cssPath: c.cssPath, textSample: c.textSample, box: c.box, ...(c.scopeId ? { vueScopeId: c.scopeId } : {}) },
           evidence: [
             {
               kind: 'computed-style',
               properties: {
-                // The violating text itself — the most useful context when the
-                // ratio is unprovable or the text is invisible (e.g. contrast ~0):
-                // you can still see WHAT reads badly even with no crop.
                 ...(c.textSample ? { text: `"${c.textSample}"` } : {}),
                 color: c.textColor ?? '',
-                // The design-token names behind the colours, resolved in this
-                // element's context — a fix targets the variable, not a literal.
-                ...(c.fgVars?.length ? { 'matching color vars': c.fgVars.map((v) => `var(${v})`).join(', ') } : {}),
-                background: c.bgColor ?? '(non-flat)',
-                ...(c.bgVars?.length ? { 'matching bg color vars': c.bgVars.map((v) => `var(${v})`).join(', ') } : {}),
-                ...(c.bgImageVars?.length ? { 'gradient vars (authored)': c.bgImageVars.map((v) => `var(${v})`).join(', ') } : {}),
-                ratio: c.ratio != null ? String(c.ratio) : `${c.minRatio ?? '?'}-${c.maxRatio ?? '?'}`,
+                'text colour used': `${c.fgColor ?? '?'} (${c.fgSource === 'css' ? 'CSS colour' : 'rendered pixels'})`,
+                'background at worst pixel': c.worstBgColor ?? '',
+                ratio: `${c.ratio}:1 (1st percentile of ${c.glyphPixels} glyph pixels)`,
+                range: `${c.minRatio}–${c.maxRatio}:1, median ${c.medianRatio}:1`,
                 required: String(c.required),
+                'failing pixels': `${c.failingPixels ?? '?'} of ${c.glyphPixels}`,
               },
             },
-            // Croppable evidence for C1 adjudication: the DOM localizes (region),
-            // the model only judges the handed crop. Carries the sampled
-            // background pixels + colour swatches so the report can show exactly
-            // which pixels the measurement read.
-            ...(screenshotPath && c.box
+            // Croppable evidence for C1 adjudication and human review: the crop
+            // around the measured glyphs, plus the glyph-mask overlay stacked
+            // on top by the report, plus colour swatches for text/worst/best.
+            ...(c.cropPath && c.cropWidth != null && c.cropHeight != null
               ? [
                   {
                     kind: 'screenshot' as const,
-                    path: screenshotPath,
-                    region: c.box,
-                    samples: c.samples,
+                    path: c.cropPath,
+                    region: { x: 0, y: 0, width: c.cropWidth, height: c.cropHeight },
+                    overlayPath: c.overlayPath,
                     swatches: [
                       ...(c.fgColor ? [{ label: 'text', color: c.fgColor }] : []),
-                      ...(c.bgLoColor
-                        ? [{ label: 'bg (darkest)', color: c.bgLoColor, ratio: c.ratioLo }]
+                      ...(c.worstBgColor
+                        ? [{ label: 'background (worst pixel)', color: c.worstBgColor, ratio: c.minRatio }]
                         : []),
-                      ...(c.bgHiColor
-                        ? [{ label: 'bg (lightest)', color: c.bgHiColor, ratio: c.ratioHi }]
+                      ...(c.bestBgColor
+                        ? [{ label: 'background (best pixel)', color: c.bestBgColor, ratio: c.maxRatio }]
                         : []),
                     ],
                   },

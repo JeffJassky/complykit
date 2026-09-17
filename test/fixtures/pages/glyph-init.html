@@ -1,0 +1,218 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>glyph-init fixture</title>
+<style>
+  :root { --brand-color: #123456; --card-bg: #f0f0f0; }
+  html, body { margin: 0; }
+  body { background: #ffffff; font: 16px/1.4 system-ui, sans-serif; color: #111111; }
+  section { margin: 0; padding: 16px; border-bottom: 1px solid #eee; }
+
+  /* direct text nodes only */
+  #parent-span { color: rgb(10, 10, 10); }
+  #parent-span span { color: rgb(200, 30, 30); }
+
+  /* whitespace-only text is skipped */
+  #whitespace-parent { color: rgb(20, 20, 20); }
+
+  /* hidden ancestors */
+  #hidden-vis-wrap { visibility: hidden; }
+  #hidden-op-wrap { opacity: 0; }
+
+  /* pseudo content */
+  #before-el::before { content: "before text"; color: rgb(50, 50, 50); }
+  #icon-before::before { content: "\E001"; color: rgb(50, 50, 50); font-family: "IconFont"; }
+
+  /* size / weight rules */
+  #large24 { font-size: 24px; font-weight: 400; color: rgb(120,120,120); }
+  #large1866bold { font-size: 18.66px; font-weight: 700; color: rgb(120,120,120); }
+  #notlarge18bold { font-size: 18px; font-weight: 700; color: rgb(120,120,120); }
+
+  /* opacity product over ancestors */
+  #opacity-outer { opacity: 0.5; }
+  #opacity-inner { opacity: 0.5; color: rgb(0,0,0); }
+
+  /* background-clip: text */
+  #gradient-text {
+    background: linear-gradient(90deg, #000000, #333333);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-size: 32px;
+    font-weight: 700;
+    display: inline-block;
+  }
+
+  /* off-screen for viewportOnly filter */
+  #offscreen-far { position: absolute; top: 20000px; color: rgb(80,80,80); }
+
+  /* hide/restore proof: border + icon + child span */
+  #border-el {
+    color: rgb(0, 0, 0);
+    border: 3px solid currentColor;
+    display: inline-block;
+    padding: 8px;
+  }
+  #border-el svg { fill: currentColor; width: 16px; height: 16px; vertical-align: middle; }
+  #border-el .child-span { color: rgb(0, 120, 200); }
+
+  #before-hide::before { content: "before hide"; color: rgb(90,90,90); }
+  #placeholder-hide::placeholder { color: rgb(100,100,100); }
+  #gradient-hide {
+    background: linear-gradient(90deg, #202020, #404040);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-size: 28px;
+    display: inline-block;
+  }
+
+
+  /* describe: flat stack */
+  #flat-outer { background: rgb(255, 255, 255); }
+  #flat-inner { background: rgb(240, 240, 240); color: rgb(30, 30, 30); }
+
+  /* describe: gradient ancestor -> flat false */
+  #gradient-ancestor { background: linear-gradient(90deg, #fff, #ccc); }
+  #gradient-ancestor p { color: rgb(10,10,10); }
+
+  /* describe: fgVars via CSS variable */
+  #var-text { color: var(--brand-color); }
+
+  /* scrollSubjectTo: long document */
+  #long-doc-spacer { height: 3000px; }
+  #long-doc-target { color: rgb(40,40,40); }
+
+  /* scrollSubjectTo: inner scroll container */
+  #inner-scroll-shell { height: 300px; overflow-y: auto; border: 1px solid #ccc; }
+  #inner-scroll-filler { height: 1000px; }
+  #inner-scroll-target { color: rgb(40,40,40); }
+</style>
+</head>
+<body>
+
+<section>
+  <p id="parent-span">Plain text <span>coloured child</span> more plain text.</p>
+</section>
+
+<section>
+  <p id="whitespace-parent">
+    <span>   </span>
+    Real text here.
+  </p>
+</section>
+
+<section>
+  <div id="hidden-vis-wrap"><p id="hidden-vis-text">hidden by visibility</p></div>
+  <div id="hidden-op-wrap"><p id="hidden-op-text">hidden by opacity</p></div>
+</section>
+
+<section>
+  <p id="before-el">owner text</p>
+  <p id="icon-before">owner text</p>
+</section>
+
+<section>
+  <input id="placeholder-input" placeholder="a placeholder" style="color: rgb(20,20,20)">
+  <input id="value-input" value="an input value" readonly style="color: rgb(30,30,30)">
+</section>
+
+<section>
+  <div id="shadow-host"></div>
+</section>
+
+<section>
+  <p id="large24">large twenty four</p>
+  <p id="large1866bold">large eighteen sixty six bold</p>
+  <p id="notlarge18bold">not large eighteen bold</p>
+</section>
+
+<section>
+  <div id="opacity-outer"><p id="opacity-inner">opacity product text</p></div>
+</section>
+
+<section>
+  <p id="gradient-text">Gradient text</p>
+</section>
+
+<p id="offscreen-far">far below the fold</p>
+
+<section>
+  <div id="border-el">
+    Bordered text
+    <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/></svg>
+    <span class="child-span">child</span>
+    <span id="inherit-span">inherited</span>
+  </div>
+</section>
+
+<section>
+  <p id="before-hide"></p>
+  <input id="placeholder-hide" placeholder="placeholder hide text">
+  <p id="gradient-hide">Gradient hide text</p>
+  <div id="shadow-host-hide"></div>
+</section>
+
+<section>
+  <p id="prestyled" style="color: red !important;">pre-styled text</p>
+  <p id="nostyle">no style attribute text</p>
+</section>
+
+<section>
+  <div id="flat-outer"><div id="flat-inner"><p id="flat-inner-text">flat stack text</p></div></div>
+</section>
+
+<section>
+  <div id="gradient-ancestor"><p id="gradient-ancestor-text">on a gradient ancestor</p></div>
+</section>
+
+<section>
+  <p id="var-text">variable coloured text</p>
+</section>
+
+<section>
+  <p id="anim-target">animated text</p>
+  <p id="raf-target">raf opacity text</p>
+</section>
+
+<section>
+  <div id="axe-plain-target"><p>plain axe target text</p></div>
+  <div id="axe-shadow-host"></div>
+</section>
+
+<div id="long-doc-spacer"></div>
+<p id="long-doc-target">long document target text</p>
+
+<div id="inner-scroll-shell">
+  <div id="inner-scroll-filler"></div>
+  <p id="inner-scroll-target">inner scroller target text</p>
+</div>
+
+<script>
+  customElements.define('glyph-shadow-el', class extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<p id="shadow-text" style="color: rgb(150,150,150)">shadow text</p>';
+    }
+  });
+  document.getElementById('shadow-host').appendChild(document.createElement('glyph-shadow-el'));
+
+  customElements.define('glyph-shadow-hide-el', class extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<p id="shadow-hide-text" style="color: rgb(160,160,160)">shadow hide text</p>';
+    }
+  });
+  document.getElementById('shadow-host-hide').appendChild(document.createElement('glyph-shadow-hide-el'));
+
+  customElements.define('glyph-axe-shadow-el', class extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<p id="axe-shadow-p">axe shadow target text</p>';
+    }
+  });
+  document.getElementById('axe-shadow-host').appendChild(document.createElement('glyph-axe-shadow-el'));
+</script>
+</body>
+</html>

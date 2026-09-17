@@ -100,3 +100,25 @@ describe('JSON report sidecar', () => {
     expect(ev[0].swatches[0].color).toBe('#999999');
   });
 });
+
+describe('JSON report sidecar — glyph-mask overlay evidence', () => {
+  it('passes overlayPath through screenshot evidence', () => {
+    const f = finding('/pricing', 'desktop');
+    f.evidence.push({
+      kind: 'screenshot',
+      path: 'evidence/crop-1.png',
+      region: { x: 0, y: 0, width: 224, height: 64 },
+      overlayPath: 'evidence/overlay-1.png',
+      swatches: [{ label: 'text', color: '#000000' }],
+    });
+    const doc = JSON.parse(renderJsonReport(run, [f]));
+    const shots = doc.defects[0].evidence.filter((e: { type: string }) => e.type === 'screenshot');
+    expect(shots).toHaveLength(2);
+    expect(shots[1].overlayPath).toBe('evidence/overlay-1.png');
+  });
+
+  it('omits overlayPath when absent (old-run evidence)', () => {
+    const doc = JSON.parse(renderJsonReport(run, [finding('/', 'desktop')]));
+    expect(doc.defects[0].evidence[0].overlayPath).toBeUndefined();
+  });
+});

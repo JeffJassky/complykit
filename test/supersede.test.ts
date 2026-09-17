@@ -32,21 +32,27 @@ function probe(results: Array<Record<string, unknown>>): Artifact {
 
 const BOX = { x: 100, y: 200, width: 300, height: 40 };
 
+// NOTE: axe's `color-contrast` no longer reaches this pass in the real
+// pipeline — engines.ts settles it earlier by ref against MeasuredSubjects
+// (contrast-reconcile.ts). These tests exercise the general mechanism in
+// enrich/supersede.ts directly (any needs-review finding with a `box`, from
+// any producer, over a `status === 'measured'` glyph-mask subject), using
+// `axe-core:color-contrast` findings only as a convenient stand-in shape.
 describe('measurement supersede (signal fusion)', () => {
-  it('drops a needs-review finding whose element the pixel-band measured', () => {
+  it('drops a needs-review finding whose element the glyph-mask walk measured', () => {
     const f = finding('axe-core:color-contrast', 'needs-review', BOX);
-    const art = probe([{ measuredBand: 'pass', box: { ...BOX, x: 101 } }]); // near-identical geometry
+    const art = probe([{ status: 'measured', verdict: 'pass', box: { ...BOX, x: 101 } }]); // near-identical geometry
     const res = supersedeByMeasurement([f], [art]);
     expect(res.superseded).toBe(1);
     expect(res.findings).toHaveLength(0);
-    expect(res.byProvider['pixel-band-contrast']).toBe(1);
+    expect(res.byProvider['glyph-contrast']).toBe(1);
   });
 
-  it('supersedes regardless of band verdict (the measuring rule owns fail/ambiguous)', () => {
-    for (const band of ['fail', 'ambiguous']) {
+  it('supersedes regardless of measured verdict (the measuring rule owns fail)', () => {
+    for (const verdict of ['pass', 'fail']) {
       const res = supersedeByMeasurement(
         [finding('axe-core:color-contrast', 'needs-review', BOX)],
-        [probe([{ measuredBand: band, box: BOX }])],
+        [probe([{ status: 'measured', verdict, box: BOX }])],
       );
       expect(res.superseded).toBe(1);
     }
@@ -56,23 +62,33 @@ describe('measurement supersede (signal fusion)', () => {
     const violation = finding('axe-core:color-contrast', 'violation', BOX);
     const farAway = finding('axe-core:color-contrast', 'needs-review', { x: 900, y: 900, width: 50, height: 20 });
     const noBox = finding('axe-core:color-contrast', 'needs-review');
-    const art = probe([{ measuredBand: 'pass', box: BOX }, { box: BOX }]); // second candidate: never measured
+    const art = probe([{ status: 'measured', verdict: 'pass', box: BOX }, { status: 'unmeasured', box: BOX }]); // second candidate: never measured
     const res = supersedeByMeasurement([violation, farAway, noBox], [art]);
     expect(res.superseded).toBe(0);
     expect(res.findings).toHaveLength(3);
   });
 
   it('never eats the provider\'s own report of the same measurement', () => {
-    const own = finding('contrast.text', 'needs-review', BOX); // the ambiguous-band report itself
-    const res = supersedeByMeasurement([own], [probe([{ measuredBand: 'ambiguous', box: BOX }])]);
+    const own = finding('contrast.text', 'needs-review', BOX); // the fail report itself
+    const res = supersedeByMeasurement([own], [probe([{ status: 'measured', verdict: 'fail', box: BOX }])]);
     expect(res.superseded).toBe(0);
     expect(res.findings).toHaveLength(1);
   });
 
   it('matches only within the same page cell (viewport/scheme)', () => {
     const f = finding('axe-core:color-contrast', 'needs-review', BOX);
-    const darkProbe: Artifact = { ...probe([{ measuredBand: 'pass', box: BOX }]), subject: { ...CELL, colorScheme: 'dark' } } as Artifact;
+    const darkProbe: Artifact = {
+      ...probe([{ status: 'measured', verdict: 'pass', box: BOX }]),
+      subject: { ...CELL, colorScheme: 'dark' },
+    } as Artifact;
     const res = supersedeByMeasurement([f], [darkProbe]);
     expect(res.superseded).toBe(0);
+  });
+
+  it('an unmeasured subject never supersedes anything, even with a matching box', () => {
+    const f = finding('axe-core:color-contrast', 'needs-review', BOX);
+    const res = supersedeByMeasurement([f], [probe([{ status: 'unmeasured', box: BOX }])]);
+    expect(res.superseded).toBe(0);
+    expect(res.findings).toHaveLength(1);
   });
 });
