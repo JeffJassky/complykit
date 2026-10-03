@@ -223,8 +223,9 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
         if (out.status !== 'tested') {
           notTested.push({ scope: 'scenario', id: scenario, location: spec.id, reason: out.reason ?? out.status });
         }
-        // A not-applicable scenario (no banner) adds nothing a browse visit doesn't.
-        if (out.status !== 'not-applicable') timelines.push(tl);
+        // A not-applicable scenario (no banner) adds nothing a browse visit doesn't;
+        // a blocked visit recorded a challenge page, not the site — neither is evidence.
+        if (out.status !== 'not-applicable' && !out.reason?.startsWith('bot protection')) timelines.push(tl);
         for (const n of tl.snapshot.notTested) notTested.push({ scope: 'flow', id: scenario, location: spec.id, reason: n });
       });
       run.scenarios = scenarios.map((s) => results.get(s)).filter((x): x is ScenarioSummary => Boolean(x));

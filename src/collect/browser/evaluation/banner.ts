@@ -87,6 +87,24 @@ async function readConsentStateUnbounded(page: Page): Promise<Record<string, unk
         return s ? { purposes: s.purposes, vendors: undefined } : undefined;
       });
       safe('cookieconsent', () => w.CookieConsent?.getUserPreferences?.());
+      safe('oneTrustClosed', () => (w.OnetrustActiveGroups !== undefined ? /(?:^|; )OptanonAlertBoxClosed=/.test(document.cookie) : undefined));
+      safe('trustarc', () => {
+        const m = /(?:^|; )notice_preferences=([^;]*)/.exec(document.cookie);
+        return m ? { preferences: decodeURIComponent(m[1]) } : undefined;
+      });
+      safe('osano', () => w.Osano?.cm?.getConsent?.());
+      safe('wix', () => {
+        const p = w.consentPolicyManager?.getCurrentConsentPolicy?.();
+        return p ? { defaultPolicy: p.defaultPolicy, policy: p.policy } : undefined;
+      });
+      safe('tcfData', () => {
+        let r: unknown;
+        if (typeof w.__tcfapi === 'function')
+          w.__tcfapi('getTCData', 2, (d: { eventStatus?: string; purpose?: { consents?: Record<string, boolean> } }, ok: boolean) => {
+            if (ok && d) r = { eventStatus: d.eventStatus, purpose1: d.purpose?.consents?.['1'], purpose4: d.purpose?.consents?.['4'] };
+          });
+        return r;
+      });
       safe('cookieyes', () => {
         const c = w.getCkyConsent?.();
         return c ? { categories: c.categories, isUserActionCompleted: c.isUserActionCompleted } : undefined;
@@ -123,10 +141,22 @@ export function readoutConfirms(choice: 'accept' | 'reject', readout: Record<str
   const tool: boolean[] = [];
   const shop = (readout.shopify as { currentVisitorConsent?: { marketing?: string } } | undefined)?.currentVisitorConsent;
   if (shop && typeof shop.marketing === 'string') tool.push(choice === 'accept' ? shop.marketing === 'yes' : shop.marketing === 'no');
-  if (typeof readout.oneTrustActiveGroups === 'string' && readout.oneTrustActiveGroups) {
-    const marketing = readout.oneTrustActiveGroups.split(',').includes('C0004');
-    tool.push(choice === 'accept' ? marketing : !marketing);
+  if (typeof readout.oneTrustActiveGroups === 'string') {
+    // Group ids vary by site; C0002–C0005 are OneTrust's defaults, and a choice
+    // is only stored once OptanonAlertBoxClosed is set.
+    const groups = readout.oneTrustActiveGroups.split(',').filter(Boolean);
+    const optional = groups.filter((g) => g !== 'C0001');
+    const closed = readout.oneTrustClosed === true;
+    tool.push(closed && (choice === 'accept' ? optional.length > 0 : !optional.some((g) => /^C000[2-5]$/.test(g))));
   }
+  const ta = readout.trustarc as { preferences?: string } | undefined;
+  if (ta?.preferences) tool.push(choice === 'accept' ? !/^0\b|^0:/.test(ta.preferences) : /^0\b|^0:/.test(ta.preferences));
+  const os = readout.osano as Record<string, string> | undefined;
+  if (os && typeof os.MARKETING === 'string') tool.push(choice === 'accept' ? os.MARKETING === 'ACCEPT' : os.MARKETING === 'DENY');
+  const wx = readout.wix as { defaultPolicy?: boolean; policy?: { advertising?: boolean } } | undefined;
+  if (wx && wx.defaultPolicy === false && typeof wx.policy?.advertising === 'boolean') tool.push(choice === 'accept' ? wx.policy.advertising : !wx.policy.advertising);
+  const tcf = readout.tcfData as { eventStatus?: string; purpose1?: boolean } | undefined;
+  if (tcf && tcf.eventStatus === 'useractioncomplete' && typeof tcf.purpose1 === 'boolean') tool.push(choice === 'accept' ? tcf.purpose1 : !tcf.purpose1);
   const cb = readout.cookiebot as { marketing?: boolean; hasResponse?: boolean } | undefined;
   if (cb && cb.hasResponse) tool.push(choice === 'accept' ? cb.marketing === true : cb.marketing === false);
   const cky = readout.cookieyes as { categories?: Record<string, boolean>; isUserActionCompleted?: boolean } | undefined;
@@ -469,7 +499,8 @@ export async function rejectInOpenSettings(page: Page): Promise<boolean> {
 // --- Opt-out link walk (CCPA "Do Not Sell or Share" / "Your Privacy Choices") ----
 
 const OPT_OUT_LINK = /do not (sell|share)|your privacy choices|privacy choices|opt[- ]?out|limit the use of my|sale of (my )?personal/i;
-const CONFIRMATION = /opt[- ]?out (request )?(has been )?(honou?red|processed|received|confirmed|applied|recorded)|you (have|'ve) (been )?opted out|opted[- ]out of (the )?(sale|sharing)|(global privacy control|gpc)( signal)? (detected|honou?red|recogni[sz]ed|applied)|your (choices?|preferences?) (has|have) been (saved|updated)/i;
+// Field wordings seen: "Opt-Out Request Honored", "GPC request honored.", "The GPC signal is honored".
+const CONFIRMATION = /opt[- ]?out (request )?(has been |is )?(honou?red|processed|received|confirmed|applied|recorded)|you (have|'ve) (been )?opted out|opted[- ]out of (the )?(sale|sharing)|(global privacy control|gpc)[^.\n]{0,30}?(detected|honou?red|recogni[sz]ed|respected|applied)|your (choices?|preferences?) (has|have) been (saved|updated)/i;
 const OPT_OUT_ACTION = /opt[- ]?out|do not (sell|share)|turn off|disable (sale|sharing)|confirm my choices|save (my )?(choices|preferences|settings)|submit/i;
 const PERSONAL_FIELD = /email|e-mail|name|phone|address|zip|postal|account|order/i;
 
@@ -576,4 +607,43 @@ export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptO
     landedUrl,
     performed,
   };
+}
+
+// --- Bot protection ------------------------------------------------------------------
+
+const CHALLENGE = /just a moment|attention required|access denied|pardon our interruption|are you a robot|verify you are (a )?human|checking your browser|request unsuccessful|incapsula|perimeterx|press (and|&) hold|unusual traffic|blocked|captcha|hang tight|you are (now )?in (a |the )?(virtual )?(queue|line)|waiting room/i;
+
+/** A bot-protection page instead of the site (HTTP ≥ 403 on the document, or a
+ *  challenge page). Evidence from a challenge page is not evidence about the site. */
+export async function detectBlock(page: Page): Promise<string | undefined> {
+  try {
+    const r = (await page.evaluate(() => {
+      const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming & { responseStatus?: number };
+      const text = (document.body?.innerText ?? '').slice(0, 1500);
+      return { status: nav?.responseStatus ?? 0, title: document.title, text, links: document.querySelectorAll('a[href]').length };
+    })) as { status: number; title: string; text: string; links: number };
+    if (r.status === 403 || r.status === 429 || r.status === 503) return `HTTP ${r.status}${r.title ? ` — “${r.title.slice(0, 60)}”` : ''}`;
+    // A challenge page is short and link-poor; a real page that merely says
+    // "blocked" somewhere in its copy has navigation.
+    if ((CHALLENGE.test(r.title) || (CHALLENGE.test(r.text) && r.text.length < 800)) && r.links < 15) return `challenge page — “${(r.title || r.text).slice(0, 60)}”`;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A visible iframe served by a consent tool (TrustArc, Sourcepoint, …) — banners
+ *  findBanner can't see because they live in another document. */
+export async function consentFrameVisible(page: Page): Promise<boolean> {
+  return page
+    .evaluate(() =>
+      Array.from(document.querySelectorAll('iframe')).some((f) => {
+        const src = f.src || '';
+        if (!/trustarc|truste|consent|privacy-mgmt|sp_message|sourcepoint|cmp|cookie/i.test(src + ' ' + f.id + ' ' + f.title)) return false;
+        const r = f.getBoundingClientRect();
+        const cs = getComputedStyle(f);
+        return r.width > 50 && r.height > 50 && r.bottom > 0 && r.top < window.innerHeight && cs.visibility !== 'hidden' && cs.display !== 'none';
+      }),
+    )
+    .catch(() => false);
 }

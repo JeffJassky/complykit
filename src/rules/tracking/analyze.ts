@@ -249,6 +249,17 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
     const rawHits = findMarkers([e.url, e.postData], markers);
     const markerHits = [...cls.markers];
     for (const h of rawHits) if (!markerHits.some((m) => m.marker === h.marker && m.form === h.form)) markerHits.push(h);
+    // The scan's landing URL carries the fake click IDs, so every tracker that
+    // receives the page address "receives" them too. Count a click ID only when
+    // it travels as its own value, not inside a copy of the page URL.
+    if (markers) {
+      const own = (id: string): boolean => fields.some((f) => f.value.includes(id) && !f.value.includes(site.host));
+      for (let i = markerHits.length - 1; i >= 0; i--) {
+        const h = markerHits[i];
+        if (h.marker === 'click-id' && h.name && !own(markers.clickIds[h.name])) markerHits.splice(i, 1);
+      }
+      for (const k of [...cls.kinds]) if (k === 'click-id' && !markerHits.some((m) => m.marker === 'click-id')) cls.kinds.delete(k);
+    }
     for (const m of markerHits) {
       if (m.marker === 'click-id') cls.kinds.add('click-id');
       else if (m.form === 'sha256' || m.form === 'md5' || m.form === 'sha1') cls.kinds.add('hashed-email');

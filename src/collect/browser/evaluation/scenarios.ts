@@ -20,6 +20,8 @@ import {
   readoutConfirms,
   consentModeMismatch,
   findBanner,
+  detectBlock,
+  consentFrameVisible,
   heuristicChoice,
   bannerVisible,
   dismissBanner,
@@ -75,6 +77,8 @@ export interface ScenarioOutput {
   siteReported: Array<{ source: string; value: string }>;
 }
 
+class BlockedError extends Error {}
+
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 const GPC_SCENARIOS: ScenarioId[] = ['gpc', 'opt-out-all'];
@@ -85,6 +89,7 @@ class Visit {
   readonly siteReported = new Map<string, { source: string; value: string }>();
   bannerShown = false;
   cmp?: string;
+  blocked?: string;
   private readonly openedAt = Date.now();
 
   constructor(
@@ -129,10 +134,19 @@ class Visit {
   async land(url: string, opts: { dwellMs?: number; expectBanner?: boolean } = {}): Promise<void> {
     const since = Date.now();
     await navigate(this.page, this.cap, url, this.input.journey);
+    this.blocked = await detectBlock(this.page);
+    if (this.blocked) {
+      this.ev({ type: 'note', text: `bot protection: ${this.blocked}` });
+      throw new BlockedError(this.blocked);
+    }
     const dwellMs = opts.dwellMs ?? this.input.journey.dwellMs;
     const wait = Math.min(this.input.bannerWaitMs, Math.max(dwellMs, 1500));
     const popup = this.driver.available ? await this.driver.waitForPopup(wait, since) : null;
-    if (popup) {
+    // autoconsent can report a popup that no visitor sees (a consent tool loaded
+    // in a mode with nothing on screen) — require something visible.
+    const seen = popup ? (await bannerVisible(this.page)) || (await consentFrameVisible(this.page)) : false;
+    if (popup && !seen) this.ev({ type: 'note', text: `consent tool detected (${popup.cmp}) but no banner is visible` });
+    if (popup && seen) {
       this.bannerShown = true;
       this.cmp = popup.cmp;
       this.cap.push({ type: 'banner', t: popup.at - this.cap.startEpoch, state: opts.expectBanner === false ? 'reappeared' : 'shown', cmp: popup.cmp, via: 'autoconsent', pageIndex: this.cap.pageIndex() });
@@ -310,10 +324,12 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
       case 'browse':
       case 'gpc': {
         await v.land(landing);
+        // A "signal honored" notice can be transient — read it on arrival too.
+        const onArrival = scenario === 'gpc' ? await findConfirmation(v.page) : undefined;
         await browse(v.page, cap, journey, landing);
         if (scenario === 'gpc') {
           // §7025(c)(6): is the processed signal displayed? Check the page, then the opt-out link's target.
-          const onPage = await findConfirmation(v.page);
+          const onPage = onArrival ?? (await findConfirmation(v.page));
           const walk = onPage ? null : await walkOptOutLink(v.page, false);
           v.ev({ type: 'consent-readout', label: 'gpc-acknowledgement', data: { found: Boolean(onPage ?? walk?.confirmation), text: onPage ?? walk?.confirmation, via: onPage ? 'page' : walk?.found ? 'opt-out-link' : 'none' } });
           if (walk?.found) await navigate(v.page, cap, landing, journey);
@@ -492,7 +508,10 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
     }
   } catch (err) {
     status = 'not-tested';
-    reason = `scenario crashed: ${err instanceof Error ? err.message.slice(0, 160) : String(err)}`;
+    reason =
+      err instanceof BlockedError
+        ? `bot protection blocked the visit (${err.message}) — a recorded coverage gap, not evidence about the site`
+        : `scenario crashed: ${err instanceof Error ? err.message.slice(0, 160) : String(err)}`;
     trace(reason);
   }
 
