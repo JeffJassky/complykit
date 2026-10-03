@@ -16,6 +16,8 @@ describe('consent readout confirmation', () => {
     expect(readoutConfirms('reject', shopify('no'))).toBe(true);
     expect(readoutConfirms('accept', { googleConsent: { ad_storage: { update: 'granted' } } })).toBe(true);
     expect(readoutConfirms('accept', {})).toBeUndefined();
+    expect(readoutConfirms('reject', { cookieyes: { isUserActionCompleted: true, categories: { advertisement: false } } })).toBe(true);
+    expect(readoutConfirms('reject', { cookieyes: { isUserActionCompleted: false, categories: { advertisement: false } } })).toBe(false);
   });
 });
 

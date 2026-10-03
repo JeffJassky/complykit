@@ -87,6 +87,10 @@ async function readConsentStateUnbounded(page: Page): Promise<Record<string, unk
         return s ? { purposes: s.purposes, vendors: undefined } : undefined;
       });
       safe('cookieconsent', () => w.CookieConsent?.getUserPreferences?.());
+      safe('cookieyes', () => {
+        const c = w.getCkyConsent?.();
+        return c ? { categories: c.categories, isUserActionCompleted: c.isUserActionCompleted } : undefined;
+      });
       safe('klaro', () => w.klaro?.getManager?.()?.consents);
       return out;
     })) as Record<string, unknown>;
@@ -125,6 +129,10 @@ export function readoutConfirms(choice: 'accept' | 'reject', readout: Record<str
   }
   const cb = readout.cookiebot as { marketing?: boolean; hasResponse?: boolean } | undefined;
   if (cb && cb.hasResponse) tool.push(choice === 'accept' ? cb.marketing === true : cb.marketing === false);
+  const cky = readout.cookieyes as { categories?: Record<string, boolean>; isUserActionCompleted?: boolean } | undefined;
+  if (cky?.categories && typeof cky.categories.advertisement === 'boolean') {
+    tool.push(Boolean(cky.isUserActionCompleted) && (choice === 'accept' ? cky.categories.advertisement : !cky.categories.advertisement));
+  }
   if (tool.length) return tool.every(Boolean);
   const g = readout.googleConsent as Record<string, { update?: string }> | undefined;
   if (g?.ad_storage?.update) return choice === 'accept' ? g.ad_storage.update === 'granted' : g.ad_storage.update === 'denied';
