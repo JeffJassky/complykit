@@ -152,6 +152,19 @@ export class KbStore {
       for (const item of q) if (item.kind === 'drift' && item.entryId === id && item.status !== 'dismissed') item.status = 'resolved';
       this.saveQueue(q);
     }
+    // The same vendor is often proposed once per domain it uses (marketo.net and
+    // mktoresp.com): confirming a second proposal with an existing id MERGES —
+    // hosts, stores and sources accumulate — rather than dropping the first's hosts.
+    const prev = p ? this.entries().find((e) => e.id === entry.id) : undefined;
+    if (prev) {
+      entry = KnowledgeEntry.parse({
+        ...entry,
+        match: { ...entry.match, hosts: [...new Set([...prev.match.hosts, ...entry.match.hosts])], path: prev.match.path === entry.match.path ? entry.match.path : undefined },
+        sends: [...new Set([...prev.sends, ...entry.sends])],
+        stores: [...prev.stores, ...entry.stores.filter((s) => !prev.stores.some((x) => x.name === s.name && x.kind === s.kind))],
+        provenance: { ...entry.provenance, sources: [...new Set([...prev.provenance.sources, ...entry.provenance.sources])] },
+      });
+    }
     const entries = this.entries().filter((e) => e.id !== entry.id);
     entries.push(entry);
     this.saveEntries(entries);

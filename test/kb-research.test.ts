@@ -134,6 +134,16 @@ describe('the loop: scan → proposal → confirmation → recognized', () => {
     expect(() => store.confirm(p.id, '')).toThrow(/reviewer/);
   });
 
+  it('a second proposal for the same entry id merges hosts instead of replacing them', () => {
+    const a = store.propose('pixelco.io', GOOD_PROPOSAL, 'agent:x');
+    const b = store.propose('pixelco-cdn.net', { ...GOOD_PROPOSAL, entry: { ...GOOD_PROPOSAL.entry, match: { hosts: ['pixelco-cdn.net'] } }, sources: ['https://pixelco.io/docs/cdn'] }, 'agent:x');
+    store.confirm(a.id, 'jeff');
+    const e = store.confirm(b.id, 'jeff');
+    expect(e.match.hosts).toEqual(['pixelco.io', 'pixelco-cdn.net']);
+    expect(e.provenance.sources).toContain('https://pixelco.io/docs/tag');
+    expect(store.entries()).toHaveLength(1);
+  });
+
   it('applies corrections on confirm', () => {
     const p = store.propose('pixelco.io', GOOD_PROPOSAL, 'agent:x');
     const e = store.confirm(p.id, 'jeff', { categories: ['advertising', 'identity-resolution'] });
