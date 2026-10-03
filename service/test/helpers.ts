@@ -13,9 +13,12 @@ export function tempDir(): string {
 }
 
 export function testConfig(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
+  const dataDir = overrides.dataDir ?? tempDir();
   return {
     ...loadConfig({}),
-    dataDir: tempDir(),
+    dataDir,
+    kbDir: path.join(dataDir, 'kb'),
+    researchAvailable: false,
     cliPath: FAKE_CLI,
     clientDir: path.join(tempDir(), 'no-client'),
     pollMs: 25,

@@ -16,9 +16,11 @@ const POLL_AFTER_FAILURES = 2;
  * Jobs state: initial GET /api/jobs, then live updates from /api/stream (`job`
  * upserts, `removed` deletes). The stream reconnects with exponential backoff;
  * while it is down the hook polls /api/jobs every 5s. `onTransition` fires when
- * a job already known to the page changes status.
+ * a job already known to the page changes status. `onKb` fires on the stream's
+ * `kb` event (the knowledge base changed) and on every (re)connect, since
+ * changes may have been missed while disconnected.
  */
-export function useJobs(onTransition?: Transition) {
+export function useJobs(onTransition?: Transition, onKb?: () => void) {
   const [jobs, setJobs] = useState<Jobs>({});
   const [server, setServer] = useState<JobsResponse['server'] | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -28,6 +30,8 @@ export function useJobs(onTransition?: Transition) {
   const jobsRef = useRef<Jobs>({});
   const transitionRef = useRef(onTransition);
   transitionRef.current = onTransition;
+  const kbRef = useRef(onKb);
+  kbRef.current = onKb;
 
   const commit = useCallback((next: Jobs) => {
     const prev = jobsRef.current;
@@ -98,7 +102,9 @@ export function useJobs(onTransition?: Transition) {
         stopPolling();
         setConnection('live');
         void refresh(); // resync anything missed while disconnected
+        kbRef.current?.();
       };
+      es.addEventListener('kb', () => kbRef.current?.());
       es.addEventListener('job', (e) => {
         try {
           upsert(JSON.parse((e as MessageEvent<string>).data) as JobSummary);

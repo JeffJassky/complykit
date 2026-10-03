@@ -22,6 +22,9 @@ kill_timeout = 30
   IDLE_SHUTDOWN_MINUTES = "15"
   CONCURRENCY = "2"
   RETENTION_DAYS = "14"
+  # The knowledge base (research queue, proposals, confirmed entries) lives on
+  # the volume so it outlives deploys; consent checks and the KB view share it.
+  COMPLYKIT_KB_DIR = "/data/kb"
   # No password, by decision (2026-10-03): anyone with the URL can use it.
   # To lock it: fly secrets set SERVICE_PASSWORD=... and remove this line.
   ALLOW_OPEN = "1"

@@ -7,6 +7,12 @@
 //   slow.*        300ms between events (for cancel / concurrency tests)
 //   unverified.*  location unverified, no scenarios
 //   anything else 30ms between events (FAKE_CLI_DELAY overrides)
+// consent also writes env.json (the KB dir it was given) into its cwd.
+//
+// `kb <sub>` keeps a tiny JSON store at <--dir>/fake-kb.json, seeded on first
+// use, and appends every invocation's argv to <--dir>/calls.ndjson so tests
+// can see exactly what the service passed. Exit 2 + stderr = user error, like
+// the real CLI. `research` waits FAKE_KB_RESEARCH_MS (default 50).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,6 +39,7 @@ function emit(ev) {
 }
 
 async function consent() {
+  fs.writeFileSync(path.join(cwd, 'env.json'), JSON.stringify({ COMPLYKIT_KB_DIR: process.env.COMPLYKIT_KB_DIR ?? null }));
   emit({ type: 'start', runId, url: opts.url, locations: ['local'] });
   await sleep(delay);
   if (host.startsWith('fail.')) {
@@ -84,7 +91,129 @@ async function report() {
   process.stdout.write(`wrote ${opts.out}\n`);
 }
 
-const commands = { consent, scan, report };
+// --- kb -----------------------------------------------------------------------
+
+function seedKb() {
+  const now = new Date().toISOString();
+  const item = (domain, extra = {}) => ({
+    domain, kind: 'unrecognized', status: 'open', reason: 'behaves like a tracker (sets id cookie)', firstSeen: now, lastSeen: now,
+    sites: ['a.example', 'b.example'], runs: 2, requests: 40, hosts: [`px.${domain}`], behavesLikeTracker: true, trackerSignals: ['sends-stored-id'],
+    sends: ['browser-id'], stores: [{ name: '_x', kind: 'cookie', lifetimeDays: 365 }], sources: ['injected'], loadedBy: [], samples: [`https://px.${domain}/i?id=1`], phases: ['before-choice'],
+    ...extra,
+  });
+  return {
+    queue: [item('adnxs.com', { sites: ['a.example', 'b.example', 'c.example'] }), item('quiet.example'), item('vendor.io', { status: 'proposed', proposalId: 'p-vendor.io-1' })],
+    proposals: [proposal('vendor.io', 1, 'agent:fake-model')],
+    entries: [],
+  };
+}
+
+function proposal(domain, n, by) {
+  const now = new Date().toISOString();
+  return {
+    id: `p-${domain}-${n}`, domain, status: 'proposed', proposedBy: by, proposedAt: now,
+    entry: { id: `${domain.split('.')[0]}.pixel`, vendor: `${domain} Pixel`, owner: `${domain} Inc.`, match: { hosts: [domain] }, categories: ['advertising'], sends: ['browser-id'], stores: [], decoder: 'none' },
+    sources: [`https://${domain}/docs`], rationale: 'Its docs describe a conversion pixel.', confidence: 'medium', disagreements: ['sets _x before consent; docs say it waits'], firstParty: false,
+  };
+}
+
+async function kb() {
+  const [sub, ...args] = rest;
+  const pos = [];
+  const o = {};
+  for (let i = 0; i < args.length; i++) {
+    if (!args[i].startsWith('--')) pos.push(args[i]);
+    else if (args[i + 1] === undefined || args[i + 1].startsWith('--')) o[args[i].slice(2)] = true;
+    else o[args[i].slice(2)] = args[++i];
+  }
+  const dir = o.dir;
+  fs.mkdirSync(dir, { recursive: true });
+  fs.appendFileSync(path.join(dir, 'calls.ndjson'), JSON.stringify([sub, ...args]) + '\n');
+  const file = path.join(dir, 'fake-kb.json');
+  const db = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : seedKb();
+  const save = () => fs.writeFileSync(file, JSON.stringify(db, null, 2));
+  const out = (v) => process.stdout.write((typeof v === 'string' ? v : JSON.stringify(v, null, 2)) + '\n');
+  const fail = (msg, code = 2) => {
+    process.stderr.write(`${code === 2 ? '' : 'complykit: '}${msg}\n`);
+    process.exit(code);
+  };
+  const counts = () => db.queue.reduce((c, x) => ((c[x.status] = (c[x.status] ?? 0) + 1), c), {});
+  const by = o.by ?? '';
+
+  switch (sub) {
+    case 'queue':
+      return out({ dir, queue: o.all ? db.queue : db.queue.filter((x) => x.status === 'open'), counts: counts() });
+    case 'proposals':
+      return out(db.proposals.filter((p) => (o.status ?? 'proposed') === 'all' || p.status === (o.status ?? 'proposed')));
+    case 'entries':
+      return out(db.entries);
+    case 'packet': {
+      const item = db.queue.find((x) => x.domain === pos[0]);
+      if (!item) fail(`not in the queue: ${pos[0]}`);
+      return out(`# Research: ${item.domain}\n\nSeen on ${item.sites.length} site(s).\n`);
+    }
+    case 'research': {
+      await sleep(Number(process.env.FAKE_KB_RESEARCH_MS ?? 50));
+      const results = [];
+      for (const d of pos) {
+        const item = db.queue.find((x) => x.domain === d && x.status === 'open');
+        if (!item) {
+          results.push({ domain: d, error: 'not in the queue' });
+          continue;
+        }
+        const p = proposal(d, db.proposals.filter((x) => x.domain === d).length + 1, 'agent:fake-model');
+        db.proposals.push(p);
+        item.status = 'proposed';
+        item.proposalId = p.id;
+        results.push({ domain: d, proposal: p });
+      }
+      save();
+      return out({ model: 'fake-model', results });
+    }
+    case 'confirm': {
+      if (!by) fail('kb confirm needs --by (the person confirming) or COMPLYKIT_REVIEWER');
+      const p = db.proposals.find((x) => x.id === pos[0]);
+      if (!p) fail(`no proposal or entry with id ${pos[0]}`, 1);
+      p.status = 'confirmed';
+      p.reviewedBy = by;
+      p.reviewedAt = new Date().toISOString();
+      const entry = {
+        ...p.entry,
+        ...(o.category ? { categories: o.category.split(',') } : {}),
+        ...(o.vendor ? { vendor: o.vendor } : {}),
+        ...(o.owner ? { owner: o.owner } : {}),
+        ...(o['consent-api'] ? { consentApi: o['consent-api'] } : {}),
+        ...(o.note ? { notes: o.note } : {}),
+        provenance: { proposedBy: p.proposedBy, proposedAt: p.proposedAt, confirmedBy: by, confirmedAt: p.reviewedAt, sources: p.sources },
+      };
+      db.entries.push(entry);
+      for (const x of db.queue) if (x.domain === p.domain) x.status = 'resolved';
+      save();
+      return out(entry);
+    }
+    case 'reject': {
+      if (!pos[0] || !o.reason) fail('usage: kb reject <proposal-id> --by <who> --reason <why>');
+      if (!by) fail('kb reject needs --by or COMPLYKIT_REVIEWER');
+      const p = db.proposals.find((x) => x.id === pos[0]);
+      if (!p) fail(`no proposal ${pos[0]}`, 1);
+      Object.assign(p, { status: 'rejected', reviewedBy: by, reviewedAt: new Date().toISOString(), reviewNote: o.reason });
+      for (const x of db.queue) if (x.domain === p.domain) Object.assign(x, { status: 'open', proposalId: undefined });
+      save();
+      return out(p);
+    }
+    case 'dismiss': {
+      const hit = db.queue.filter((x) => x.domain === pos[0]);
+      if (!hit.length) fail(`${pos[0]} is not in the queue`, 1);
+      for (const x of hit) Object.assign(x, { status: 'dismissed', note: o.note ?? '' });
+      save();
+      return out(`dismissed ${pos[0]}.`);
+    }
+    default:
+      fail(`unknown kb subcommand: ${sub}`);
+  }
+}
+
+const commands = { consent, scan, report, kb };
 if (!commands[cmd]) {
   process.stderr.write(`fake-cli: unknown command ${cmd}\n`);
   process.exit(2);

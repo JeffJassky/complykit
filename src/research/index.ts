@@ -16,9 +16,11 @@ export { KbStore, defaultKbDir, type ConfirmEdits } from './store.js';
 
 /** Fold a finished scan into the store's queue. */
 export function ingestEvaluation(store: KbStore, ev: TrackingEvaluation, kb?: KnowledgeBase, at = new Date().toISOString()): MergeResult {
-  const res = mergeEvaluation(store.queue(), ev, at, kb);
-  store.saveQueue(res.queue);
-  return res;
+  return store.locked(() => {
+    const res = mergeEvaluation(store.queue(), ev, at, kb);
+    store.saveQueue(res.queue);
+    return res;
+  });
 }
 
 /** Same call shape as judge's Researcher — injected, so this module never imports the SDK. */

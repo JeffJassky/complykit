@@ -40,6 +40,40 @@ function writeJson(file: string, data: unknown): void {
   fs.renameSync(tmp, file);
 }
 
+// Cross-process lock: a scan ingesting into the queue, the service confirming,
+// and a research run proposing all read-modify-write the same files. A lock
+// directory (mkdir is atomic) serializes them; a lock older than STALE_MS is
+// from a crashed process and is broken.
+const STALE_MS = 30_000;
+const WAIT_MS = 15_000;
+const sleeper = new Int32Array(new SharedArrayBuffer(4));
+
+function withLock<T>(dir: string, fn: () => T): T {
+  fs.mkdirSync(dir, { recursive: true });
+  const lock = path.join(dir, '.lock');
+  const deadline = Date.now() + WAIT_MS;
+  for (;;) {
+    try {
+      fs.mkdirSync(lock);
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > STALE_MS) fs.rmSync(lock, { recursive: true, force: true });
+      } catch {
+        /* released meanwhile */
+      }
+      if (Date.now() > deadline) throw new Error(`knowledge-base store ${dir} is locked (another complykit process is writing); try again`);
+      Atomics.wait(sleeper, 0, 0, 25);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    fs.rmSync(lock, { recursive: true, force: true });
+  }
+}
+
 export interface ConfirmEdits {
   vendor?: string;
   owner?: string;
@@ -78,6 +112,11 @@ export class KbStore {
 
   // --- writes ---------------------------------------------------------------
 
+  /** Run a read-modify-write under the store lock (e.g. ingesting a scan). */
+  locked<T>(fn: () => T): T {
+    return withLock(this.dir, fn);
+  }
+
   saveQueue(q: QueueItem[]): void {
     writeJson(this.file('queue'), rankQueue(q));
   }
@@ -90,6 +129,9 @@ export class KbStore {
 
   /** Record a proposal for a queued domain. Validates sources and categories. */
   propose(domain: string, body: unknown, proposedBy: string, at = new Date().toISOString()): Proposal {
+    return withLock(this.dir, () => this._propose(domain, body, proposedBy, at));
+  }
+  private _propose(domain: string, body: unknown, proposedBy: string, at: string): Proposal {
     const parsed = ProposalBody.safeParse(body);
     if (!parsed.success) {
       const i = parsed.error.issues[0];
@@ -118,6 +160,9 @@ export class KbStore {
    * KB on the next scan. Agents never confirm (§4.2): `by` may not be an agent.
    */
   confirm(id: string, by: string, edits: ConfirmEdits = {}, at = new Date().toISOString()): KnowledgeEntry {
+    return withLock(this.dir, () => this._confirm(id, by, edits, at));
+  }
+  private _confirm(id: string, by: string, edits: ConfirmEdits, at: string): KnowledgeEntry {
     if (!by.trim()) throw new Error('confirm needs a reviewer name (--by)');
     if (/^agent[:/]/i.test(by)) throw new Error('agents never confirm their own proposals — a person confirms');
     const proposals = this.proposals();
@@ -172,6 +217,9 @@ export class KbStore {
   }
 
   reject(id: string, by: string, reason: string, at = new Date().toISOString()): Proposal {
+    return withLock(this.dir, () => this._reject(id, by, reason, at));
+  }
+  private _reject(id: string, by: string, reason: string, at: string): Proposal {
     if (!by.trim()) throw new Error('reject needs a reviewer name (--by)');
     if (!reason.trim()) throw new Error('reject needs a reason — the next researcher reads it');
     const proposals = this.proposals();
@@ -192,6 +240,9 @@ export class KbStore {
 
   /** Take a domain off the queue without an entry (noise, the site's own infra). */
   dismiss(domain: string, note: string): QueueItem[] {
+    return withLock(this.dir, () => this._dismiss(domain, note));
+  }
+  private _dismiss(domain: string, note: string): QueueItem[] {
     const q = this.queue();
     const hit = q.filter((x) => x.domain === domain);
     if (!hit.length) throw new Error(`${domain} is not in the queue`);
@@ -205,6 +256,9 @@ export class KbStore {
 
   /** Remove a confirmed local entry (it stops being recognized on the next scan). */
   removeEntry(id: string): boolean {
+    return withLock(this.dir, () => this._removeEntry(id));
+  }
+  private _removeEntry(id: string): boolean {
     const entries = this.entries();
     const next = entries.filter((e) => e.id !== id);
     if (next.length === entries.length) return false;

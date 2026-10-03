@@ -11,6 +11,11 @@ export interface ServiceConfig {
   /** HTTP Basic password (any username). Undefined = open (local dev only). */
   password?: string;
   dataDir: string;
+  /** complykit's knowledge-base store (queue, proposals, confirmed entries).
+   *  Consent checks read and feed it; the KB routes manage it. */
+  kbDir: string;
+  /** ANTHROPIC_API_KEY is set, so `kb research` can run on this server. */
+  researchAvailable: boolean;
   concurrency: number;
   retentionDays: number;
   /** 0 = never shut down on idle. */
@@ -67,6 +72,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     port: int(env, 'PORT', 8080, 1),
     password,
     dataDir,
+    kbDir: path.resolve(env.COMPLYKIT_KB_DIR || path.join(dataDir, 'kb')),
+    researchAvailable: Boolean(env.ANTHROPIC_API_KEY),
     concurrency: int(env, 'CONCURRENCY', 2, 1),
     retentionDays: int(env, 'RETENTION_DAYS', 14, 1),
     idleShutdownMinutes: int(env, 'IDLE_SHUTDOWN_MINUTES', 0),

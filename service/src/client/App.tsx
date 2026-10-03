@@ -3,9 +3,11 @@ import type { CreateBatchResponse, JobSummary } from '../shared/api';
 import { ActiveJobs } from './components/ActiveJobs';
 import { CompletedList } from './components/CompletedList';
 import { Header } from './components/Header';
+import { KnowledgeBase } from './components/KnowledgeBase';
 import { SubmitPanel } from './components/SubmitPanel';
 import { Toasts, type Toast } from './components/Toasts';
 import { isActive, plural, totalFindings } from './lib/format';
+import { useHashView } from './lib/useHashView';
 import { useJobs } from './lib/useJobs';
 
 export function App() {
@@ -38,7 +40,24 @@ export function App() {
     [pushToast],
   );
 
-  const { jobs, server, loaded, loadError, connection, upsert, remove } = useJobs(onTransition);
+  const view = useHashView();
+  // Bumped by the stream's `kb` event; the KB view refetches on each bump.
+  const [kbVersion, setKbVersion] = useState(0);
+  const onKb = useCallback(() => setKbVersion((v) => v + 1), []);
+
+  const { jobs, server, loaded, loadError, connection, upsert, remove } = useJobs(onTransition, onKb);
+
+  // Switching views moves focus to the new content (skip on first render).
+  const mainRef = useRef<HTMLElement>(null);
+  const firstView = useRef(true);
+  useEffect(() => {
+    if (firstView.current) {
+      firstView.current = false;
+      return;
+    }
+    mainRef.current?.focus({ preventScroll: true });
+    window.scrollTo({ top: 0 });
+  }, [view]);
 
   const list = useMemo(() => Object.values(jobs), [jobs]);
   const active = useMemo(() => list.filter(isActive), [list]);
@@ -57,30 +76,36 @@ export function App() {
       <a className="skip-link" href="#main">
         Skip to content
       </a>
-      <Header server={server} running={running} queued={queued} connection={connection} />
-      <main id="main" className="layout">
-        <div className="col-side">
-          <SubmitPanel onCreated={onCreated} />
-        </div>
-        <div className="col-main">
-          {loadError ? (
-            <div className="banner-error" role="alert">
-              Couldn’t reach the server: {loadError}. Retrying…
-            </div>
-          ) : null}
-          {!loaded ? (
-            <div className="skeleton" aria-busy="true" aria-label="Loading jobs">
-              <div className="skeleton-card" />
-              <div className="skeleton-card" />
-            </div>
-          ) : (
-            <>
-              <ActiveJobs jobs={active} onUpdated={upsert} />
-              <CompletedList jobs={completed} onDeleted={remove} />
-            </>
-          )}
-        </div>
-      </main>
+      <Header view={view} server={server} running={running} queued={queued} connection={connection} />
+      {view === 'kb' ? (
+        <main id="main" ref={mainRef} tabIndex={-1} className="kb-layout" aria-label="Knowledge base">
+          <KnowledgeBase version={kbVersion} pushToast={pushToast} />
+        </main>
+      ) : (
+        <main id="main" ref={mainRef} tabIndex={-1} className="layout">
+          <div className="col-side">
+            <SubmitPanel onCreated={onCreated} />
+          </div>
+          <div className="col-main">
+            {loadError ? (
+              <div className="banner-error" role="alert">
+                Couldn’t reach the server: {loadError}. Retrying…
+              </div>
+            ) : null}
+            {!loaded ? (
+              <div className="skeleton" aria-busy="true" aria-label="Loading jobs">
+                <div className="skeleton-card" />
+                <div className="skeleton-card" />
+              </div>
+            ) : (
+              <>
+                <ActiveJobs jobs={active} onUpdated={upsert} />
+                <CompletedList jobs={completed} onDeleted={remove} />
+              </>
+            )}
+          </div>
+        </main>
+      )}
       <Toasts toasts={toasts} onDismiss={dismissToast} />
     </div>
   );

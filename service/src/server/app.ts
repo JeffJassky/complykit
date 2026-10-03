@@ -4,9 +4,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import express, { type ErrorRequestHandler, type Express, type RequestHandler } from 'express';
-import { parseUrlList, type CheckKind, type CreateBatchRequest, type CreateBatchResponse, type JobDetail, type JobsResponse } from '../shared/api.js';
+import {
+  parseUrlList,
+  type CheckKind,
+  type CreateBatchRequest,
+  type CreateBatchResponse,
+  type JobDetail,
+  type JobsResponse,
+  type KbConfirmRequest,
+  type KbDismissRequest,
+  type KbRejectRequest,
+  type KbResearchRequest,
+} from '../shared/api.js';
 import { basicAuth } from './auth.js';
 import type { ServiceConfig } from './config.js';
+import { KbError, KnowledgeBase, RESEARCH_MAX, categoryList, isDomain, isProposalId, optionalText, requiredText, reviewer } from './kb.js';
 import { recoverJobs, sweepRetention } from './lifecycle.js';
 import { Runner } from './runner.js';
 import { isJobId, JobStore, newId, toSummary } from './store.js';
@@ -19,6 +31,7 @@ export interface Service {
   store: JobStore;
   runner: Runner;
   hub: StreamHub;
+  kb: KnowledgeBase;
   /** Epoch ms of the last request that counts as activity (see lifecycle.idleReason). */
   lastActivity(): number;
   /** Kill running checks (marked "server stopped"), close streams, flush to disk. */
@@ -31,8 +44,13 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
   const store = new JobStore(config.dataDir);
   let lastActivity = Date.now();
   const touch = () => (lastActivity = Date.now());
-  const runner = new Runner(store, config, touch); // a job finishing counts as activity
   const hub = new StreamHub(store);
+  // A job finishing counts as activity, and a consent check feeds the KB queue.
+  const runner = new Runner(store, config, () => {
+    touch();
+    hub.notifyKb();
+  });
+  const kb = new KnowledgeBase(config, () => hub.notifyKb());
 
   // Restart recovery, then retention, then resume the queue.
   const loaded = await store.load();
@@ -141,6 +159,104 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
 
   app.get('/api/stream', hub.handle);
 
+  // --- Knowledge base -------------------------------------------------------------
+  // Every handler goes through kbRoute: a KbError answers with its own status
+  // and message (the CLI's stderr for a 400 is written for people).
+
+  const kbRoute =
+    (fn: RequestHandler): RequestHandler =>
+    async (req, res, next) => {
+      try {
+        await fn(req, res, next);
+      } catch (err) {
+        if (!(err instanceof KbError)) throw err;
+        if (err.status >= 500) console.error(`[kb] ${req.method} ${req.originalUrl}: ${err.message}`);
+        res.status(err.status).json({ error: err.message });
+      }
+    };
+
+  app.get(
+    '/api/kb',
+    kbRoute(async (_req, res) => {
+      res.json(await kb.snapshot());
+    }),
+  );
+
+  app.get(
+    '/api/kb/packet/:domain',
+    kbRoute(async (req, res) => {
+      const domain = String(req.params.domain ?? '');
+      if (!isDomain(domain)) throw new KbError(400, 'not a domain');
+      const packet = await kb.packet(domain); // before res.type(): an error answers JSON
+      res.type('text/markdown; charset=utf-8').send(packet);
+    }),
+  );
+
+  app.post(
+    '/api/kb/research',
+    kbRoute(async (req, res) => {
+      const body = (req.body ?? {}) as Partial<KbResearchRequest>;
+      let domains: string[] | undefined;
+      if (body.domains !== undefined) {
+        if (!Array.isArray(body.domains) || !body.domains.length || body.domains.length > RESEARCH_MAX || !body.domains.every(isDomain)) {
+          throw new KbError(400, `\`domains\` must be 1–${RESEARCH_MAX} domains`);
+        }
+        domains = body.domains;
+      }
+      let top: number | undefined;
+      if (body.top !== undefined) {
+        if (!Number.isInteger(body.top) || body.top < 1 || body.top > RESEARCH_MAX) throw new KbError(400, `\`top\` must be an integer 1–${RESEARCH_MAX}`);
+        top = body.top;
+      }
+      res.status(202).json(await kb.startResearch({ domains, top }));
+    }),
+  );
+
+  /** :id must look like a proposal id before it reaches the CLI. */
+  const proposalId = (req: Parameters<RequestHandler>[0]): string => {
+    const id = String(req.params.id ?? '');
+    if (!isProposalId(id)) throw new KbError(404, 'no such proposal');
+    return id;
+  };
+
+  app.post(
+    '/api/kb/proposals/:id/confirm',
+    kbRoute(async (req, res) => {
+      const id = proposalId(req);
+      const body = (req.body ?? {}) as Partial<KbConfirmRequest>;
+      const entry = await kb.confirm(id, {
+        by: reviewer(body.by),
+        categories: categoryList(body.categories),
+        vendor: optionalText(body.vendor, 'vendor', 200),
+        owner: optionalText(body.owner, 'owner', 200),
+        consentApi: optionalText(body.consentApi, 'consentApi', 500),
+        note: optionalText(body.note, 'note', 2000),
+      });
+      res.json(entry);
+    }),
+  );
+
+  app.post(
+    '/api/kb/proposals/:id/reject',
+    kbRoute(async (req, res) => {
+      const id = proposalId(req);
+      const body = (req.body ?? {}) as Partial<KbRejectRequest>;
+      const by = reviewer(body.by);
+      const reason = requiredText(body.reason, 'reason', 2000, 'the next researcher reads it');
+      res.json(await kb.reject(id, by, reason));
+    }),
+  );
+
+  app.post(
+    '/api/kb/dismiss',
+    kbRoute(async (req, res) => {
+      const body = (req.body ?? {}) as Partial<KbDismissRequest>;
+      if (!isDomain(body.domain)) throw new KbError(400, '`domain` is required');
+      await kb.dismiss(body.domain, optionalText(body.note, 'note', 2000));
+      res.status(204).end();
+    }),
+  );
+
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'not found' });
   });
@@ -196,10 +312,11 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
     store,
     runner,
     hub,
+    kb,
     lastActivity: () => lastActivity,
     async stop(killGraceMs?: number) {
       clearInterval(sweep);
-      await runner.shutdown(killGraceMs);
+      await Promise.all([runner.shutdown(killGraceMs), kb.stop(killGraceMs)]);
       hub.closeAll();
       await store.flush();
     },

@@ -1,6 +1,7 @@
 // GET /api/stream — server-sent events. Every job change is pushed as a
-// `job` event (throttled per job), deletions as `removed`, plus a `ping`
-// every 20s so proxies keep the connection open.
+// `job` event (throttled per job), deletions as `removed`, knowledge-base
+// changes as a bare `kb` (the client refetches), plus a `ping` every 20s so
+// proxies keep the connection open.
 
 import type { Request, Response } from 'express';
 import type { StreamEvent } from '../shared/api.js';
@@ -8,12 +9,14 @@ import { toSummary, type JobStore } from './store.js';
 
 const THROTTLE_MS = 250; // ≤ 4 events/s per job
 const PING_MS = 20_000;
+const KB_COALESCE_MS = 150; // a confirm + a job finishing together → one refetch
 
 export class StreamHub {
   private readonly clients = new Set<Response>();
   private readonly lastSent = new Map<string, number>();
   private readonly pending = new Map<string, NodeJS.Timeout>();
   private readonly ping: NodeJS.Timeout;
+  private kbTimer?: NodeJS.Timeout;
 
   constructor(private readonly store: JobStore) {
     store.on('change', (job) => this.schedule(job.id));
@@ -29,6 +32,16 @@ export class StreamHub {
 
   get size(): number {
     return this.clients.size;
+  }
+
+  /** The knowledge base changed. Carries no data: GET /api/kb is the truth. */
+  notifyKb(): void {
+    if (this.kbTimer) return;
+    this.kbTimer = setTimeout(() => {
+      this.kbTimer = undefined;
+      this.broadcast({ event: 'kb', data: {} });
+    }, KB_COALESCE_MS);
+    this.kbTimer.unref();
   }
 
   handle = (req: Request, res: Response): void => {
@@ -49,6 +62,7 @@ export class StreamHub {
   /** End every open stream (shutdown) so server.close() can complete. */
   closeAll(): void {
     clearInterval(this.ping);
+    clearTimeout(this.kbTimer);
     for (const t of this.pending.values()) clearTimeout(t);
     this.pending.clear();
     for (const res of this.clients) res.end();

@@ -232,7 +232,10 @@ export class Runner {
         return;
       }
       // detached → its own process group, so a kill reaches Chromium too.
-      const child = spawn(process.execPath, [this.config.cliPath, ...args], { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+      // COMPLYKIT_KB_DIR: consent recognizes the confirmed entries and feeds
+      // its unrecognized parties into the same queue the KB routes manage.
+      const env = { ...process.env, COMPLYKIT_KB_DIR: this.config.kbDir };
+      const child = spawn(process.execPath, [this.config.cliPath, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
       a.child = child;
       const lines = (stream: NodeJS.ReadableStream, tag: string, keep?: string[]) => {
         let rest = '';

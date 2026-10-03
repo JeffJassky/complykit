@@ -176,6 +176,16 @@ describe('the loop: scan → proposal → confirmation → recognized', () => {
   });
 });
 
+describe('store lock', () => {
+  it('waits for a held lock, breaks a stale one', () => {
+    fs.mkdirSync(path.join(dir, '.lock'));
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(path.join(dir, '.lock'), old, old);
+    expect(store.propose('pixelco.io', GOOD_PROPOSAL, 'agent:x').id).toBe('p-pixelco.io-1');
+    expect(fs.existsSync(path.join(dir, '.lock'))).toBe(false);
+  });
+});
+
 describe('researching', () => {
   it('retries once with the validation error in the brief, then records the proposal as the agent', async () => {
     store.saveQueue(mergeEvaluation([], evaluationFor('a.example', [{ domain: 'pixelco.io' }]), 't1').queue);
