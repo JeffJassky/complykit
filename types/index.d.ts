@@ -676,6 +676,7 @@ export interface PartyInventoryItem {
   sources: PartySource[];
   loadedBy: string[];
   consentApi?: string;
+  samples: string[];
   seenIn: Array<{ location: string; scenario: ScenarioId; requests: number; firstMs: number; phases: string[] }>;
 }
 export interface ScenarioSummary {
@@ -710,7 +711,7 @@ export interface TrackingEvaluation {
   locations: LocationSummary[];
   inventory: PartyInventoryItem[];
   notTested: NotTestedItem[];
-  researchQueue: Array<{ partyId: string; domain: string; reason: string }>;
+  researchQueue: Array<{ partyId: string; domain: string; reason: string; kind: 'unrecognized' | 'drift' }>;
   redacted: boolean;
 }
 export const TRACKING_SCHEMA_VERSION: number;

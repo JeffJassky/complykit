@@ -18,7 +18,7 @@ export * from './rubrics.js';
 export * from './adjudicate.js';
 export * from './tiler.js';
 export * from './sweep.js';
-export { createAnthropicAdjudicator } from './client.js';
+export { createAnthropicAdjudicator, createAnthropicResearcher, type Researcher, type ResearchRequest } from './client.js';
 
 /**
  * Build the mode-1 queue from a run's needs-review findings. A finding is

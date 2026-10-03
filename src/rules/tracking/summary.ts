@@ -9,7 +9,7 @@ import type {
   ScenarioSummary,
   PartySource,
 } from '../../record/index.js';
-import { DEFAULT_KB, entryStatus, type KnowledgeBase } from '../../registry/index.js';
+import { DEFAULT_KB, entryStatus, type KnowledgeBase, type KnowledgeEntry } from '../../registry/index.js';
 import { analyzeTimeline } from './analyze.js';
 
 // The run-level evaluation record (plans/consent-design.md §3): locations and
@@ -40,10 +40,45 @@ export const ALWAYS_NOT_TESTED: NotTestedItem[] = [
   { scope: 'page', id: 'unvisited', reason: 'pages and flows the journey did not visit (logged-in areas, checkout beyond the cart, forms that were not submitted)' },
 ];
 
+const MAX_SAMPLES = 5;
+
+/** 'px.example.com/collect?ev&uid' — host + path, query keys only (values are data). */
+function sampleOf(url: string): string | undefined {
+  try {
+    const u = new URL(url);
+    const keys = [...new Set([...u.searchParams.keys()])].slice(0, 12);
+    const path = u.pathname.length > 80 ? `${u.pathname.slice(0, 80)}…` : u.pathname;
+    return `${u.hostname}${path}${keys.length ? `?${keys.join('&')}` : ''}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Sensitive field kinds whose undeclared appearance is worth a re-look. */
+const DRIFT_KINDS = new Set(['hashed-email', 'form-input', 'search-term']);
+
+/** Where observed behavior disagrees with the entry (§4.2: observed outranks
+ *  documented, and the disagreement is recorded). Only checked where the entry
+ *  makes a claim — an entry that lists no stores says nothing about storage. */
+export function driftFrom(entry: KnowledgeEntry, p: Pick<PartyInventoryItem, 'stores' | 'sends'>): string[] {
+  const out: string[] = [];
+  if (entry.stores.length) {
+    const declared = entry.stores.map((s) => new RegExp(s.name));
+    const extra = p.stores.filter((s) => !declared.some((re) => re.test(s.name))).map((s) => s.name);
+    if (extra.length) out.push(`stores ${extra.slice(0, 5).join(', ')}${extra.length > 5 ? ` (+${extra.length - 5})` : ''} not in the entry`);
+  }
+  if (entry.sends.length) {
+    const extra = p.sends.filter((k) => DRIFT_KINDS.has(k) && !entry.sends.some((s) => s.replace(/\?$/, '') === k));
+    if (extra.length) out.push(`sends ${extra.join(', ')} not in the entry`);
+  }
+  return out;
+}
+
 export function buildTrackingEvaluation(input: EvaluationInput): TrackingEvaluation {
   const kb = input.kb ?? DEFAULT_KB;
   const inv = new Map<string, PartyInventoryItem>();
   const kindsOf = new Map<string, Set<string>>();
+  const entryOf = new Map<string, KnowledgeEntry>();
   for (const tl of input.timelines) {
     const a = analyzeTimeline(tl, kb);
     for (const f of a.parties.values()) {
@@ -65,6 +100,7 @@ export function buildTrackingEvaluation(input: EvaluationInput): TrackingEvaluat
           sources: [],
           loadedBy: [],
           consentApi: f.entry?.consentApi,
+          samples: [],
           seenIn: [],
         };
         inv.set(f.partyId, item);
@@ -80,6 +116,13 @@ export function buildTrackingEvaluation(input: EvaluationInput): TrackingEvaluat
       }
       if (!item.sources.includes(f.source)) item.sources.push(f.source as PartySource);
       for (const u of f.loadedBy) if (!item.loadedBy.includes(u) && item.loadedBy.length < 6) item.loadedBy.push(u);
+      // Data-bearing requests first: they say most about what the party is.
+      for (const r of [...f.requests].sort((x, y) => Number(y.dataBearing) - Number(x.dataBearing))) {
+        if (item.samples.length >= MAX_SAMPLES) break;
+        const s = sampleOf(r.url);
+        if (s && !item.samples.includes(s)) item.samples.push(s);
+      }
+      if (f.entry) entryOf.set(f.partyId, f.entry);
       const sorted = [...f.requests].sort((x, y) => x.t - y.t);
       item.seenIn.push({
         location: a.locationId,
@@ -97,13 +140,21 @@ export function buildTrackingEvaluation(input: EvaluationInput): TrackingEvaluat
     return rank(a) - rank(b) || a.label.localeCompare(b.label);
   });
 
-  const researchQueue = inventory
-    .filter((p) => !p.recognized)
-    .map((p) => ({
-      partyId: p.partyId,
-      domain: p.domain,
-      reason: p.behavesLikeTracker ? `behaves like a tracker (${p.trackerSignals.join(', ')})` : p.stores.length ? 'stores data on the device' : 'seen; purpose unknown',
-    }));
+  const researchQueue: TrackingEvaluation['researchQueue'] = [];
+  for (const p of inventory) {
+    if (!p.recognized) {
+      researchQueue.push({
+        partyId: p.partyId,
+        domain: p.domain,
+        kind: 'unrecognized',
+        reason: p.behavesLikeTracker ? `behaves like a tracker (${p.trackerSignals.join(', ')})` : p.stores.length ? 'stores data on the device' : 'seen; purpose unknown',
+      });
+      continue;
+    }
+    const entry = entryOf.get(p.partyId);
+    const drift = entry ? driftFrom(entry, p) : [];
+    if (drift.length) researchQueue.push({ partyId: p.partyId, domain: p.domain, kind: 'drift', reason: `behaves differently than its entry: ${drift.join('; ')}` });
+  }
 
   const locations: LocationSummary[] = input.locations.map((l) => {
     const { proxy, ...spec } = l.spec;

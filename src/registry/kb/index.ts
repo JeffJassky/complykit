@@ -28,11 +28,13 @@ export interface SiteOverride {
 }
 
 /** Build a KB: the seed set, plus extra entries (placed FIRST — a confirmed
- *  local entry beats a seed proposal), plus per-site category overrides. */
+ *  local entry beats a seed proposal, and REPLACES a seed with the same id),
+ *  plus per-site category overrides. */
 export function buildKnowledgeBase(opts: { extra?: KnowledgeEntryInput[]; overrides?: SiteOverride[] } = {}): KnowledgeBase {
   const extra = (opts.extra ?? []).map((e) => KnowledgeEntry.parse(e));
   const byId = new Map<string, SiteOverride>((opts.overrides ?? []).map((o) => [o.id, o]));
-  const entries = [...extra, ...KB_ENTRIES].map((e) => {
+  const extraIds = new Set(extra.map((e) => e.id));
+  const entries = [...extra, ...KB_ENTRIES.filter((e) => !extraIds.has(e.id))].map((e) => {
     const o = byId.get(e.id);
     if (!o) return e;
     return { ...e, categories: o.categories ?? e.categories, notes: [e.notes, o.note ? `site override: ${o.note}` : undefined].filter(Boolean).join(' ') || undefined };

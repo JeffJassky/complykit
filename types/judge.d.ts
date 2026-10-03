@@ -72,6 +72,20 @@ export interface AnthropicAdjudicatorOptions {
 }
 export function createAnthropicAdjudicator(opts?: AnthropicAdjudicatorOptions): Promise<{ adjudicator: Adjudicator; model: string }>;
 
+// --- knowledge-base research (consent-design §4.2) -------------------------
+export interface ResearchRequest {
+  system: string;
+  brief: string;
+  schema: Record<string, unknown>;
+}
+export type Researcher = (req: ResearchRequest) => Promise<{ body: unknown; model: string; searches: number }>;
+export interface AnthropicResearcherOptions {
+  apiKey?: string;
+  model?: string;
+  maxSearches?: number;
+}
+export function createAnthropicResearcher(opts?: AnthropicResearcherOptions): Promise<{ researcher: Researcher; model: string }>;
+
 // --- mode-2 tiled visual sweep ---------------------------------------------
 export interface Tile {
   index: number;

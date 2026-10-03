@@ -6,6 +6,7 @@ import { buildKnowledgeBase, type KnowledgeEntryInput, type PartyCategory } from
 import { tracking } from '../../rules/index.js';
 import { buildConsentReportModel, renderConsentHtml, renderConsentMarkdown } from '../../report/index.js';
 import { runConsentScan } from '../../pipeline.js';
+import { KbStore, defaultKbDir, ingestEvaluation } from '../../research/index.js';
 import { assembleAndWrite } from '../write-run.js';
 import type { LoadedConfig } from '../config-load.js';
 import { packageVersion } from '../pkg.js';
@@ -33,6 +34,10 @@ records everything the browser does, and applies that location's rules.
   --concurrency N          scenarios in parallel per location (default 1)
   --out <file>             HTML report path (default: <run>/consent-report.html)
   --quiet                  no per-scenario narration
+  --kb-dir <path>          knowledge-base store (default COMPLYKIT_KB_DIR or
+                           ~/.complykit/kb): its confirmed entries are used, and
+                           unrecognized parties are queued there for research
+  --no-kb-queue            don't add this run to the research queue
   --events <file>          append progress as JSON lines (start, location,
                            scenario-start, scenario-done, done, error) — for UIs
 
@@ -58,6 +63,8 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
       out: { type: 'string' },
       quiet: { type: 'boolean' },
       events: { type: 'string' },
+      'kb-dir': { type: 'string' },
+      'no-kb-queue': { type: 'boolean' },
       help: { type: 'boolean' },
     },
     allowPositionals: false,
@@ -129,7 +136,17 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
     scenarios = cc.scenarios;
   }
 
-  // Knowledge base: seed + local confirmed entries + per-site overrides.
+  // Knowledge base: seed + the store's confirmed entries + the config's entries
+  // file + per-site overrides. The config file wins over the store (it is more
+  // specific), the store over the seed.
+  const kbStore = new KbStore(values['kb-dir'] ? path.resolve(cwd, values['kb-dir']) : defaultKbDir());
+  let stored: KnowledgeEntryInput[] = [];
+  try {
+    stored = kbStore.confirmedEntries();
+  } catch (err) {
+    process.stderr.write(`knowledge-base store ${kbStore.dir}: ${err instanceof Error ? err.message : String(err)}\n`);
+    return 2;
+  }
   let extra: KnowledgeEntryInput[] = [];
   if (cc.knowledgeBase?.entries) {
     const file = path.resolve(cwd, cc.knowledgeBase.entries);
@@ -140,8 +157,9 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
       return 2;
     }
   }
+  const extraIds = new Set(extra.map((e) => e.id));
   const knowledgeBase = buildKnowledgeBase({
-    extra,
+    extra: [...extra, ...stored.filter((e) => !extraIds.has(e.id))],
     overrides: cc.knowledgeBase?.overrides?.map((o) => ({ ...o, categories: o.categories as PartyCategory[] | undefined })),
   });
 
@@ -202,6 +220,16 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
   fs.writeFileSync(out, renderConsentHtml(model, { runDir: dir }));
   fs.writeFileSync(out.replace(/\.html?$/i, '') + '.json', JSON.stringify(model, null, 2));
 
+  let queued: { added: number; resolved: number } | undefined;
+  if (!values['no-kb-queue']) {
+    try {
+      const r = ingestEvaluation(kbStore, res.evaluation, knowledgeBase);
+      queued = { added: r.added.length, resolved: r.resolved.length };
+    } catch (err) {
+      process.stderr.write(`could not update the research queue in ${kbStore.dir}: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  }
+
   event({
     type: 'done',
     runId: String(run.id),
@@ -214,5 +242,8 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
   });
   process.stdout.write('\n' + renderConsentMarkdown(model, { maxFindings: 15 }));
   process.stdout.write(`\nrun ${String(run.id)}: ${written} finding(s) · report ${out}\n`);
+  if (queued && (queued.added || queued.resolved)) {
+    process.stdout.write(`research queue: ${queued.added} new part${queued.added === 1 ? 'y' : 'ies'}${queued.resolved ? `, ${queued.resolved} now recognized` : ''} — complykit kb queue\n`);
+  }
   return 0;
 }

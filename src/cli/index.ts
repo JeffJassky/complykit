@@ -15,6 +15,7 @@ import { cmdRegistryVerify } from './commands/registry-verify.js';
 import { cmdFixturesRecord } from './commands/fixtures-record.js';
 import { cmdRuns } from './commands/runs.js';
 import { cmdConsent } from './commands/consent.js';
+import { cmdKb } from './commands/kb.js';
 
 // cli/ is command wiring ONLY — parse args, sequence stages, print progress. No
 // logic worth testing lives here; every command delegates to a tested module.
@@ -85,6 +86,8 @@ async function main(argv: string[]): Promise<number> {
       return cmdScan(joinArgs(sub, rest), loadConfigFor);
     case 'consent':
       return cmdConsent(joinArgs(sub, rest), loadConfigFor);
+    case 'kb':
+      return cmdKb(joinArgs(sub, rest));
     case 'static':
       return cmdStatic(joinArgs(sub, rest));
     case 'report':

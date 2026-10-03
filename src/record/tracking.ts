@@ -352,6 +352,9 @@ export const PartyInventoryItem = z.object({
   sources: z.array(PartySource),
   loadedBy: z.array(z.string()), // injector script URLs (nearest first), deduped
   consentApi: z.string().optional(),
+  // A few request URLs (host + path, query KEYS only — values are data) so an
+  // unrecognized party can be researched from the record alone.
+  samples: z.array(z.string()).default([]),
   seenIn: z.array(
     z.object({
       location: z.string(),
@@ -406,7 +409,11 @@ export const TrackingEvaluation = z.object({
   locations: z.array(LocationSummary),
   inventory: z.array(PartyInventoryItem),
   notTested: z.array(NotTestedItem),
-  researchQueue: z.array(z.object({ partyId: z.string(), domain: z.string(), reason: z.string() })),
+  // Parties to research (plans/consent-design.md §4.2): unrecognized ones, and
+  // recognized ones that behaved differently than their entry says ('drift').
+  researchQueue: z.array(
+    z.object({ partyId: z.string(), domain: z.string(), reason: z.string(), kind: z.enum(['unrecognized', 'drift']).default('unrecognized') }),
+  ),
   redacted: z.boolean(),
 });
 export type TrackingEvaluation = z.infer<typeof TrackingEvaluation>;
