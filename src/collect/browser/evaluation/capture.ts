@@ -138,6 +138,11 @@ export async function startCapture(context: BrowserContext, opts: CaptureOptions
   const shimRecords: ShimRecord[] = [];
   const cdpByUrl = new Map<string, CdpInitiator[]>();
   const workerUrls = new Set<string>();
+  // URLs the PAGE-level CDP session saw. A request Playwright attributes to the
+  // page that the page session never saw came from a dedicated worker whose
+  // own session attached too late to see it (a race under load).
+  const pageSessionUrls = new Set<string>();
+  let cdpAvailable = false;
   const cdpSessions: CDPSession[] = [];
   const notes: string[] = [];
   const pageList: Array<{ url: string; title?: string }> = [];
@@ -240,14 +245,21 @@ export async function startCapture(context: BrowserContext, opts: CaptureOptions
       list.push(init);
       cdpByUrl.set(url, list);
     };
+    cdpAvailable = true;
     cdp.on('Network.requestWillBeSent', (e: { request: { url: string }; initiator?: { type?: string; url?: string; stack?: unknown } }) => {
+      pageSessionUrls.add(e.request.url);
       record(e.request.url, { type: e.initiator?.type ?? 'other', urls: cdpChain(e.initiator) });
     });
-    cdp.on('Target.attachedToTarget', (e: { sessionId: string; targetInfo: { type: string; url: string } }) => {
+    // Workers are attached paused (waitForDebuggerOnStart, workers only via
+    // the filter) so Network.enable lands before their first request — without
+    // it a worker's opening fetch raced the attach and was labelled "page".
+    cdp.on('Target.attachedToTarget', (e: { sessionId: string; targetInfo: { type: string; url: string }; waitingForDebugger?: boolean }) => {
+      const send = (id: number, method: string): Promise<unknown> =>
+        cdp.send('Target.sendMessageToTarget', { sessionId: e.sessionId, message: JSON.stringify({ id, method }) }).catch(() => undefined);
       if (e.targetInfo.type === 'worker' || e.targetInfo.type === 'shared_worker' || e.targetInfo.type === 'service_worker') {
-        cdp
-          .send('Target.sendMessageToTarget', { sessionId: e.sessionId, message: JSON.stringify({ id: 1, method: 'Network.enable' }) })
-          .catch(() => {});
+        void send(1, 'Network.enable').then(() => (e.waitingForDebugger ? send(2, 'Runtime.runIfWaitingForDebugger') : undefined));
+      } else if (e.waitingForDebugger) {
+        void send(2, 'Runtime.runIfWaitingForDebugger');
       }
     });
     cdp.on('Target.receivedMessageFromTarget', (e: { message: string }) => {
@@ -263,7 +275,14 @@ export async function startCapture(context: BrowserContext, opts: CaptureOptions
     });
     try {
       await cdp.send('Network.enable');
-      await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: false });
+      await cdp
+        .send('Target.setAutoAttach', {
+          autoAttach: true,
+          waitForDebuggerOnStart: true,
+          flatten: false,
+          filter: [{ type: 'worker' }, { type: 'shared_worker' }, { type: 'service_worker' }, { type: 'iframe', exclude: true }, { type: 'page', exclude: true }],
+        })
+        .catch(() => cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: false }));
     } catch {
       notes.push('could not enable CDP network/auto-attach; worker attribution partial');
     }
@@ -310,8 +329,9 @@ export async function startCapture(context: BrowserContext, opts: CaptureOptions
         cursor.set(event.url, i + 1);
         event.initiator = { type: hit.type, chain: hit.urls };
         if (hit.worker && event.origin === 'page') event.origin = 'worker';
-      } else if (workerUrls.has(event.url) && event.origin === 'page') {
+      } else if (event.origin === 'page' && (workerUrls.has(event.url) || (cdpAvailable && !pageSessionUrls.has(event.url)))) {
         event.origin = 'worker';
+        if (!workerUrls.has(event.url)) event.initiator = { type: 'worker (inferred)', chain: [] };
       }
     }
 
