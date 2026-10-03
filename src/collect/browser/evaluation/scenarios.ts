@@ -17,6 +17,9 @@ import { AutoconsentDriver } from './autoconsent.js';
 import {
   readConsentState,
   readoutContradicts,
+  readoutConfirms,
+  consentModeMismatch,
+  findBanner,
   heuristicChoice,
   bannerVisible,
   dismissBanner,
@@ -148,16 +151,20 @@ class Visit {
 
   /** Poll the stored consent state until it stops contradicting `choice` (some
    *  platforms persist the choice through a network round-trip). */
-  private async settledReadout(choice: 'accept' | 'reject', budgetMs = 5000): Promise<{ data: Record<string, unknown>; contradicts: boolean | undefined }> {
+  private async settledReadout(choice: 'accept' | 'reject', budgetMs = 5000): Promise<{ data: Record<string, unknown>; confirmed: boolean | undefined; contradicts: boolean | undefined }> {
     const until = Date.now() + budgetMs;
-    let data = await readConsentState(this.page);
-    let contradicts = readoutContradicts(choice, data);
-    while (contradicts && Date.now() < until) {
+    for (;;) {
+      const data = await readConsentState(this.page);
+      const confirmed = readoutConfirms(choice, data);
+      const contradicts = readoutContradicts(choice, data);
+      if (confirmed === true || (confirmed === undefined && !contradicts) || Date.now() >= until) return { data, confirmed, contradicts };
       await this.page.waitForTimeout(500);
-      data = await readConsentState(this.page);
-      contradicts = readoutContradicts(choice, data);
     }
-    return { data, contradicts };
+  }
+
+  /** ok = the stored state confirms the choice, or nothing is readable and nothing contradicts it. */
+  private static accepted(r: { confirmed: boolean | undefined; contradicts: boolean | undefined }): boolean {
+    return r.confirmed === true || (r.confirmed === undefined && !r.contradicts);
   }
 
   /** Accept or reject through autoconsent, else the heuristic; confirm by readout. */
@@ -168,19 +175,31 @@ class Visit {
     let method = 'none';
     let clicks: number | undefined;
     const notes: string[] = [];
-    let readout: { data: Record<string, unknown>; contradicts: boolean | undefined } | undefined;
-    if (this.driver.available && this.driver.detectedCmp(this.page)) {
+    let readout: { data: Record<string, unknown>; confirmed: boolean | undefined; contradicts: boolean | undefined } | undefined;
+    // 1. A known consent tool's own buttons (exact selectors) — the most precise click.
+    const known = await findBanner(this.page);
+    const knownBtn = known?.via.startsWith('selector:') ? (choice === 'accept' ? known.accept : known.reject) : undefined;
+    if (known && knownBtn && (await this.page.click(knownBtn, { timeout: 5000 }).then(() => true).catch(() => false))) {
+      method = known.via;
+      clicks = 1;
+      readout = await this.settledReadout(choice);
+      ok = Visit.accepted(readout);
+      if (!ok) notes.push(`${method} clicked but the stored consent state did not change`);
+    }
+    // 2. autoconsent's rule for the detected tool.
+    if (!ok && this.driver.available && this.driver.detectedCmp(this.page)) {
       const res = await this.driver.act(this.page, choice === 'accept' ? 'optIn' : 'optOut');
       method = `autoconsent:${res?.cmp ?? this.driver.detectedCmp(this.page)}`;
       clicks = res?.clicks;
       if (res?.result) {
         readout = await this.settledReadout(choice);
-        ok = !readout.contradicts;
-        if (ok && choice === 'reject' && (await this.driver.selfTest(this.page)) === false) {
+        ok = Visit.accepted(readout);
+        // autoconsent's self-test only matters when the stored state can't confirm the choice itself.
+        if (ok && readout.confirmed !== true && choice === 'reject' && (await this.driver.selfTest(this.page)) === false) {
           ok = false;
           notes.push('autoconsent self-test: the stored choice does not reflect the opt-out');
         }
-        if (!ok && readout.contradicts) notes.push(`${method} clicked but the stored consent state did not change`);
+        if (!ok) notes.push(`${method} clicked but the stored consent state did not change`);
       }
     }
     if (!ok) {
@@ -189,13 +208,15 @@ class Visit {
         method = h.method;
         clicks = h.clicks;
         readout = await this.settledReadout(choice);
-        ok = !readout.contradicts;
-        if (!ok) notes.push('stored consent state contradicts the click');
+        ok = Visit.accepted(readout);
+        if (!ok) notes.push('the stored consent state does not reflect the click');
       } else if (method === 'none') {
         method = h.method;
       }
     }
-    if (ok && readout && readout.contradicts === undefined) notes.push('clicked; no readable consent state to confirm it was stored');
+    if (ok && readout && readout.confirmed === undefined) notes.push('clicked; no readable consent state to confirm it was stored');
+    const mismatch = ok && readout ? consentModeMismatch(choice, readout.data) : undefined;
+    if (mismatch) notes.push(mismatch);
     await this.readout('after-choice');
     const event: ChoiceEvent = { type: 'choice', t: tClick, choice, ok, method, clicks, note: notes.join('; ') || undefined, pageIndex: this.cap.pageIndex() };
     this.cap.push(event);
@@ -352,8 +373,9 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
           v.ev({ type: 'choice', choice: 'dismiss', ok: d.ok, method: d.method }, t0);
           await v.shot('after-dismiss');
           if (!d.ok) {
-            status = 'not-tested';
-            reason = 'could not close the banner without choosing';
+            // A banner with no close control is a design fact, not a test failure.
+            status = d.noClose ? 'not-applicable' : 'not-tested';
+            reason = d.noClose ? 'the banner offers no way to close it without choosing' : 'could not close the banner without choosing';
             break;
           }
           await v.readout('after-choice');
@@ -405,7 +427,8 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
           }
           await v.page.waitForTimeout(1200);
           const data = await v.readout('after-choice');
-          if (ok && readoutContradicts('reject', data)) ok = false;
+          const conf = readoutConfirms('reject', data);
+          if (ok && (conf === false || (conf === undefined && readoutContradicts('reject', data)))) ok = false;
           v.ev({ type: 'choice', choice: 'withdraw', ok, method, note: re.ok ? undefined : 'no way to reopen the consent settings was found' }, tWithdraw);
           await v.shot('after-withdraw');
           if (!re.ok) {

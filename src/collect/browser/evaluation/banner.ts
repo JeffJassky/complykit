@@ -1,5 +1,4 @@
 import type { Page } from 'playwright';
-import { detectCmp } from '../consent.js';
 
 // Everything banner-shaped that autoconsent doesn't do: the heuristic fallback,
 // dismiss (close without choosing), partial consent, reopening settings to
@@ -30,10 +29,12 @@ async function readConsentStateUnbounded(page: Page): Promise<Record<string, unk
       };
       safe('gpc', () => (navigator as unknown as { globalPrivacyControl?: boolean }).globalPrivacyControl);
       safe('googleConsent', () => {
+        // gtag keeps these as booleans internally; normalize to Consent Mode's words.
         const e = w.google_tag_data?.ics?.entries;
         if (!e) return undefined;
+        const word = (v: unknown): string | undefined => (v === true || v === 'granted' ? 'granted' : v === false || v === 'denied' ? 'denied' : undefined);
         const o: Record<string, unknown> = {};
-        for (const k of Object.keys(e)) o[k] = { default: e[k]?.default, update: e[k]?.update };
+        for (const k of Object.keys(e)) o[k] = { default: word(e[k]?.default), update: word(e[k]?.update) };
         return o;
       });
       safe('dataLayerConsent', () => {
@@ -105,28 +106,132 @@ export function siteReportedRegion(readout: Record<string, unknown>): Array<{ so
   return out;
 }
 
-/** Does the stored state contradict the choice just made? undefined = nothing readable. */
-export function readoutContradicts(choice: 'accept' | 'reject', readout: Record<string, unknown>): boolean | undefined {
-  const verdicts: boolean[] = [];
-  const g = readout.googleConsent as Record<string, { update?: string; default?: string }> | undefined;
-  if (g?.ad_storage) {
-    const v = g.ad_storage.update ?? g.ad_storage.default;
-    if (v) verdicts.push(choice === 'reject' ? v === 'granted' : v === 'denied');
+/**
+ * Does the stored state positively CONFIRM the choice? true = confirmed, false =
+ * readable and not (yet) reflecting it, undefined = nothing readable. Shopify's
+ * `marketingAllowed` is false both before any choice and after a reject, so it
+ * reads `currentVisitorConsent.marketing` ('' = no choice stored) instead.
+ */
+export function readoutConfirms(choice: 'accept' | 'reject', readout: Record<string, unknown>): boolean | undefined {
+  // The consent tool's own record decides; Google Consent Mode is consulted
+  // only when no consent tool is readable (it is often wired up separately,
+  // and a mismatch is reported by consentModeMismatch, not treated as a failed click).
+  const tool: boolean[] = [];
+  const shop = (readout.shopify as { currentVisitorConsent?: { marketing?: string } } | undefined)?.currentVisitorConsent;
+  if (shop && typeof shop.marketing === 'string') tool.push(choice === 'accept' ? shop.marketing === 'yes' : shop.marketing === 'no');
+  if (typeof readout.oneTrustActiveGroups === 'string' && readout.oneTrustActiveGroups) {
+    const marketing = readout.oneTrustActiveGroups.split(',').includes('C0004');
+    tool.push(choice === 'accept' ? marketing : !marketing);
   }
-  if (typeof readout.oneTrustActiveGroups === 'string') {
-    const groups = readout.oneTrustActiveGroups.split(',').filter(Boolean);
-    const marketing = groups.includes('C0004');
-    verdicts.push(choice === 'reject' ? marketing : !marketing);
-  }
-  const cb = readout.cookiebot as { marketing?: boolean } | undefined;
-  if (cb && typeof cb.marketing === 'boolean') verdicts.push(choice === 'reject' ? cb.marketing : !cb.marketing);
-  const shop = (readout.shopify as { marketingAllowed?: boolean } | undefined)?.marketingAllowed;
-  if (typeof shop === 'boolean') verdicts.push(choice === 'reject' ? shop : !shop);
-  if (!verdicts.length) return undefined;
-  return verdicts.some(Boolean);
+  const cb = readout.cookiebot as { marketing?: boolean; hasResponse?: boolean } | undefined;
+  if (cb && cb.hasResponse) tool.push(choice === 'accept' ? cb.marketing === true : cb.marketing === false);
+  if (tool.length) return tool.every(Boolean);
+  const g = readout.googleConsent as Record<string, { update?: string }> | undefined;
+  if (g?.ad_storage?.update) return choice === 'accept' ? g.ad_storage.update === 'granted' : g.ad_storage.update === 'denied';
+  return undefined;
 }
 
-// --- Heuristic choice (fallback when autoconsent finds no CMP) -----------------
+/** The consent tool recorded the choice but Google Consent Mode says otherwise. */
+export function consentModeMismatch(choice: 'accept' | 'reject', readout: Record<string, unknown>): string | undefined {
+  const g = readout.googleConsent as Record<string, { update?: string; default?: string }> | undefined;
+  const v = g?.ad_storage ? (g.ad_storage.update ?? g.ad_storage.default) : undefined;
+  if (!v) return undefined;
+  const want = choice === 'accept' ? 'granted' : 'denied';
+  return v !== want ? `Google Consent Mode ad_storage is "${v}" after ${choice === 'accept' ? 'accepting' : 'rejecting'} — the consent tool and Google tags disagree` : undefined;
+}
+
+/** Does the stored state contradict the choice just made? undefined = nothing readable. */
+export function readoutContradicts(choice: 'accept' | 'reject', readout: Record<string, unknown>): boolean | undefined {
+  const c = readoutConfirms(choice, readout);
+  return c === undefined ? undefined : !c;
+}
+
+// --- Banner detection (fallback when autoconsent finds no CMP) ---------------------
+//
+// Strict on purpose. A loose "any button saying OK/Accept" match turned an
+// ordinary storefront with no banner into "banner showing, no choice" for every
+// request (field run 2026-10-03). A banner here is a VISIBLE, on-screen element
+// whose own text is about cookies/consent/privacy and which contains a choice
+// control. Known consent-tool selectors are tried first.
+
+const KNOWN_BANNERS: Array<{ name: string; banner: string; accept?: string; reject?: string; manage?: string; close?: string }> = [
+  { name: 'OneTrust', banner: '#onetrust-banner-sdk', accept: '#onetrust-accept-btn-handler', reject: '#onetrust-reject-all-handler', manage: '#onetrust-pc-btn-handler', close: '.onetrust-close-btn-handler' },
+  { name: 'Cookiebot', banner: '#CybotCookiebotDialog', accept: '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll,#CybotCookiebotDialogBodyButtonAccept', reject: '#CybotCookiebotDialogBodyButtonDecline', manage: '#CybotCookiebotDialogBodyButtonDetails' },
+  { name: 'Didomi', banner: '#didomi-notice', accept: '#didomi-notice-agree-button', reject: '#didomi-notice-disagree-button', manage: '#didomi-notice-learn-more-button', close: '.didomi-popup-close' },
+  { name: 'Usercentrics', banner: '#usercentrics-root', accept: '[data-testid="uc-accept-all-button"]', reject: '[data-testid="uc-deny-all-button"]', manage: '[data-testid="uc-more-button"]' },
+  { name: 'CookieYes', banner: '.cky-consent-container', accept: '.cky-btn-accept', reject: '.cky-btn-reject', manage: '.cky-btn-customize', close: '.cky-banner-btn-close' },
+  { name: 'Complianz', banner: '.cmplz-cookiebanner', accept: '.cmplz-accept', reject: '.cmplz-deny', manage: '.cmplz-view-preferences', close: '.cmplz-close' },
+  { name: 'Osano', banner: '.osano-cm-dialog', accept: '.osano-cm-accept-all', reject: '.osano-cm-denyAll', manage: '.osano-cm-manage', close: '.osano-cm-dialog__close' },
+  { name: 'Shopify', banner: '#shopify-pc__banner', accept: '#shopify-pc__banner__btn-accept', reject: '#shopify-pc__banner__btn-decline', manage: '#shopify-pc__banner__btn-manage-prefs' },
+];
+
+export interface FoundBanner {
+  via: string; // 'selector:<name>' | 'heuristic'
+  accept?: string;
+  reject?: string;
+  manage?: string;
+  close?: string;
+}
+
+/** Find a visible consent banner and tag its controls with data-complykit-* attributes. */
+export async function findBanner(page: Page): Promise<FoundBanner | null> {
+  try {
+    return (await page.evaluate((known) => {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const onScreen = (el: Element): boolean => {
+        const r = (el as HTMLElement).getBoundingClientRect();
+        const cs = getComputedStyle(el as HTMLElement);
+        return r.width > 4 && r.height > 4 && r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw && cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0.05;
+      };
+      const tag = (el: Element | null | undefined, role: string): string | undefined => {
+        if (!el) return undefined;
+        el.setAttribute('data-complykit-banner', role);
+        return `[data-complykit-banner="${role}"]`;
+      };
+      for (const old of Array.from(document.querySelectorAll('[data-complykit-banner]'))) old.removeAttribute('data-complykit-banner');
+      const visibleIn = (root: Element, sel?: string): Element | undefined => {
+        if (!sel) return undefined;
+        try {
+          return Array.from(root.querySelectorAll(sel)).find(onScreen) ?? Array.from(document.querySelectorAll(sel)).find(onScreen);
+        } catch {
+          return undefined;
+        }
+      };
+      for (const k of known) {
+        const b = Array.from(document.querySelectorAll(k.banner)).find(onScreen);
+        if (!b) continue;
+        return { via: `selector:${k.name}`, accept: tag(visibleIn(b, k.accept), 'accept'), reject: tag(visibleIn(b, k.reject), 'reject'), manage: tag(visibleIn(b, k.manage), 'manage'), close: tag(visibleIn(b, k.close), 'close') };
+      }
+      const CONTEXT = /cookie|consent|tracking technolog|privacy (policy|settings|preferences|choices)|personal (data|information)|gdpr|we use (cookies|technologies)|similar technologies/i;
+      const ACCEPT = /^(accept( all| cookies| and close| & close)?|allow( all| cookies)?|agree( and close)?|i agree|i accept|got it|ok(ay)?|yes,? i agree|accept & continue|continue)$/i;
+      const REJECT = /^(reject( all| cookies)?|decline( all| cookies)?|deny( all)?|refuse( all)?|disagree|necessary (cookies )?only|only necessary|essential (cookies )?only|use necessary cookies only|do not accept|no,? thanks)$/i;
+      const MANAGE = /^(manage( preferences| cookies| settings| choices| options)?|cookie settings|settings|preferences|customi[sz]e|more options|options|let me choose|show purposes)$/i;
+      const labelOf = (el: Element): string => ((el.textContent ?? '') || (el as HTMLInputElement).value || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+      const controls = Array.from(document.querySelectorAll('button, [role="button"], a, input[type="button"], input[type="submit"]')).filter(onScreen);
+      // Each candidate control: climb to the nearest ancestor whose own text is
+      // consent-shaped and short enough to be a banner, not the page.
+      for (const c of controls) {
+        const label = labelOf(c);
+        if (!label || label.length > 40 || !(ACCEPT.test(label) || REJECT.test(label))) continue;
+        const ancestors: Element[] = [];
+        for (let a = c.parentElement; a && a !== document.body && ancestors.length < 8; a = a.parentElement) ancestors.push(a);
+        for (const n of ancestors) {
+          const text = (n as HTMLElement).innerText ?? '';
+          if (text.length > 2500) break;
+          if (!CONTEXT.test(text)) continue;
+          const inside = Array.from(n.querySelectorAll('button, [role="button"], a, input[type="button"], input[type="submit"]')).filter(onScreen);
+          const find = (re: RegExp): Element | undefined => inside.find((x) => re.test(labelOf(x)));
+          const close = inside.find((x) => /^\s*(×|✕|✖|x)\s*$/i.test(x.textContent ?? '') || /\b(close|dismiss)\b/i.test(x.getAttribute('aria-label') ?? ''));
+          return { via: 'heuristic', accept: tag(find(ACCEPT), 'accept'), reject: tag(find(REJECT), 'reject'), manage: tag(find(MANAGE), 'manage'), close: tag(close, 'close') };
+        }
+      }
+      return null;
+    }, KNOWN_BANNERS)) as FoundBanner | null;
+  } catch {
+    return null;
+  }
+}
 
 export interface HeuristicResult {
   found: boolean;
@@ -136,97 +241,43 @@ export interface HeuristicResult {
 }
 
 export async function heuristicChoice(page: Page, choice: 'accept' | 'reject'): Promise<HeuristicResult> {
-  const cmp = await detectCmp(page);
-  if (!cmp.bannerFound) return { found: false, clicked: false, clicks: 0, method: 'heuristic' };
-  const method = cmp.vendor && cmp.vendor !== 'heuristic' ? `selector:${cmp.vendor}` : 'heuristic';
-  try {
-    if (choice === 'accept') {
-      if (!cmp.acceptSelector) return { found: true, clicked: false, clicks: 0, method };
-      await page.click(cmp.acceptSelector, { timeout: 5000 });
-      return { found: true, clicked: true, clicks: 1, method };
-    }
-    if (cmp.rejectSelector) {
-      await page.click(cmp.rejectSelector, { timeout: 5000 });
-      return { found: true, clicked: true, clicks: 1, method };
-    }
-    if (cmp.manageSelector) {
-      await page.click(cmp.manageSelector, { timeout: 5000 });
-      await page.waitForTimeout(800);
-      const ok = await rejectInOpenSettings(page);
-      return { found: true, clicked: ok, clicks: ok ? 2 : 1, method: `${method}+settings` };
-    }
-  } catch {
-    /* click failed */
+  const b = await findBanner(page);
+  if (!b) return { found: false, clicked: false, clicks: 0, method: 'heuristic' };
+  const method = b.via;
+  const click = async (sel: string): Promise<boolean> => page.click(sel, { timeout: 5000 }).then(() => true).catch(() => false);
+  if (choice === 'accept') {
+    if (b.accept && (await click(b.accept))) return { found: true, clicked: true, clicks: 1, method };
+    return { found: true, clicked: false, clicks: 0, method };
+  }
+  if (b.reject && (await click(b.reject))) return { found: true, clicked: true, clicks: 1, method };
+  if (b.manage && (await click(b.manage))) {
+    await page.waitForTimeout(900);
+    const ok = await rejectInOpenSettings(page);
+    return { found: true, clicked: ok, clicks: ok ? 2 : 1, method: `${method}+settings` };
   }
   return { found: true, clicked: false, clicks: 0, method };
 }
 
-/** Is a consent banner visible right now (known selectors or heuristic text)? */
+/** Is a consent banner visible right now (known selectors or strict heuristic)? */
 export async function bannerVisible(page: Page): Promise<boolean> {
-  try {
-    const cmp = await detectCmp(page);
-    return cmp.bannerFound;
-  } catch {
-    return false;
-  }
+  return (await findBanner(page)) !== null;
 }
 
 // --- Dismiss --------------------------------------------------------------------
 
-const CLOSE_SELECTORS = [
-  '#onetrust-close-btn-container button',
-  '.onetrust-close-btn-handler',
-  '#CybotCookiebotDialogBodyButtonClose',
-  '.cc-dismiss',
-  '.cmplz-close',
-  '[data-testid="uc-close-button"]',
-  '.didomi-popup-close',
-];
-
-/** Close the banner without choosing: a close control, else Escape, else a click outside. */
-export async function dismissBanner(page: Page): Promise<{ ok: boolean; method: string }> {
-  for (const sel of CLOSE_SELECTORS) {
-    const el = await page.$(sel).catch(() => null);
-    if (el && (await el.isVisible().catch(() => false))) {
-      await el.click({ timeout: 3000 }).catch(() => {});
-      return { ok: true, method: `close:${sel}` };
-    }
-  }
-  const generic = await page
-    .evaluate(() => {
-      const near = (el: Element): boolean => {
-        let n: Element | null = el;
-        for (let i = 0; i < 8 && n; i++, n = n.parentElement) {
-          if (/cookie|consent|privacy|gdpr|tracking/i.test(`${n.id} ${n.className} ${n.getAttribute('aria-label') ?? ''}`)) return true;
-        }
-        return false;
-      };
-      const cands = Array.from(document.querySelectorAll('button, [role="button"], a'));
-      for (const el of cands) {
-        const label = `${el.getAttribute('aria-label') ?? ''} ${el.getAttribute('title') ?? ''} ${(el.textContent ?? '').trim()}`;
-        const r = (el as HTMLElement).getBoundingClientRect();
-        if (r.width === 0 || r.height === 0) continue;
-        if (/^\s*(×|✕|✖|x)\s*$/i.test((el.textContent ?? '').trim()) || /\b(close|dismiss)\b/i.test(label)) {
-          if (near(el)) {
-            el.setAttribute('data-complykit-dismiss', '1');
-            return true;
-          }
-        }
-      }
-      return false;
-    })
-    .catch(() => false);
-  if (generic) {
-    await page.click('[data-complykit-dismiss="1"]', { timeout: 3000 }).catch(() => {});
-    return { ok: true, method: 'close:heuristic' };
+/** Close the banner without choosing: its close control, else Escape. A banner
+ *  with no way to close it without choosing is reported as such (`noClose`). */
+export async function dismissBanner(page: Page): Promise<{ ok: boolean; method: string; noClose?: boolean }> {
+  const b = await findBanner(page);
+  if (b?.close) {
+    await page.click(b.close, { timeout: 3000 }).catch(() => {});
+    await page.waitForTimeout(600);
+    if (!(await bannerVisible(page))) return { ok: true, method: `close:${b.via}` };
   }
   await page.keyboard.press('Escape').catch(() => {});
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(600);
   if (!(await bannerVisible(page))) return { ok: true, method: 'escape' };
-  const vp = page.viewportSize();
-  await page.mouse.click(Math.max(5, (vp?.width ?? 1280) - 10), 10).catch(() => {});
-  await page.waitForTimeout(500);
-  return { ok: !(await bannerVisible(page)), method: 'outside-click' };
+  return { ok: false, method: b?.close ? 'close-did-not-close' : 'none', noClose: !b?.close };
 }
 
 // --- Partial consent (one category: analytics) ------------------------------------
@@ -275,10 +326,10 @@ export async function partialConsent(page: Page): Promise<{ ok: boolean; method:
     if (ok) return { ok: true, method: 'cookiebot:statistics' };
   }
   // Generic: open settings if needed, check the analytics switch only, save.
-  const cmp = await detectCmp(page).catch(() => null);
-  if (cmp?.manageSelector) {
-    await page.click(cmp.manageSelector, { timeout: 4000 }).catch(() => {});
-    await page.waitForTimeout(800);
+  const b = await findBanner(page);
+  if (b?.manage) {
+    await page.click(b.manage, { timeout: 4000 }).catch(() => {});
+    await page.waitForTimeout(900);
   }
   const done = await page
     .evaluate(
@@ -311,7 +362,8 @@ export async function partialConsent(page: Page): Promise<{ ok: boolean; method:
 
 // --- Withdraw: reopen settings, reject, save ---------------------------------------
 
-const SETTINGS_LINK = /cookie (settings|preferences|policy settings)|privacy (settings|preferences)|manage (cookies|consent|preferences)|consent (settings|preferences)|your privacy choices|cookie-einstellungen|paramètres des cookies/i;
+// Not "Your Privacy Choices" / "Do Not Sell": those are the US opt-out link, not cookie settings.
+const SETTINGS_LINK = /cookie (settings|preferences|policy settings)|privacy (settings|preferences)|manage (cookies|consent|preferences)|consent (settings|preferences)|cookie-einstellungen|paramètres des cookies/i;
 
 /** Reopen the consent tool after a choice: its JS API first, then a visible link. */
 export async function reopenSettings(page: Page): Promise<{ ok: boolean; method: string }> {
@@ -328,6 +380,8 @@ export async function reopenSettings(page: Page): Promise<{ ok: boolean; method:
         ['Cookiebot.renew', w.Cookiebot, 'renew', []],
         ['UC_UI.showSecondLayer', w.UC_UI, 'showSecondLayer', []],
         ['Didomi.preferences.show', w.Didomi?.preferences, 'show', []],
+        ['privacyBanner.showPreferences', w.privacyBanner, 'showPreferences', []],
+        ['revisitCkyConsent', w, 'revisitCkyConsent', []],
         ['klaro.show', w.klaro, 'show', []],
         ['CookieConsent.showPreferences', w.CookieConsent, 'showPreferences', []],
         ['Osano.cm.showDrawer', w.Osano?.cm, 'showDrawer', ['osano-cm-dom-info-dialog-open']],
