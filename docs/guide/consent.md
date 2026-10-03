@@ -106,6 +106,49 @@ tag — the law's thresholds aren't observable from a browser.
 
 Re-render any time: `complykit report --format consent-html|consent-md|consent-json`.
 
+## The knowledge base and research
+
+A party is only as well described as the knowledge base's entry for it. complykit
+ships a seed set of common vendors (marked *proposed* in reports until someone
+confirms them); everything else is learned once, per vendor, and reused on every
+later scan of every site.
+
+```
+scan ──► queue ──► proposal (cited) ──► a person confirms ──► recognized next scan
+```
+
+- **Queue.** Each consent scan adds the parties it could not recognize to a
+  research queue, and recognized ones that behaved differently than their entry
+  says (a cookie or a sensitive field the entry doesn't list). One item per
+  vendor domain, with the evidence from every site it was seen on. The queue
+  lives outside the project, at `~/.complykit/kb` (or `COMPLYKIT_KB_DIR`,
+  or `--kb-dir`), because it names the sites you scanned.
+- **Proposal.** `complykit kb research` asks the Anthropic API (with web search;
+  needs `ANTHROPIC_API_KEY`) to research the most widespread open items and
+  propose entries **with cited sources**. Without a key, `complykit kb packet
+  <domain>` prints the same brief for a person or a coding agent, and
+  `complykit kb propose <domain> --file result.json --by <who>` imports the result.
+  What complykit observed outranks a vendor's documentation; where they disagree,
+  the proposal records it.
+- **Confirmation.** `complykit kb proposals` lists what's waiting.
+  `complykit kb confirm <id> --by <you>` accepts one, optionally corrected
+  (`--category advertising,identity-resolution`); `kb reject <id> --reason …`
+  sends it back with the reason in view for the next attempt. A seed entry can be
+  confirmed the same way, by its id. Agents never confirm their own proposals.
+- **Reuse.** Only confirmed entries join the knowledge base, from the next scan
+  on; the queue item is marked resolved.
+
+```bash
+complykit kb queue                 # most widespread first
+complykit kb research --top 5      # or: kb packet <domain> → kb propose
+complykit kb proposals
+complykit kb confirm p-pixelco.io-1 --by jeff
+```
+
+`complykit kb ingest <run-dir…>` adds earlier runs to the queue; `kb dismiss
+<domain>` removes noise (the site's own infrastructure) without an entry. The web
+service exposes the same queue and review under **Knowledge base**.
+
 ## Configuration
 
 ```js
@@ -123,7 +166,7 @@ export default {
       ],
       journey: { paths: ['/collections/all', '/products/example', '/cart'] },
       knowledgeBase: {
-        entries: './kb/confirmed.json',   // your confirmed research, kept out of this repo
+        entries: './kb/confirmed.json',   // extra entries for this site (the kb store's are used too)
         overrides: [{ id: 'intercom', categories: ['functional'], note: 'support portal only' }],
       },
     },

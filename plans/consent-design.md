@@ -14,7 +14,7 @@ and comes after it. Legal reference: [research-consent-law.md](research-consent-
 
 ## Build status (2026-10-02)
 
-**M6–M8 built** (`complykit consent`; guide: docs/guide/consent.md). M9+ not started.
+**M6–M9 built** (`complykit consent`, `complykit kb`; guide: docs/guide/consent.md). M10+ not started.
 
 | | Where | Verified by |
 |---|---|---|
@@ -24,6 +24,7 @@ and comes after it. Legal reference: [research-consent-law.md](research-consent-
 | Facts → findings (§2.6) | `src/rules/tracking/` — analyze, fields, decoders, rules | test/consent-pipeline.test.ts (DE + US-CA + a mismatched FR), test/consent-analysis.test.ts |
 | Registry (§8) | requirements/tracking.ts, jurisdictions.ts, kb/ | `jurisdictions` + `kind` on requirements; pre-consent rule now cites ePrivacy 5(3) |
 | Report (§3) | report/consent-*.ts | test/consent-report.test.ts |
+| Knowledge base + research (§4.1–4.2) | `src/research/` (queue, store, prompt), `cli/commands/kb.ts`, researcher in judge/client.ts | test/kb-research.test.ts (scan → queue → cited proposal → confirm → recognized; agent can't confirm; reject reopens with the reason in the next brief; drift) |
 
 **Divergences from this plan, as built:**
 
@@ -39,8 +40,18 @@ and comes after it. Legal reference: [research-consent-law.md](research-consent-
   `us-state-privacy-covered` tag is present (thresholds aren't observable).
 - `reject` added to the default US sets: a rejection that leaks is wiretap evidence.
 - Proxies require `--authorized` on the command line (the §2.2 authorization rule as a gate).
-- Knowledge base ships ~60 **seed** entries (proposedBy `complykit-seed`, unconfirmed —
-  §4.2 confirmation is M9).
+- Knowledge base ships ~60 **seed** entries (proposedBy `complykit-seed`, unconfirmed);
+  `kb confirm <seed-id>` confirms one into the local store.
+- The research store is per machine (`~/.complykit/kb`, `COMPLYKIT_KB_DIR`), not in the
+  repository: the queue names client sites. Confirmed entries are vendor facts and could be
+  promoted into the seed later; not automated.
+- Agent proposals are **not** used for recognition until confirmed (seed proposals are —
+  they predate the workflow and the report marks them proposed).
+- Research runs through two doors: the API (`kb research`, web search, forced-shape
+  `propose_entry` tool) and a packet (`kb packet` → `kb propose`) for a person or a coding
+  agent. Both are validated identically (cited sources required).
+- Drift (§4.2 step 1, "behaving differently than its entry") is checked only where an
+  entry makes a claim: undeclared stores, and undeclared sensitive fields.
 
 **Still open for M7's "done when" on real exits:** no Mullvad/residential exits are wired
 yet (pause point: before the first residential-proxy run); a full ≥3-location report on a
