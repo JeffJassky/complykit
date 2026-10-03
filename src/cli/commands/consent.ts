@@ -33,6 +33,8 @@ records everything the browser does, and applies that location's rules.
   --concurrency N          scenarios in parallel per location (default 1)
   --out <file>             HTML report path (default: <run>/consent-report.html)
   --quiet                  no per-scenario narration
+  --events <file>          append progress as JSON lines (start, location,
+                           scenario-start, scenario-done, done, error) — for UIs
 
 Every location's exit is verified in two geolocation sources before any finding
 is attributed to it; anything unverified is reported as not tested.`;
@@ -55,6 +57,7 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
       concurrency: { type: 'string' },
       out: { type: 'string' },
       quiet: { type: 'boolean' },
+      events: { type: 'string' },
       help: { type: 'boolean' },
     },
     allowPositionals: false,
@@ -148,7 +151,15 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
   process.stdout.write(`consent evaluation: ${targetUrl} (config: ${source})\n`);
   process.stdout.write(`  locations: ${locations.map((l) => `${l.id}${l.proxy ? ' [proxy]' : ''}`).join(', ')}${values.quick ? ' · quick' : ''}\n`);
 
-  const res = await runConsentScan({
+  const eventsFile = values.events ? path.resolve(cwd, values.events) : undefined;
+  const event = (e: Record<string, unknown>): void => {
+    if (eventsFile) fs.appendFileSync(eventsFile, JSON.stringify({ at: new Date().toISOString(), ...e }) + '\n');
+  };
+  event({ type: 'start', runId: String(runId), url: targetUrl, locations: locations.map((l) => l.id) });
+
+  let res: Awaited<ReturnType<typeof runConsentScan>>;
+  try {
+    res = await runConsentScan({
     runId,
     property: property.id,
     targetUrl,
@@ -164,7 +175,12 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
     har: !values['no-har'],
     concurrency: values.concurrency ? Number(values.concurrency) : undefined,
     trace,
+    onEvent: (e) => event(e as unknown as Record<string, unknown>),
   });
+  } catch (err) {
+    event({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+    throw err;
+  }
 
   const { run, written } = assembleAndWrite({
     runId,
@@ -186,6 +202,16 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
   fs.writeFileSync(out, renderConsentHtml(model, { runDir: dir }));
   fs.writeFileSync(out.replace(/\.html?$/i, '') + '.json', JSON.stringify(model, null, 2));
 
+  event({
+    type: 'done',
+    runId: String(run.id),
+    runDir: dir,
+    report: out,
+    findings: written,
+    totals: model.totals,
+    parties: res.evaluation.inventory.length,
+    unrecognized: res.evaluation.researchQueue.length,
+  });
   process.stdout.write('\n' + renderConsentMarkdown(model, { maxFindings: 15 }));
   process.stdout.write(`\nrun ${String(run.id)}: ${written} finding(s) · report ${out}\n`);
   return 0;

@@ -133,6 +133,22 @@ export interface EvaluationPolicy {
   verify(spec: LocationSpec, sources: GeoSourceResult[]): LocationVerification;
   scenariosFor(spec: LocationSpec, verification: LocationVerification): ScenarioId[];
 }
+export type EvaluationEvent =
+  | { type: 'location'; location: string; verdict: string; observed?: string; scenarios: ScenarioId[]; note?: string }
+  | { type: 'scenario-start'; location: string; scenario: ScenarioId }
+  | {
+      type: 'scenario-done';
+      location: string;
+      scenario: ScenarioId;
+      status: 'tested' | 'not-tested' | 'not-applicable';
+      reason?: string;
+      requests: number;
+      thirdPartyRequests: number;
+      parties: number;
+      cookies: number;
+      durationMs: number;
+      banner?: string;
+    };
 export interface ConsentEvaluationOptions {
   property: string;
   targetUrl: string;
@@ -150,6 +166,7 @@ export interface ConsentEvaluationOptions {
   concurrency?: number;
   policy: EvaluationPolicy;
   trace?: (line: string) => void;
+  onEvent?: (e: EvaluationEvent) => void;
 }
 export interface LocationRun {
   spec: LocationSpec;

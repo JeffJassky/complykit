@@ -250,6 +250,7 @@ export interface ConsentScanOptions {
   launchArgs?: string[];
   bannerWaitMs?: number;
   trace?: (line: string) => void;
+  onEvent?: (e: import('./collect/browser/evaluation/index.js').EvaluationEvent) => void;
 }
 
 export interface ConsentScanResult {
@@ -292,6 +293,7 @@ export async function runConsentScan(opts: ConsentScanOptions): Promise<ConsentS
     launchArgs: opts.launchArgs,
     bannerWaitMs: opts.bannerWaitMs,
     trace: opts.trace,
+    onEvent: opts.onEvent,
     policy: {
       registrableDomain,
       verify: (spec, sources) => tracking.decideVerification(spec, sources),

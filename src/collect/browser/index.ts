@@ -35,6 +35,7 @@ export type {
   ConsentEvaluationOptions,
   ConsentEvaluationCollection,
   EvaluationPolicy,
+  EvaluationEvent,
   LocationRun,
   GeoSource,
   JourneyOptions,

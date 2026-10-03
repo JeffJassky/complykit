@@ -42,6 +42,24 @@ export interface EvaluationPolicy {
   scenariosFor(spec: LocationSpec, verification: LocationVerification): ScenarioId[];
 }
 
+/** Structured progress, for UIs (the service streams these). Additive to `trace`. */
+export type EvaluationEvent =
+  | { type: 'location'; location: string; verdict: string; observed?: string; scenarios: ScenarioId[]; note?: string }
+  | { type: 'scenario-start'; location: string; scenario: ScenarioId }
+  | {
+      type: 'scenario-done';
+      location: string;
+      scenario: ScenarioId;
+      status: 'tested' | 'not-tested' | 'not-applicable';
+      reason?: string;
+      requests: number;
+      thirdPartyRequests: number;
+      parties: number;
+      cookies: number;
+      durationMs: number;
+      banner?: string;
+    };
+
 export interface ConsentEvaluationOptions {
   property: string;
   targetUrl: string;
@@ -64,6 +82,7 @@ export interface ConsentEvaluationOptions {
   concurrency?: number;
   policy: EvaluationPolicy;
   trace?: (line: string) => void;
+  onEvent?: (e: EvaluationEvent) => void;
 }
 
 export interface LocationRun {
@@ -162,14 +181,19 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
       );
       const run: LocationRun = { spec, verification, scenarios: [] };
       runs.push(run);
+      const emit = opts.onEvent ?? (() => {});
+      const observed = [verification.observed.country, verification.observed.region].filter(Boolean).join('-') || undefined;
       if (verification.verdict !== 'verified') {
+        emit({ type: 'location', location: spec.id, verdict: verification.verdict, observed, scenarios: [], note: verification.note });
         notTested.push({ scope: 'location', id: spec.id, location: spec.id, reason: `location ${verification.verdict}: ${verification.note ?? 'not verified'} — no findings are attributed to it` });
         continue;
       }
       const scenarios = opts.scenarios?.length ? opts.scenarios : spec.scenarios?.length ? spec.scenarios : opts.policy.scenariosFor(spec, verification);
       trace(`location ${spec.id}: scenarios ${scenarios.join(', ')}`);
+      emit({ type: 'location', location: spec.id, verdict: verification.verdict, observed, scenarios, note: verification.note });
       const results = new Map<ScenarioId, ScenarioSummary>();
       await pool(scenarios, opts.concurrency ?? 1, async (scenario) => {
+        emit({ type: 'scenario-start', location: spec.id, scenario });
         const evidenceRel = path.join('evidence', 'tracking', spec.id, scenario);
         const out = await runScenario({
           browser,
@@ -219,6 +243,20 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
             cookies: tl.snapshot.cookies.length,
           },
           evidence: { har: tl.snapshot.evidence.har, timeline: tl.snapshot.evidence.timeline, screenshots: out.screenshots },
+        });
+        const sum = results.get(scenario)!;
+        emit({
+          type: 'scenario-done',
+          location: spec.id,
+          scenario,
+          status: out.status,
+          reason: out.reason,
+          requests: sum.counts?.requests ?? 0,
+          thirdPartyRequests: sum.counts?.thirdPartyRequests ?? 0,
+          parties: sum.counts?.parties ?? 0,
+          cookies: sum.counts?.cookies ?? 0,
+          durationMs: tl.snapshot.durationMs,
+          banner: sum.banner?.found ? sum.banner.cmp : undefined,
         });
         if (out.status !== 'tested') {
           notTested.push({ scope: 'scenario', id: scenario, location: spec.id, reason: out.reason ?? out.status });
