@@ -58,8 +58,9 @@ function readVersion(): string {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig {
   const production = env.NODE_ENV === 'production';
   const password = env.SERVICE_PASSWORD || undefined;
-  if (!password && production) {
-    throw new Error('SERVICE_PASSWORD is required when NODE_ENV=production (refusing to run an open scanner on the internet)');
+  // Running open in production must be a deliberate choice: ALLOW_OPEN=1.
+  if (!password && production && env.ALLOW_OPEN !== '1') {
+    throw new Error('SERVICE_PASSWORD is required when NODE_ENV=production (refusing to run an open scanner on the internet); set ALLOW_OPEN=1 to run without one on purpose');
   }
   const dataDir = path.resolve(env.DATA_DIR || (fs.existsSync('/data') ? '/data' : path.join(SERVICE_DIR, '.data')));
   return {

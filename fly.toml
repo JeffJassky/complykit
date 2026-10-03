@@ -1,12 +1,14 @@
 # Fly.io config for the complykit service (internal tool).
 # The lead creates the app and the volume:
 #   fly apps create complykit
-#   fly volumes create complykit_data --region mia --size 1
-#   fly secrets set SERVICE_PASSWORD=...
+#   fly volumes create complykit_data --region lax --size 1
+#   (optional) fly secrets set SERVICE_PASSWORD=...
 app = "complykit"
-# Miami: the consent scan's measured visitor location is the machine's exit,
-# so this keeps results in Florida, matching local runs.
-primary_region = "mia"
+# The consent scan's measured visitor location is the Machine's exit. Fly has
+# no Florida region; Los Angeles makes the default location California — the
+# strictest US jurisdiction (CCPA opt-out rules + CIPA exposure). Fly's fra /
+# lhr regions could later serve as real EU / UK locations.
+primary_region = "lax"
 
 # Graceful stop: the server kills running checks (marked "server stopped"),
 # persists jobs, and exits. Queued jobs resume on the next boot.
@@ -20,6 +22,9 @@ kill_timeout = 30
   IDLE_SHUTDOWN_MINUTES = "15"
   CONCURRENCY = "2"
   RETENTION_DAYS = "14"
+  # No password, by decision (2026-10-03): anyone with the URL can use it.
+  # To lock it: fly secrets set SERVICE_PASSWORD=... and remove this line.
+  ALLOW_OPEN = "1"
 
 [http_service]
   internal_port = 8080
