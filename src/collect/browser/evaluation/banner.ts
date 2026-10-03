@@ -152,7 +152,8 @@ export function readoutConfirms(choice: 'accept' | 'reject', readout: Record<str
   const ta = readout.trustarc as { preferences?: string } | undefined;
   if (ta?.preferences) tool.push(choice === 'accept' ? !/^0\b|^0:/.test(ta.preferences) : /^0\b|^0:/.test(ta.preferences));
   const os = readout.osano as Record<string, string> | undefined;
-  if (os && typeof os.MARKETING === 'string') tool.push(choice === 'accept' ? os.MARKETING === 'ACCEPT' : os.MARKETING === 'DENY');
+  // Osano in US (opt-out) mode records a rejection as OPT_OUT=ACCEPT, leaving MARKETING as it was.
+  if (os && typeof os.MARKETING === 'string') tool.push(choice === 'accept' ? os.MARKETING === 'ACCEPT' && os.OPT_OUT !== 'ACCEPT' : os.MARKETING === 'DENY' || os.OPT_OUT === 'ACCEPT');
   const wx = readout.wix as { defaultPolicy?: boolean; policy?: { advertising?: boolean } } | undefined;
   if (wx && wx.defaultPolicy === false && typeof wx.policy?.advertising === 'boolean') tool.push(choice === 'accept' ? wx.policy.advertising : !wx.policy.advertising);
   const tcf = readout.tcfData as { eventStatus?: string; purpose1?: boolean } | undefined;
@@ -196,7 +197,7 @@ const KNOWN_BANNERS: Array<{ name: string; banner: string; accept?: string; reje
   { name: 'OneTrust', banner: '#onetrust-banner-sdk', accept: '#onetrust-accept-btn-handler', reject: '#onetrust-reject-all-handler', manage: '#onetrust-pc-btn-handler', close: '.onetrust-close-btn-handler' },
   { name: 'Cookiebot', banner: '#CybotCookiebotDialog', accept: '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll,#CybotCookiebotDialogBodyButtonAccept', reject: '#CybotCookiebotDialogBodyButtonDecline', manage: '#CybotCookiebotDialogBodyButtonDetails' },
   { name: 'Didomi', banner: '#didomi-notice', accept: '#didomi-notice-agree-button', reject: '#didomi-notice-disagree-button', manage: '#didomi-notice-learn-more-button', close: '.didomi-popup-close' },
-  { name: 'Usercentrics', banner: '#usercentrics-root', accept: '[data-testid="uc-accept-all-button"]', reject: '[data-testid="uc-deny-all-button"]', manage: '[data-testid="uc-more-button"]' },
+  { name: 'Usercentrics', banner: '[data-testid="uc-default-banner"], #uc-center-container, #usercentrics-cmp-ui', accept: '[data-testid="uc-accept-all-button"], #accept', reject: '[data-testid="uc-deny-all-button"], #deny', manage: '[data-testid="uc-more-button"], #more' },
   { name: 'CookieYes', banner: '.cky-consent-container', accept: '.cky-btn-accept', reject: '.cky-btn-reject', manage: '.cky-btn-customize', close: '.cky-banner-btn-close' },
   { name: 'Complianz', banner: '.cmplz-cookiebanner', accept: '.cmplz-accept', reject: '.cmplz-deny', manage: '.cmplz-view-preferences', close: '.cmplz-close' },
   { name: 'Osano', banner: '.osano-cm-dialog', accept: '.osano-cm-accept-all', reject: '.osano-cm-denyAll', manage: '.osano-cm-manage', close: '.osano-cm-dialog__close' },
@@ -215,6 +216,22 @@ export interface FoundBanner {
 export async function findBanner(page: Page): Promise<FoundBanner | null> {
   try {
     return (await page.evaluate((known) => {
+      // Consent tools increasingly render inside (open) shadow roots
+      // (Usercentrics, Termly) — every lookup walks them.
+      const deepAll = (sel: string, root: Document | ShadowRoot | Element = document): Element[] => {
+        const out: Element[] = [];
+        const visit = (r: Document | ShadowRoot | Element): void => {
+          try {
+            out.push(...Array.from(r.querySelectorAll(sel)));
+          } catch {
+            return;
+          }
+          for (const el of Array.from(r.querySelectorAll('*'))) if (el.shadowRoot) visit(el.shadowRoot);
+        };
+        visit(root);
+        if (root instanceof Element && root.shadowRoot) visit(root.shadowRoot);
+        return out;
+      };
       const vw = window.innerWidth;
       const vh = window.innerHeight;
       const onScreen = (el: Element): boolean => {
@@ -227,17 +244,13 @@ export async function findBanner(page: Page): Promise<FoundBanner | null> {
         el.setAttribute('data-complykit-banner', role);
         return `[data-complykit-banner="${role}"]`;
       };
-      for (const old of Array.from(document.querySelectorAll('[data-complykit-banner]'))) old.removeAttribute('data-complykit-banner');
+      for (const old of deepAll('[data-complykit-banner]')) old.removeAttribute('data-complykit-banner');
       const visibleIn = (root: Element, sel?: string): Element | undefined => {
         if (!sel) return undefined;
-        try {
-          return Array.from(root.querySelectorAll(sel)).find(onScreen) ?? Array.from(document.querySelectorAll(sel)).find(onScreen);
-        } catch {
-          return undefined;
-        }
+        return deepAll(sel, root).find(onScreen) ?? deepAll(sel).find(onScreen);
       };
       for (const k of known) {
-        const b = Array.from(document.querySelectorAll(k.banner)).find(onScreen);
+        const b = deepAll(k.banner).find(onScreen);
         if (!b) continue;
         return { via: `selector:${k.name}`, accept: tag(visibleIn(b, k.accept), 'accept'), reject: tag(visibleIn(b, k.reject), 'reject'), manage: tag(visibleIn(b, k.manage), 'manage'), close: tag(visibleIn(b, k.close), 'close') };
       }
@@ -246,19 +259,21 @@ export async function findBanner(page: Page): Promise<FoundBanner | null> {
       const REJECT = /^(reject( all| cookies)?|decline( all| cookies)?|deny( all)?|refuse( all)?|disagree|necessary (cookies )?only|only necessary|essential (cookies )?only|use necessary cookies only|do not accept|no,? thanks)$/i;
       const MANAGE = /^(manage( preferences| cookies| settings| choices| options)?|cookie settings|settings|preferences|customi[sz]e|more options|options|let me choose|show purposes)$/i;
       const labelOf = (el: Element): string => ((el.textContent ?? '') || (el as HTMLInputElement).value || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
-      const controls = Array.from(document.querySelectorAll('button, [role="button"], a, input[type="button"], input[type="submit"]')).filter(onScreen);
+      const controls = deepAll('button, [role="button"], a, input[type="button"], input[type="submit"]').filter(onScreen);
       // Each candidate control: climb to the nearest ancestor whose own text is
       // consent-shaped and short enough to be a banner, not the page.
       for (const c of controls) {
         const label = labelOf(c);
         if (!label || label.length > 40 || !(ACCEPT.test(label) || REJECT.test(label))) continue;
         const ancestors: Element[] = [];
-        for (let a = c.parentElement; a && a !== document.body && ancestors.length < 8; a = a.parentElement) ancestors.push(a);
+        // Climb out of a shadow root through its host, so a banner inside one still has a container.
+        const up = (e: Element): Element | null => e.parentElement ?? ((e.getRootNode() as ShadowRoot).host ?? null);
+        for (let a = up(c); a && a !== document.body && ancestors.length < 8; a = up(a)) ancestors.push(a);
         for (const n of ancestors) {
-          const text = (n as HTMLElement).innerText ?? '';
+          const text = ((n as HTMLElement).innerText || (n.shadowRoot ? (n.shadowRoot as unknown as { textContent: string }).textContent : '') || '').toString();
           if (text.length > 2500) break;
           if (!CONTEXT.test(text)) continue;
-          const inside = Array.from(n.querySelectorAll('button, [role="button"], a, input[type="button"], input[type="submit"]')).filter(onScreen);
+          const inside = deepAll('button, [role="button"], a, input[type="button"], input[type="submit"]', n).filter(onScreen);
           const find = (re: RegExp): Element | undefined => inside.find((x) => re.test(labelOf(x)));
           const close = inside.find((x) => /^\s*(×|✕|✖|x)\s*$/i.test(x.textContent ?? '') || /\b(close|dismiss)\b/i.test(x.getAttribute('aria-label') ?? ''));
           return { via: 'heuristic', accept: tag(find(ACCEPT), 'accept'), reject: tag(find(REJECT), 'reject'), manage: tag(find(MANAGE), 'manage'), close: tag(close, 'close') };
@@ -476,11 +491,21 @@ export async function rejectInOpenSettings(page: Page): Promise<boolean> {
           return true;
         }
         let toggled = false;
-        for (const b of Array.from(document.querySelectorAll<HTMLElement>('input[type="checkbox"], [role="switch"]')).filter(visible)) {
+        // Styled toggles hide the real checkbox (opacity 0, 1px) behind its
+        // label (Osano, many themes) — act on whichever part is visible.
+        const target = (b: HTMLElement): HTMLElement | null => {
+          if (visible(b)) return b;
+          const label = (b.id && document.querySelector<HTMLElement>(`label[for="${CSS.escape(b.id)}"]`)) || b.closest('label');
+          if (label && visible(label)) return label as HTMLElement;
+          const parent = b.parentElement;
+          return parent && visible(parent) ? parent : null;
+        };
+        for (const b of Array.from(document.querySelectorAll<HTMLElement>('input[type="checkbox"], [role="switch"]'))) {
           if ((b as HTMLInputElement).disabled || b.getAttribute('aria-disabled') === 'true') continue;
           const checked = b instanceof HTMLInputElement ? b.checked : b.getAttribute('aria-checked') === 'true';
-          if (checked) {
-            (b as HTMLElement).click();
+          const t = target(b);
+          if (checked && t) {
+            t.click();
             toggled = true;
           }
         }

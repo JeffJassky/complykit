@@ -24,6 +24,7 @@ describe('consent readout confirmation', () => {
     expect(readoutConfirms('reject', { oneTrustActiveGroups: ',C0001,', oneTrustClosed: false })).toBe(false); // no choice stored yet
     expect(readoutConfirms('reject', { trustarc: { preferences: '0:' } })).toBe(true);
     expect(readoutConfirms('accept', { osano: { MARKETING: 'ACCEPT', ANALYTICS: 'ACCEPT' } })).toBe(true);
+    expect(readoutConfirms('reject', { osano: { MARKETING: 'ACCEPT', OPT_OUT: 'ACCEPT' } })).toBe(true); // US opt-out mode
     expect(readoutConfirms('reject', { tcfData: { eventStatus: 'useractioncomplete', purpose1: false } })).toBe(true);
   });
 });
@@ -74,6 +75,16 @@ suite('strict banner detection', () => {
     expect(await detectBlock(page)).toMatch(/challenge/);
     await page.setContent(`<title>Shop</title><nav>${Array.from({ length: 30 }, (_, i) => `<a href="/p${i}">p${i}</a>`).join('')}</nav><p>Blocked drains? We sell plungers.</p>`);
     expect(await detectBlock(page)).toBeUndefined();
+  });
+
+  it('finds a banner rendered inside an open shadow root (Usercentrics, Termly)', async () => {
+    await page.setContent('<div id="host"></div>');
+    await page.evaluate(() => {
+      const root = document.getElementById('host')!.attachShadow({ mode: 'open' });
+      root.innerHTML = '<div style="position:fixed;bottom:0;left:0;right:0">We use cookies to improve your experience. <button>Accept all</button><button>Deny</button></div>';
+    });
+    const b = await findBanner(page);
+    expect(b?.accept && b.reject).toBeTruthy();
   });
 
   it('an off-screen or hidden banner does not count', async () => {

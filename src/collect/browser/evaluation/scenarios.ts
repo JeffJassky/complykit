@@ -144,7 +144,14 @@ class Visit {
     const popup = this.driver.available ? await this.driver.waitForPopup(wait, since) : null;
     // autoconsent can report a popup that no visitor sees (a consent tool loaded
     // in a mode with nothing on screen) — require something visible.
-    const seen = popup ? (await bannerVisible(this.page)) || (await consentFrameVisible(this.page)) : false;
+    // …and give it a moment: some tools report the popup before it is painted
+    // (Termly draws ~1–3s later).
+    const visibleNow = async (): Promise<boolean> => (await bannerVisible(this.page)) || (await consentFrameVisible(this.page));
+    let seen = popup ? await visibleNow() : false;
+    for (let until = Date.now() + 5000; popup && !seen && Date.now() < until; ) {
+      await this.page.waitForTimeout(500);
+      seen = await visibleNow();
+    }
     if (popup && !seen) this.ev({ type: 'note', text: `consent tool detected (${popup.cmp}) but no banner is visible` });
     if (popup && seen) {
       this.bannerShown = true;
