@@ -144,6 +144,11 @@ describe('the loop: scan → proposal → confirmation → recognized', () => {
     expect(store.entries()).toHaveLength(1);
   });
 
+  it('accepts an uncited proposal only when its basis is model knowledge', () => {
+    const p = store.propose('pixelco.io', { ...GOOD_PROPOSAL, sources: [], basis: 'model-knowledge', confidencePct: 85 }, 'agent:x');
+    expect(p).toMatchObject({ basis: 'model-knowledge', confidencePct: 85, sources: [] });
+  });
+
   it('applies corrections on confirm', () => {
     const p = store.propose('pixelco.io', GOOD_PROPOSAL, 'agent:x');
     const e = store.confirm(p.id, 'jeff', { categories: ['advertising', 'identity-resolution'] });

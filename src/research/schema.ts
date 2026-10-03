@@ -60,8 +60,12 @@ export type ProposedEntry = z.infer<typeof ProposedEntry>;
 
 export const ProposalBody = z.object({
   entry: ProposedEntry,
-  /** Cited sources — required: an uncited proposal is not a proposal (§4.2). */
-  sources: z.array(z.string().url()).min(1),
+  /** How it was established: 'researched' (read the vendor's sources — cited,
+   *  required) or 'model-knowledge' (classified from what a model already knows
+   *  plus complykit's observations, with a stated confidence; no citations). */
+  basis: z.enum(['researched', 'model-knowledge']).default('researched'),
+  /** Cited sources — required for a researched proposal (§4.2). */
+  sources: z.array(z.string().url()).default([]),
   /** Why these categories, in two or three sentences, citing the sources. */
   rationale: z.string().min(1),
   confidence: z.enum(['high', 'medium', 'low']),
@@ -69,13 +73,15 @@ export const ProposalBody = z.object({
   disagreements: z.array(z.string()).default([]),
   /** The domain is the site's own infrastructure, not an outside vendor. */
   firstParty: z.boolean().default(false),
-});
+  /** 0–100, for model-knowledge classifications. */
+  confidencePct: z.number().min(0).max(100).optional(),
+}).refine((b) => b.basis !== 'researched' || b.sources.length > 0, { message: 'a researched proposal needs at least one cited source', path: ['sources'] });
 export type ProposalBody = z.infer<typeof ProposalBody>;
 
 export const ProposalStatus = z.enum(['proposed', 'confirmed', 'rejected']);
 export type ProposalStatus = z.infer<typeof ProposalStatus>;
 
-export const Proposal = ProposalBody.extend({
+export const Proposal = ProposalBody.innerType().extend({
   id: z.string(), // 'p-<domain>-<n>'
   domain: z.string(),
   status: ProposalStatus.default('proposed'),
