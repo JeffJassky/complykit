@@ -1,0 +1,55 @@
+# Fly.io config for the complykit service (internal tool).
+# The lead creates the app and the volume:
+#   fly apps create complykit
+#   fly volumes create complykit_data --region mia --size 1
+#   fly secrets set SERVICE_PASSWORD=...
+app = "complykit"
+# Miami: the consent scan's measured visitor location is the machine's exit,
+# so this keeps results in Florida, matching local runs.
+primary_region = "mia"
+
+# Graceful stop: the server kills running checks (marked "server stopped"),
+# persists jobs, and exits. Queued jobs resume on the next boot.
+kill_signal = "SIGTERM"
+kill_timeout = 30
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  IDLE_SHUTDOWN_MINUTES = "15"
+  CONCURRENCY = "2"
+  RETENTION_DAYS = "14"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_start_machines = true
+  # Off on purpose: Fly's proxy only sees HTTP traffic and would stop the
+  # Machine mid-scan. The app stops itself (exit 0) after IDLE_SHUTDOWN_MINUTES
+  # with no jobs and no requests.
+  auto_stop_machines = "off"
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    timeout = "5s"
+    method = "GET"
+    path = "/api/health"
+    [http_service.checks.headers]
+      X-Forwarded-Proto = "https"
+
+# A clean idle exit(0) leaves the Machine stopped (the next request wakes it);
+# only crashes (non-zero exit) are restarted.
+[[restart]]
+  policy = "on-failure"
+  retries = 5
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "4096"   # two concurrent Chromium scans
+
+[mounts]
+  source = "complykit_data"
+  destination = "/data"
