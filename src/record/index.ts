@@ -8,3 +8,4 @@ export * from './artifact.js';
 export * from './fingerprint.js';
 export * from './normalize.js';
 export * from './run-store.js';
+export * from './tracking.js';

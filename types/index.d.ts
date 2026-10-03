@@ -154,6 +154,14 @@ export type Artifact =
       scheme: ColorScheme;
       pageState?: string;
     })
+  | (ArtifactBase & {
+      kind: 'consent-timeline';
+      scenario: string;
+      location: Loose;
+      verification: Loose;
+      events: Loose[];
+      snapshot: Loose;
+    })
   | (ArtifactBase & { kind: 'verdict'; ruleId: RuleId; cropHash: string; result: Verdict; model: string });
 export type ArtifactKind = Artifact['kind'];
 
@@ -269,6 +277,7 @@ export interface Property {
   rulesets: string[];
   components?: Record<string, string>;
   policies?: { privacy?: string; terms?: string };
+  consent?: ConsentConfig;
 }
 export interface ReviewConfig {
   models?: { adjudicate?: string; sweep?: string };
@@ -291,7 +300,13 @@ export type Citation =
   | { kind: 'article'; article: number; paragraph?: number; point?: string }
   | { kind: 'sc'; principle: number; guideline: number; sc: number; level: 'A' | 'AA' | 'AAA' }
   | { kind: 'clause'; clause: string }
-  | { kind: 'section'; title: number; section: string };
+  | { kind: 'section'; title: number; section: string }
+  | { kind: 'statute'; code: string; section: string };
+export interface JurisdictionScope {
+  code: string;
+  from?: IsoDate;
+}
+export type RequirementKind = 'obligation' | 'exposure' | 'practice';
 export interface VerifiedUrl {
   href: string;
   verified?: IsoDate;
@@ -316,6 +331,8 @@ export interface Requirement {
   severity: Severity;
   supersedes?: RequirementId;
   volatile?: boolean;
+  jurisdictions?: JurisdictionScope[];
+  kind?: RequirementKind;
 }
 export interface RequirementFilter {
   version?: string;
@@ -416,6 +433,8 @@ export interface PropertyContext {
 }
 export interface EvalContext {
   property: string;
+  tags?: string[];
+  knowledgeBase?: KnowledgeBase;
 }
 export interface Rule<K extends readonly ArtifactKind[] = readonly ArtifactKind[]> extends RuleMeta {
   consumes: K;
@@ -502,3 +521,367 @@ export interface AddFindingOptions {
   persist?: boolean;
 }
 export function addFinding(raw: unknown, opts: AddFindingOptions): Finding;
+
+// --- consent & tracking evaluation (plans/consent-design.md) ----------------
+export type ScenarioId =
+  | 'do-nothing'
+  | 'browse'
+  | 'dismiss'
+  | 'reject'
+  | 'accept'
+  | 'partial'
+  | 'withdraw'
+  | 'gpc'
+  | 'opt-out-all'
+  | 'opt-out-link'
+  | 'return-visit'
+  | 'markers';
+export interface ProxySpec {
+  server: string;
+  username?: string;
+  password?: string;
+  bypass?: string;
+}
+export interface LocationSpec {
+  id: string;
+  label?: string;
+  country?: string;
+  region?: string;
+  proxy?: ProxySpec;
+  timezone?: string;
+  locale?: string;
+  scenarios?: ScenarioId[];
+}
+export interface GeoSourceResult {
+  name: string;
+  ip?: string;
+  country?: string;
+  region?: string;
+  city?: string;
+  org?: string;
+  error?: string;
+}
+export interface LocationVerification {
+  verdict: 'verified' | 'mismatch' | 'unknown';
+  expected: { country?: string; region?: string };
+  observed: { ip?: string; country?: string; region?: string; city?: string };
+  sources: GeoSourceResult[];
+  siteReported: Array<{ source: string; value: string }>;
+  jurisdictions: string[];
+  regionUnverified?: boolean;
+  checkedAt: string;
+  note?: string;
+}
+export interface Initiator {
+  type: string;
+  chain: string[];
+  element?: string;
+}
+export interface RequestEvent {
+  type: 'request';
+  t: number;
+  id: string;
+  url: string;
+  method: string;
+  resourceType: string;
+  origin: 'page' | 'frame' | 'worker' | 'service-worker' | 'exit-beacon';
+  frameUrl?: string;
+  sandboxedFrame?: boolean;
+  pageUrl: string;
+  pageIndex: number;
+  initiator: Initiator;
+  postData?: string;
+  status?: number;
+  failure?: string;
+  setCookies: Array<{ name: string; domain?: string; maxAgeSec?: number; expires?: string; sameSite?: string }>;
+  responseHeaders?: Record<string, string>;
+}
+export type TimelineEvent =
+  | RequestEvent
+  | { type: 'websocket'; t: number; url: string; direction: 'open' | 'sent'; payload?: string; pageIndex: number }
+  | { type: 'cookie-write'; t: number; name: string; value: string; attributes?: string; frameUrl: string; chain: string[]; pageIndex: number }
+  | { type: 'storage-write'; t: number; area: 'local' | 'session'; key: string; value: string; frameUrl: string; chain: string[]; pageIndex: number }
+  | { type: 'action'; t: number; action: 'navigate' | 'click' | 'scroll' | 'type' | 'key' | 'wait' | 'reload' | 'eval'; detail?: string; url?: string; title?: string; pageIndex: number }
+  | { type: 'banner'; t: number; state: 'shown' | 'not-found' | 'gone' | 'reappeared'; cmp?: string; via?: string; pageIndex: number }
+  | { type: 'choice'; t: number; choice: 'accept' | 'reject' | 'dismiss' | 'partial' | 'withdraw' | 'opt-out-link'; ok: boolean; method: string; clicks?: number; note?: string; pageIndex: number }
+  | { type: 'consent-readout'; t: number; label: string; data: Record<string, unknown>; pageIndex: number }
+  | { type: 'screenshot'; t: number; label: string; path: string; pageIndex: number }
+  | {
+      type: 'opt-out-walk';
+      t: number;
+      found: boolean;
+      linkText?: string;
+      href?: string;
+      hasIcon?: boolean;
+      steps?: number;
+      requiredFields: string[];
+      confirmation?: string;
+      landedUrl?: string;
+      pageIndex: number;
+    }
+  | { type: 'note'; t: number; text: string; pageIndex: number };
+export interface CookieSnapshot {
+  name: string;
+  value: string;
+  domain: string;
+  path?: string;
+  expires: number;
+  httpOnly: boolean;
+  secure: boolean;
+  sameSite?: string;
+}
+export interface StorageSnapshot {
+  origin: string;
+  area: 'local' | 'session' | 'indexeddb';
+  key: string;
+  value?: string;
+}
+export interface TimelineSnapshot {
+  site: { url: string; host: string; registrableDomain: string };
+  scenario: ScenarioId;
+  locationId: string;
+  startedAt: string;
+  durationMs: number;
+  gpc: boolean;
+  browser: { name: string; version?: string };
+  pages: Array<{ url: string; title?: string }>;
+  cookies: CookieSnapshot[];
+  storage: StorageSnapshot[];
+  frames: Array<{ url: string; sandboxed?: boolean }>;
+  dns: Array<{ host: string; cname: string[] }>;
+  markers?: { email: string; text: string; clickIds: Record<string, string> };
+  notTested: string[];
+  evidence: { har?: string; timeline?: string };
+}
+export interface Timeline {
+  location: LocationSpec;
+  verification: LocationVerification;
+  events: TimelineEvent[];
+  snapshot: TimelineSnapshot;
+}
+export type PartySource = 'markup' | 'markup-leak' | 'injected' | 'platform' | 'first-party-proxy' | 'unknown';
+export interface PartyInventoryItem {
+  partyId: string;
+  label: string;
+  owner?: string;
+  domain: string;
+  hosts: string[];
+  recognized: boolean;
+  kbStatus: 'confirmed' | 'proposed' | 'unrecognized';
+  categories: string[];
+  behavesLikeTracker: boolean;
+  trackerSignals: string[];
+  sends: string[];
+  stores: Array<{ name: string; kind: string; lifetimeDays: number | null }>;
+  sources: PartySource[];
+  loadedBy: string[];
+  consentApi?: string;
+  seenIn: Array<{ location: string; scenario: ScenarioId; requests: number; firstMs: number; phases: string[] }>;
+}
+export interface ScenarioSummary {
+  scenario: ScenarioId;
+  status: 'tested' | 'not-tested' | 'not-applicable';
+  reason?: string;
+  durationMs?: number;
+  banner?: { found: boolean; cmp?: string; shownAtMs?: number };
+  choice?: { kind: string; ok: boolean; method: string };
+  counts?: { requests: number; thirdPartyRequests: number; parties: number; cookies: number };
+  evidence: { har?: string; timeline?: string; screenshots: string[] };
+}
+export interface LocationSummary {
+  spec: Omit<LocationSpec, 'proxy'> & { proxied: boolean };
+  verification: LocationVerification;
+  scenarios: ScenarioSummary[];
+}
+export interface NotTestedItem {
+  scope: 'location' | 'scenario' | 'page' | 'flow' | 'frame' | 'signal';
+  id: string;
+  location?: string;
+  reason: string;
+}
+export interface TrackingEvaluation {
+  schemaVersion: number;
+  runId: string;
+  property: string;
+  site: { url: string; host: string; registrableDomain: string };
+  versions: { kb: string; registry: string; package: string; autoconsent?: string };
+  startedAt: string;
+  finishedAt: string;
+  locations: LocationSummary[];
+  inventory: PartyInventoryItem[];
+  notTested: NotTestedItem[];
+  researchQueue: Array<{ partyId: string; domain: string; reason: string }>;
+  redacted: boolean;
+}
+export const TRACKING_SCHEMA_VERSION: number;
+export const TRACKING_FILE: string;
+export function redactTimeline(t: Timeline): Timeline;
+export function writeTrackingEvaluation(dir: string, evaluation: TrackingEvaluation): string;
+export function readTrackingEvaluation(dir: string): TrackingEvaluation | undefined;
+
+export interface ConsentConfig {
+  locations?: LocationSpec[];
+  scenarios?: ScenarioId[];
+  journey?: { dwellMs?: number; pageDwellMs?: number; scrollSteps?: number; paths?: string[]; maxPages?: number };
+  knowledgeBase?: { entries?: string; overrides?: Array<{ id: string; categories?: string[]; note?: string }> };
+  rawEvidence?: boolean;
+}
+
+// Knowledge base + jurisdictions (registry).
+export type PartyCategory =
+  | 'necessary'
+  | 'functional'
+  | 'analytics'
+  | 'advertising'
+  | 'session-recording'
+  | 'chat'
+  | 'identity-resolution'
+  | 'fingerprinting'
+  | 'embed'
+  | 'fonts'
+  | 'captcha'
+  | 'cdn'
+  | 'payments'
+  | 'tag-manager'
+  | 'consent'
+  | 'error-monitoring'
+  | 'marketing-email'
+  | 'reviews';
+export type ConsentDecoder = 'google' | 'meta' | 'tiktok' | 'microsoft' | 'iab' | 'none';
+export interface KnowledgeEntry {
+  id: string;
+  vendor: string;
+  owner?: string;
+  match: { hosts: string[]; path?: string };
+  categories: PartyCategory[];
+  sends: string[];
+  stores: Array<{ name: string; kind: 'cookie' | 'local' | 'session'; lifetimeDays?: number }>;
+  consentApi?: string;
+  decoder: ConsentDecoder;
+  restrictedMode?: string;
+  notes?: string;
+  provenance: { proposedBy: string; proposedAt: string; confirmedBy?: string; confirmedAt?: string; sources: string[] };
+}
+/** An entry as written (defaults filled in on parse). */
+export type KnowledgeEntryInput = Omit<KnowledgeEntry, 'sends' | 'stores' | 'decoder' | 'provenance'> & {
+  sends?: string[];
+  stores?: Array<{ name: string; kind?: 'cookie' | 'local' | 'session'; lifetimeDays?: number }>;
+  decoder?: ConsentDecoder;
+  provenance: { proposedBy: string; proposedAt: string; confirmedBy?: string; confirmedAt?: string; sources?: string[] };
+};
+export interface KnowledgeBase {
+  version: string;
+  entries: KnowledgeEntry[];
+}
+export interface SiteOverride {
+  id: string;
+  categories?: PartyCategory[];
+  note?: string;
+}
+export interface MeasuredPlace {
+  country: string;
+  region?: string;
+}
+export const KB_VERSION: string;
+export const KB_ENTRIES: KnowledgeEntry[];
+export const DEFAULT_KB: KnowledgeBase;
+/** Categories that need prior consent in the EU/UK. */
+export const CONSENT_CATEGORIES: ReadonlySet<PartyCategory>;
+/** Categories whose need for consent depends on use (chat, embeds, fonts…). */
+export const CONTEXT_CATEGORIES: ReadonlySet<PartyCategory>;
+/** Categories wiretap suits target (session recording, chat, identity resolution, ads). */
+export const WIRETAP_CATEGORIES: ReadonlySet<PartyCategory>;
+/** "Sale"/"sharing" under US state laws (cross-context behavioral advertising). */
+export const SALE_SHARE_CATEGORIES: ReadonlySet<PartyCategory>;
+export function hostOf(url: string): string;
+export function hostMatches(host: string, suffix: string): boolean;
+export function isEuEea(country: string): boolean;
+export function buildKnowledgeBase(opts?: { extra?: KnowledgeEntryInput[]; overrides?: SiteOverride[] }): KnowledgeBase;
+export function lookupEntry(kb: KnowledgeBase, host: string, pathname?: string): KnowledgeEntry | undefined;
+export function lookupStore(kb: KnowledgeBase, key: string): KnowledgeEntry | undefined;
+export function entryStatus(e: KnowledgeEntry): 'confirmed' | 'proposed';
+export function registrableDomain(host: string): string;
+export function jurisdictionsFor(place: MeasuredPlace): string[];
+export function requirementScopeFor(req: Requirement, codes: readonly string[], onDate: string): string | undefined;
+export function normalizeRegion(country: string, region: string | undefined): string | undefined;
+
+// Evaluation planning + summary (rules).
+export function decideVerification(spec: LocationSpec, sources: GeoSourceResult[], checkedAt?: string): LocationVerification;
+export function defaultScenarios(jurisdictions: readonly string[]): ScenarioId[];
+export function locationPreset(id: string): LocationSpec;
+export interface EvaluationInput {
+  runId: string;
+  property: string;
+  site: { url: string; host: string; registrableDomain: string };
+  versions: { kb: string; registry: string; package: string; autoconsent?: string };
+  startedAt: string;
+  finishedAt: string;
+  locations: Array<{ spec: LocationSpec; verification: LocationVerification; scenarios: ScenarioSummary[] }>;
+  timelines: Timeline[];
+  notTested: NotTestedItem[];
+  redacted: boolean;
+  kb?: KnowledgeBase;
+}
+export function buildTrackingEvaluation(input: EvaluationInput): TrackingEvaluation;
+
+// Consent report.
+export type FindingKind = 'violation' | 'needs-review' | 'exposure' | 'practice';
+export interface GridCell {
+  status: 'tested' | 'not-tested' | 'not-applicable' | 'not-run';
+  reason?: string;
+  counts: Record<FindingKind, number>;
+  banner?: string;
+  choice?: string;
+}
+export interface ReportFinding {
+  fingerprint: string;
+  kind: FindingKind;
+  ruleId: string;
+  requirementId: string;
+  requirementTitle: string;
+  citation: string;
+  sourceUrl?: string;
+  scope: string;
+  party?: string;
+  message: string;
+  severity: string;
+  details: Record<string, unknown>;
+  evidence: Evidence[];
+  plaintiffRank: number;
+  regulatorRank: number;
+}
+export interface ConsentReportModel {
+  site: TrackingEvaluation['site'];
+  runId: string;
+  property: string;
+  startedAt: string;
+  finishedAt: string;
+  versions: TrackingEvaluation['versions'];
+  redacted: boolean;
+  locations: Array<{
+    id: string;
+    label: string;
+    verdict: string;
+    observed: string;
+    jurisdictions: string[];
+    note?: string;
+    siteReported: Array<{ source: string; value: string }>;
+    proxied: boolean;
+  }>;
+  scenarios: ScenarioId[];
+  grid: Record<string, Partial<Record<ScenarioId, GridCell>>>;
+  findings: ReportFinding[];
+  totals: Record<FindingKind, number>;
+  inventory: PartyInventoryItem[];
+  notTested: NotTestedItem[];
+  researchQueue: TrackingEvaluation['researchQueue'];
+  evidenceIndex: Array<{ location: string; scenario: ScenarioId; har?: string; timeline?: string; screenshots: string[] }>;
+}
+export interface ConsentHtmlOptions {
+  runDir?: string;
+}
+export function findingKind(f: Finding): FindingKind;
+export function citationLabel(req: Requirement): string;
+export function buildConsentReportModel(evaluation: TrackingEvaluation, findings: Finding[]): ConsentReportModel;
+export function renderConsentHtml(m: ConsentReportModel, opts?: ConsentHtmlOptions): string;
+export function renderConsentMarkdown(m: ConsentReportModel, opts?: { maxFindings?: number }): string;

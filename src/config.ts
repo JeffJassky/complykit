@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LocationSpec, ScenarioId } from './record/tracking.js';
 
 // The config surface (build-plan §3). Every key is absent-by-default: a static
 // brochure site with no repo, no auth, no key must audit with zero config file
@@ -35,6 +36,31 @@ export const RoutesConfig = z.object({
 });
 export type RoutesConfig = z.infer<typeof RoutesConfig>;
 
+// Consent & tracking evaluation (plans/consent-design.md). Every key optional:
+// `complykit consent --url` runs from this machine's own location with defaults.
+export const ConsentConfig = z.object({
+  locations: z.array(LocationSpec).optional(), // default: [{ id: 'local' }]
+  scenarios: z.array(ScenarioId).optional(), // override every location's default set
+  journey: z
+    .object({
+      dwellMs: z.number().int().optional(),
+      pageDwellMs: z.number().int().optional(),
+      scrollSteps: z.number().int().optional(),
+      paths: z.array(z.string()).optional(), // explicit journey pages (else discovered)
+      maxPages: z.number().int().optional(),
+    })
+    .optional(),
+  // Extra knowledge-base entries (a JSON file of entries) and per-site category overrides.
+  knowledgeBase: z
+    .object({
+      entries: z.string().optional(),
+      overrides: z.array(z.object({ id: z.string(), categories: z.array(z.string()).optional(), note: z.string().optional() })).optional(),
+    })
+    .optional(),
+  rawEvidence: z.boolean().optional(),
+});
+export type ConsentConfig = z.infer<typeof ConsentConfig>;
+
 export const Property = z.object({
   id: z.string().min(1),
   targets: Targets,
@@ -47,6 +73,7 @@ export const Property = z.object({
   rulesets: z.array(z.string()).default(['wcag22aa']),
   components: z.record(z.string()).optional(), // design-system -> element map
   policies: z.object({ privacy: z.string().optional(), terms: z.string().optional() }).optional(),
+  consent: ConsentConfig.optional(),
 });
 export type Property = z.infer<typeof Property>;
 

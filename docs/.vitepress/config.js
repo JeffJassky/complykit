@@ -41,6 +41,7 @@ export default defineConfig({
           items: [
             { text: 'The record format', link: '/guide/record-format' },
             { text: 'Coverage & honesty', link: '/guide/coverage' },
+            { text: 'Consent & tracking by location', link: '/guide/consent' },
             { text: 'Adapters', link: '/guide/adapters' },
           ],
         },

@@ -45,8 +45,30 @@ export const Citation = z.discriminatedUnion('kind', [
     title: z.number().int(),
     section: z.string(),
   }),
+  z.object({
+    kind: z.literal('statute'), // state codes, UK SIs: "Cal. Penal Code §631(a)", "PECR reg. 6"
+    code: z.string(),
+    section: z.string(),
+  }),
 ]);
 export type Citation = z.infer<typeof Citation>;
+
+// Where a requirement applies, as visitor-location codes: 'eu' (EU/EEA), 'uk',
+// 'us', 'us-ca', … or 'any'. Matched against the evidence's VERIFIED location
+// (consent evaluation), never against a hand-set tag. `from` carries a
+// per-jurisdiction effective date when one instrument phases in by state.
+export const JurisdictionScope = z.object({
+  code: z.string().min(1),
+  from: IsoDate.optional(),
+});
+export type JurisdictionScope = z.infer<typeof JurisdictionScope>;
+
+// obligation = a duty the law imposes (a finding against it can be a violation);
+// exposure   = a litigation theory (wiretap statutes) — evidence for counsel, never
+//              presented as a violation;
+// practice   = a regulator-ordered or professional practice, not a statute.
+export const RequirementKind = z.enum(['obligation', 'exposure', 'practice']);
+export type RequirementKind = z.infer<typeof RequirementKind>;
 
 export const AuthorityRef = z.object({
   ref: z.string(),
@@ -73,6 +95,10 @@ export const Requirement = z.object({
   severity: Severity,
   supersedes: RequirementId.optional(), // append-mostly: reinterpretation = new entry
   volatile: z.boolean().optional(), // recheck-each-release flag
+  // Consent-evaluation fields (plans/consent-design.md §8). Absent = obligation
+  // with no location scoping (WCAG, AI Act, the original GDPR entries).
+  jurisdictions: z.array(JurisdictionScope).optional(),
+  kind: RequirementKind.optional(),
 });
 export type Requirement = z.infer<typeof Requirement>;
 

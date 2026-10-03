@@ -46,6 +46,21 @@ export const RULESETS: RuleSet[] = [
       req.citation.kind === 'article' &&
       req.citation.article === 50,
   },
+  {
+    id: 'tracking',
+    description: 'Consent & tracking by visitor location — every requirement scoped to a jurisdiction',
+    match: (req) => Boolean(req.jurisdictions?.length),
+  },
+  {
+    id: 'eprivacy',
+    description: 'EU ePrivacy Art. 5(3) + UK PECR reg. 6 (storage/access consent)',
+    match: (req) => String(req.instrument) === 'eprivacy' || String(req.instrument) === 'pecr',
+  },
+  {
+    id: 'ccpa',
+    description: 'California CCPA opt-out obligations',
+    match: (req) => String(req.instrument) === 'ccpa',
+  },
 ];
 
 export function findRuleSet(id: string): RuleSet | undefined {

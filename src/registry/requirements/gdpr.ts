@@ -19,6 +19,8 @@ export const GDPR_REQUIREMENTS: Requirement[] = [
     urls: [{ href: 'https://eur-lex.europa.eu/eli/reg/2016/679/oj', botBlocked: true }],
     effective: { from: GDPR_EFFECTIVE },
     appliesIf: ['processes-personal-data', 'targets-eu'],
+    jurisdictions: [{ code: 'eu' }],
+    kind: 'obligation',
     severity: 'critical',
   },
   {

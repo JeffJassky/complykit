@@ -38,7 +38,7 @@ describe('pre-consent tracker rule', () => {
     const names = findings.map((f) => (f.details as { name: string }).name).sort();
     expect(names).toEqual(['_fbp', '_ga']); // session_id is necessary
     expect(findings.every((f) => f.confidence === 'violation')).toBe(true); // known vendors
-    expect(String(findings[0].requirementId)).toBe('gdpr.art7.4');
+    expect(String(findings[0].requirementId)).toBe('eprivacy.art5.3');
   });
 
   it('does not flag trackers in the post-accept phase', () => {

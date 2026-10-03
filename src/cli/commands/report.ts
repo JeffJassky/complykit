@@ -1,8 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { loadRun, listRuns, asRunId } from '../../record/index.js';
-import { renderReport, renderHtmlReport, renderJsonReport, coverage, type ReportFormat } from '../../report/index.js';
+import { loadRun, listRuns, asRunId, runDir, readTrackingEvaluation } from '../../record/index.js';
+import {
+  renderReport,
+  renderHtmlReport,
+  renderJsonReport,
+  coverage,
+  buildConsentReportModel,
+  renderConsentHtml,
+  renderConsentMarkdown,
+  type ReportFormat,
+} from '../../report/index.js';
 import { buildCoverageIndex } from '../../coverage-index.js';
 import { loadDispositions, applyDispositions } from '../../report/dispositions.js';
 import { buildVueScopeMap, enrichFindingsWithVueSource } from '../../enrich/vue-scope.js';
@@ -31,13 +40,38 @@ export async function cmdReport(argv: string[], loadConfig?: LoadConfig): Promis
     return 2;
   }
 
-  const format = values.format as ReportFormat | 'json';
-  if (!['jsonl', 'md', 'sarif', 'html', 'json'].includes(format)) {
-    process.stderr.write(`unknown --format: ${format} (jsonl | md | sarif | html | json)\n`);
+  const format = values.format as ReportFormat | 'json' | 'consent-html' | 'consent-md' | 'consent-json';
+  if (!['jsonl', 'md', 'sarif', 'html', 'json', 'consent-html', 'consent-md', 'consent-json'].includes(format)) {
+    process.stderr.write(`unknown --format: ${format} (jsonl | md | sarif | html | json | consent-html | consent-md | consent-json)\n`);
     return 2;
   }
 
   const { run, findings: rawFindings } = loadRun(runId, values.cwd);
+
+  // Consent evaluation runs carry tracking.json; their report has its own shape
+  // (summary grid, inventory, not tested).
+  if (format.startsWith('consent-')) {
+    const dir = runDir(runId, values.cwd);
+    const evaluation = readTrackingEvaluation(dir);
+    if (!evaluation) {
+      process.stderr.write(`run ${String(runId)} has no consent evaluation (tracking.json). Run \`complykit consent\` first.\n`);
+      return 2;
+    }
+    const { findings: kept, excluded: ex } = applyDispositions(rawFindings, loadDispositions(values.cwd));
+    if (ex) process.stderr.write(`${ex} finding(s) excluded by dispositions (false-positive)\n`);
+    const model = buildConsentReportModel(evaluation, kept);
+    const text =
+      format === 'consent-html'
+        ? renderConsentHtml(model, { runDir: dir })
+        : format === 'consent-md'
+          ? renderConsentMarkdown(model)
+          : JSON.stringify(model, null, 2);
+    if (values.out) {
+      fs.writeFileSync(values.out, text);
+      process.stdout.write(`wrote ${values.out}\n`);
+    } else process.stdout.write(text.endsWith('\n') ? text : text + '\n');
+    return 0;
+  }
 
   // Triage ledger: render-time only — stored findings stay granular. Only
   // false-positive dispositions are removed; everything else stays visible.
@@ -68,7 +102,7 @@ export async function cmdReport(argv: string[], loadConfig?: LoadConfig): Promis
       ? renderHtmlReport(run, findings, { cwd: values.cwd, coverage: cov })
       : format === 'json'
         ? renderJsonReport(run, findings, { coverage: cov, cwd: values.cwd })
-        : renderReport(run, findings, format);
+        : renderReport(run, findings, format as ReportFormat);
 
   if (values.out) {
     fs.writeFileSync(values.out, output);

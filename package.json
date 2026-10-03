@@ -100,6 +100,7 @@
     }
   },
   "dependencies": {
+    "@duckduckgo/autoconsent": "^16.44.0",
     "@typescript-eslint/parser": "8.18.0",
     "axe-core": "^4.10.3",
     "eslint": "9.17.0",

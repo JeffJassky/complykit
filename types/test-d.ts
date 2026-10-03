@@ -181,3 +181,76 @@ const _normFindings: Finding[] = _norm.findings;
 // Evidence discriminated union is expressible.
 const ev: Evidence = { kind: 'dom-snippet', html: '<button>' };
 _use(ev);
+
+// Consent & tracking evaluation surface (values exercised as values).
+import {
+  TRACKING_SCHEMA_VERSION,
+  TRACKING_FILE,
+  redactTimeline,
+  writeTrackingEvaluation,
+  readTrackingEvaluation,
+  KB_VERSION,
+  KB_ENTRIES,
+  DEFAULT_KB,
+  CONSENT_CATEGORIES,
+  CONTEXT_CATEGORIES,
+  WIRETAP_CATEGORIES,
+  SALE_SHARE_CATEGORIES,
+  buildKnowledgeBase,
+  lookupEntry,
+  lookupStore,
+  entryStatus,
+  registrableDomain,
+  hostOf,
+  hostMatches,
+  isEuEea,
+  jurisdictionsFor,
+  requirementScopeFor,
+  normalizeRegion,
+  decideVerification,
+  defaultScenarios,
+  locationPreset,
+  buildTrackingEvaluation,
+  findingKind,
+  citationLabel,
+  buildConsentReportModel,
+  renderConsentHtml,
+  renderConsentMarkdown,
+  getRequirement as _getReq,
+  type Timeline,
+  type TrackingEvaluation,
+  type ConsentReportModel,
+  type LocationVerification,
+  type KnowledgeBase,
+  type ScenarioId,
+} from './index.js';
+import { collectConsentEvaluation, DEFAULT_GEO_SOURCES, LOCAL_LOCATION, resolveJourney, contextOptionsFor, redactHar } from './collect-browser.js';
+
+const _tv: number = TRACKING_SCHEMA_VERSION + TRACKING_FILE.length + KB_VERSION.length + KB_ENTRIES.length + DEFAULT_KB.entries.length;
+const _cats: boolean = CONSENT_CATEGORIES.has('analytics') && CONTEXT_CATEGORIES.has('chat') && WIRETAP_CATEGORIES.has('chat') && SALE_SHARE_CATEGORIES.has('advertising');
+declare const tl: Timeline;
+const _red: Timeline = redactTimeline(tl);
+declare const ev2: TrackingEvaluation;
+_use(() => writeTrackingEvaluation('.', ev2));
+const _readEv: TrackingEvaluation | undefined = readTrackingEvaluation('.');
+const kb2: KnowledgeBase = buildKnowledgeBase({ overrides: [{ id: 'intercom', categories: ['functional'] }] });
+_use(lookupEntry(kb2, 'www.facebook.com', '/tr'));
+_use(lookupStore(DEFAULT_KB, '_ga'));
+_use(KB_ENTRIES[0] ? entryStatus(KB_ENTRIES[0]) : 'proposed');
+const _rd: string = registrableDomain('a.b.co.uk') + hostOf('https://x.y/') + String(hostMatches('a.b', 'b')) + String(isEuEea('DE'));
+const _j: string[] = jurisdictionsFor({ country: 'US', region: 'CA' });
+_use(requirementScopeFor(_getReq('eprivacy.art5.3')!, _j, '2026-10-02'));
+_use(normalizeRegion('US', 'California'));
+const _lv: LocationVerification = decideVerification({ id: 'local' }, []);
+const _sc: ScenarioId[] = defaultScenarios(['eu']);
+_use(locationPreset('us-ca'));
+_use(() => buildTrackingEvaluation({ runId: 'r', property: 'p', site: { url: '', host: '', registrableDomain: '' }, versions: { kb: '', registry: '', package: '' }, startedAt: '', finishedAt: '', locations: [], timelines: [], notTested: [], redacted: true }));
+_use(findingKind(finding));
+_use(citationLabel(_getReq('cipa.631')!));
+const model: ConsentReportModel = buildConsentReportModel(ev2, [finding]);
+const _ch: string = renderConsentHtml(model, { runDir: '.' }) + renderConsentMarkdown(model, { maxFindings: 3 });
+_use(() => collectConsentEvaluation({ property: 'p', targetUrl: 'https://x', runId, policy: { registrableDomain, verify: (s, src) => decideVerification(s, src), scenariosFor: () => ['do-nothing'] } }));
+_use(DEFAULT_GEO_SOURCES.length + LOCAL_LOCATION.id.length);
+_use(resolveJourney({ dwellMs: 1 }).dwellMs);
+_use(contextOptionsFor(LOCAL_LOCATION));
+_use(() => redactHar({ log: { entries: [] } }));

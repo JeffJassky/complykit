@@ -1,0 +1,143 @@
+# Consent & tracking by visitor location
+
+`complykit consent` finds out what a site actually does with visitor data —
+per visitor **location** and per consent **scenario** — and reports it against
+the rules for that location: EU ePrivacy Art. 5(3), UK PECR reg. 6, the
+California CCPA regulations and other US state opt-out-signal laws, and (as
+*exposure* for counsel, never as violations) the California, Florida and
+Pennsylvania wiretap statutes.
+
+```bash
+npx complykit consent --url https://shop.example.com
+```
+
+With no config, it runs from this machine's own location, verifies where that
+is, and lists every other location as not tested.
+
+## How it works
+
+1. **An external browser, not a page script.** complykit drives a real Chromium
+   (Playwright) as a first-time visitor and records at the browser level: every
+   request from the page, its frames (including cross-site and `srcdoc`
+   frames), workers and service workers; who caused each one (the call stack,
+   then the chain of scripts that inserted those scripts); every cookie
+   including HttpOnly ones and which response or script set it; storage in
+   every frame; and page-exit beacons, which a small observer recovers on the
+   next same-origin page because the browser's own events miss them.
+2. **Verified locations.** Each location routes through its own proxy/VPN
+   exit (`--proxy de=socks5://…`). Before anything is attributed to a place,
+   the exit is looked up in **two** geolocation sources *through that same
+   proxy*; only a **verified** location produces findings. A mismatch or a
+   failed lookup is reported as not tested. A US state is trusted only when
+   both sources agree on it — otherwise findings stay at country level.
+3. **Scenarios.** Each runs in a brand-new browser profile with a short
+   journey (land, dwell, scroll, a listing/product/cart page, one more
+   same-origin page to flush exit beacons):
+
+   | Scenario | What the browser does |
+   |---|---|
+   | `do-nothing` | load and wait; never touch the banner |
+   | `browse` | full journey; never touch the banner |
+   | `dismiss` | close the banner without choosing, then browse |
+   | `reject` | reject all, reload, browse |
+   | `accept` | accept all, browse |
+   | `partial` | accept analytics only, browse |
+   | `withdraw` | accept, browse, reopen settings and withdraw, reload, browse |
+   | `gpc` | send Global Privacy Control from the first request |
+   | `opt-out-all` | GPC + reject + the site's opt-out link, then browse |
+   | `opt-out-link` | find and walk the "Do Not Sell or Share" link (never submits) |
+   | `return-visit` | reject, then come back in the same profile |
+   | `markers` | fake ad-click IDs in the URL; type marker text into search/email fields without submitting |
+
+   Defaults per location: EU/UK get the banner scenarios plus withdraw,
+   partial, return visit and markers; US states with opt-out-signal laws get
+   reject, the signal, "opt out every way" and the link walk; other US states
+   get reject, the signal and markers. `--quick` runs a reduced set with
+   shorter visits.
+4. **Banner driving** uses `@duckduckgo/autoconsent` (rules for hundreds of
+   consent tools) with its "hide the banner" rules off — hiding is not
+   rejecting — and a heuristic fallback. Every click is confirmed by reading
+   the stored consent state back (Google Consent Mode, OneTrust, Cookiebot,
+   Shopify Customer Privacy, …); a click that didn't change it marks the
+   scenario not tested rather than producing misleading evidence.
+
+## From facts to findings
+
+- **Every outside party is identified** — by the knowledge base when
+  recognized, otherwise by what it did. The tracker pattern doesn't need a
+  name: store a long-lived ID, then send it plus the page address to an outside
+  domain on every page. Unrecognized parties showing it are reported as
+  *unrecognized, behaves like a tracker* and queued for research.
+- **What each request carried** is classified by value, not parameter name:
+  the page address, the title, an ID the browser stores (and which cookie it
+  came from), ad-click IDs, and typed marker text — plain, URL-encoded,
+  base64 or hashed (the normalized-email SHA-256 ad platforms use).
+- **What each vendor was told** is decoded from its own requests (Google
+  `gcs`/`gcd`/`npa`/`rdp`, Meta Limited Data Use, IAB strings). A Consent Mode
+  "advanced" ping with every signal denied is *needs review*, not a violation.
+- **Why it wasn't held back** decides the fix: in the site's own markup; an
+  HTML tag that leaks past script gating (`<img>`, `<iframe>`, preload); injected
+  by another script (a tag manager or app — named); a platform sandbox or
+  worker; or a first-party subdomain whose DNS points at a tracker.
+
+Each finding is **violation**, **needs review**, or **exposure** (a wiretap
+theory, labelled for counsel). One finding per party per jurisdiction, listing
+every location × scenario where it happened. US opt-out findings stay *needs
+review* until you set the hand-set `ccpa-covered` / `us-state-privacy-covered`
+tag — the law's thresholds aren't observable from a browser.
+
+## The report
+
+`<run>/consent-report.html` (self-contained) and a JSON model next to it:
+
+1. **Summary grid** — locations × scenarios with finding counts; "no banner",
+   "not tested" and unverified locations shown as such.
+2. **Findings** — plain language, with when (relative to load and to the
+   banner), what was sent and stored, what the vendor was told, where it came
+   from, the rule and its source, the fix, and evidence. Sort as regulators
+   test, or as plaintiffs build cases.
+3. **Inventory** — every outside party seen, recognized or not.
+4. **Research queue** and **not tested** — including the flows a browser can
+   never see (server-to-server conversion APIs, contracts, backend consent
+   records).
+5. **Evidence** — a HAR file and the timeline per location × scenario.
+   Cookie values, auth headers and request bodies are redacted unless you pass
+   `--raw-evidence`.
+
+Re-render any time: `complykit report --format consent-html|consent-md|consent-json`.
+
+## Configuration
+
+```js
+// complykit.config.js
+export default {
+  properties: [{
+    id: 'shop',
+    targets: { public: { url: 'https://shop.example.com' } },
+    tags: ['ccpa-covered'],               // hand-set, after counsel confirms
+    consent: {
+      locations: [
+        { id: 'de', country: 'DE', proxy: { server: 'socks5://127.0.0.1:1081' } },
+        { id: 'us-ca', country: 'US', region: 'CA', proxy: { server: 'http://gluetun-ca:8888' } },
+        { id: 'us-fl', country: 'US', region: 'FL' },
+      ],
+      journey: { paths: ['/collections/all', '/products/example', '/cart'] },
+      knowledgeBase: {
+        entries: './kb/confirmed.json',   // your confirmed research, kept out of this repo
+        overrides: [{ id: 'intercom', categories: ['functional'], note: 'support portal only' }],
+      },
+    },
+  }],
+};
+```
+
+Running through proxies requires `--authorized`: scanning needs the site
+owner's authorization, in writing when residential proxies are used.
+
+## Limits, stated
+
+The report never says a site is fine. It cannot see server-to-server flows,
+what vendors do afterwards, contracts, backend consent records, unvisited
+pages, storage inside sandboxed frames, or `navigator.globalPrivacyControl`
+inside workers (the `Sec-GPC` header is still sent) — each run lists these as
+not tested.

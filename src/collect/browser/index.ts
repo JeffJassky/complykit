@@ -23,6 +23,22 @@ export type { MeasuredSubject } from './glyph-measure.js';
 export { discoverRoutes } from './routes.js';
 export type { RouteDiscovery, RouteDiscoveryOptions, TraceFn } from './routes.js';
 export { structuralFingerprint } from './fingerprint.js';
+export {
+  collectConsentEvaluation,
+  contextOptionsFor,
+  resolveJourney,
+  redactHar,
+  DEFAULT_GEO_SOURCES,
+  LOCAL_LOCATION,
+} from './evaluation/index.js';
+export type {
+  ConsentEvaluationOptions,
+  ConsentEvaluationCollection,
+  EvaluationPolicy,
+  LocationRun,
+  GeoSource,
+  JourneyOptions,
+} from './evaluation/index.js';
 
 export interface CollectBrowserOptions {
   property: string;

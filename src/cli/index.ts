@@ -14,6 +14,7 @@ import { cmdFindingAdd } from './commands/finding-add.js';
 import { cmdRegistryVerify } from './commands/registry-verify.js';
 import { cmdFixturesRecord } from './commands/fixtures-record.js';
 import { cmdRuns } from './commands/runs.js';
+import { cmdConsent } from './commands/consent.js';
 
 // cli/ is command wiring ONLY — parse args, sequence stages, print progress. No
 // logic worth testing lives here; every command delegates to a tested module.
@@ -45,9 +46,14 @@ Commands
                              --rules <substr,…>    keep findings matching ruleId
                              --requirements <p,…>  keep by requirementId prefix
                              --law <prefix>        keep one instrument (wcag22|gdpr|…)
+  consent                  Consent & tracking evaluation by visitor location: real
+                           browser, verified locations, consent scenarios, HAR
+                           evidence (zero-config: complykit consent --url …;
+                           see complykit consent --help)
   static                   Static layer only: point at a repo, get an in-PR run
   report                   Render a run (--format jsonl|md|sarif|html|json;
-                           html also writes a .json sidecar next to --out)
+                           html also writes a .json sidecar next to --out;
+                           consent runs: --format consent-html|consent-md|consent-json)
   review                   Adjudicate the needs-review queue with C1 (LLM); --dry to preview
   diff                     Compare two runs by fingerprint
   coverage                 Requirement coverage for a ruleset
@@ -77,6 +83,8 @@ async function main(argv: string[]): Promise<number> {
       return cmdInit(rest.length ? [sub, ...rest] : sub ? [sub] : []);
     case 'scan':
       return cmdScan(joinArgs(sub, rest), loadConfigFor);
+    case 'consent':
+      return cmdConsent(joinArgs(sub, rest), loadConfigFor);
     case 'static':
       return cmdStatic(joinArgs(sub, rest));
     case 'report':

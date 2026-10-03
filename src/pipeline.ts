@@ -6,9 +6,21 @@ import {
   type CoverageGap,
   type MatrixCell,
   type AccessLevel,
+  type LocationSpec,
+  type ScenarioId,
+  type TrackingEvaluation,
 } from './record/index.js';
-import { AXE_VERSION, getRequirement, requirementApplies } from './registry/index.js';
-import { ALL_RULES, evaluate, resolveCapsFor } from './rules/index.js';
+import {
+  AXE_VERSION,
+  REGISTRY_VERSION,
+  DEFAULT_KB,
+  getRequirement,
+  requirementApplies,
+  registrableDomain,
+  type KnowledgeBase,
+  type RuleId,
+} from './registry/index.js';
+import { ALL_RULES, evaluate, resolveCapsFor, isLlmRule, tracking } from './rules/index.js';
 import { normalizeEngineArtifacts } from './engines.js';
 import { collectStatic } from './collect/static/index.js';
 import { buildVueScopeMap, enrichFindingsWithVueSource } from './enrich/vue-scope.js';
@@ -213,4 +225,106 @@ export async function runBrowserScan(opts: BrowserScanOptions): Promise<BrowserS
     spike: collection.spike,
     scanned: collection.scanned,
   };
+}
+
+// --- consent evaluation (plans/consent-design.md §2–3) ----------------------
+
+export interface ConsentScanOptions {
+  runId: RunId;
+  property: string;
+  targetUrl: string;
+  cwd?: string;
+  tags?: string[];
+  packageVersion: string;
+  locations?: LocationSpec[];
+  scenarios?: ScenarioId[];
+  /** Quick first look: shorter dwell, one extra page, the reduced scenario set. */
+  quick?: boolean;
+  journey?: import('./collect/browser/evaluation/journey.js').JourneyOptions;
+  knowledgeBase?: KnowledgeBase;
+  rawEvidence?: boolean;
+  har?: boolean;
+  concurrency?: number;
+  /** Tests only: stub geolocation + map fake hosts. */
+  geoSources?: import('./collect/browser/evaluation/location.js').GeoSource[];
+  launchArgs?: string[];
+  bannerWaitMs?: number;
+  trace?: (line: string) => void;
+}
+
+export interface ConsentScanResult {
+  findings: Finding[];
+  evaluation: TrackingEvaluation;
+  matrix: MatrixCell[];
+  rulesExecuted: RuleId[];
+}
+
+/**
+ * The consent & tracking evaluation: verify each location, run its scenarios in
+ * fresh profiles, analyze the timelines, and apply each verified location's
+ * rules. Findings are gated by MEASURED location inside the rules — never by
+ * property tags (tags only lift a US opt-out finding from needs-review to
+ * violation once counsel confirms the business is covered).
+ */
+export async function runConsentScan(opts: ConsentScanOptions): Promise<ConsentScanResult> {
+  let mod: typeof import('./collect/browser/index.js');
+  try {
+    mod = await import('./collect/browser/index.js');
+  } catch {
+    throw new Error(
+      "the consent evaluation needs the 'playwright' peer. Install it with `npm i -D playwright` and `npx playwright install chromium`.",
+    );
+  }
+  const kb = opts.knowledgeBase ?? DEFAULT_KB;
+  const journey = opts.quick ? { dwellMs: 4000, pageDwellMs: 2000, scrollSteps: 2, maxPages: 1, ...opts.journey } : opts.journey;
+  const collection = await mod.collectConsentEvaluation({
+    property: opts.property,
+    targetUrl: opts.targetUrl,
+    runId: opts.runId,
+    cwd: opts.cwd,
+    locations: opts.locations,
+    scenarios: opts.scenarios,
+    journey,
+    rawEvidence: opts.rawEvidence,
+    har: opts.har,
+    concurrency: opts.concurrency,
+    geoSources: opts.geoSources,
+    launchArgs: opts.launchArgs,
+    bannerWaitMs: opts.bannerWaitMs,
+    trace: opts.trace,
+    policy: {
+      registrableDomain,
+      verify: (spec, sources) => tracking.decideVerification(spec, sources),
+      scenariosFor: (_spec, v) => (opts.quick ? tracking.quickScenarios(v.jurisdictions) : tracking.defaultScenarios(v.jurisdictions)),
+    },
+  });
+
+  const raws = evaluate(collection.artifacts, ALL_RULES, { property: opts.property, tags: opts.tags ?? [], knowledgeBase: kb });
+  const findings = resolveRuleFindings(raws, opts.runId, opts.packageVersion);
+  const evaluation = tracking.buildTrackingEvaluation({
+    runId: String(opts.runId),
+    property: opts.property,
+    site: collection.site,
+    versions: { kb: kb.version, registry: REGISTRY_VERSION, package: opts.packageVersion, autoconsent: collection.autoconsentVersion },
+    startedAt: collection.startedAt,
+    finishedAt: collection.finishedAt,
+    locations: collection.locations,
+    timelines: collection.timelines,
+    notTested: collection.notTested,
+    redacted: opts.rawEvidence !== true,
+    kb,
+  });
+  const tested = collection.locations.flatMap((l) => l.scenarios.filter((s) => s.status === 'tested'));
+  const matrix: MatrixCell[] = [
+    {
+      family: 'evidence',
+      routePatterns: 1,
+      instances: collection.timelines.length,
+      viewports: ['desktop'],
+      schemes: ['light'],
+      states: tested.length,
+    },
+  ];
+  const rulesExecuted = ALL_RULES.filter((r) => !isLlmRule(r) && (r as { consumes?: readonly string[] }).consumes?.includes('consent-timeline')).map((r) => r.id);
+  return { findings, evaluation, matrix, rulesExecuted };
 }

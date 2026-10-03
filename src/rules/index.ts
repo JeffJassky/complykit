@@ -11,9 +11,19 @@ import { contrastAdjudicated } from './contrast/adjudicated.js';
 import { preConsentTracker } from './consent/pre-consent-tracker.js';
 import { consentAsymmetry } from './consent/consent-asymmetry.js';
 import { keyboardTrap, focusVisible } from './keyboard/keyboard.js';
+import {
+  priorConsent,
+  withdrawal,
+  optOutSignal,
+  optOutDisplay,
+  optOutLink,
+  wiretapExposure,
+  unrecognizedParty,
+} from './tracking/rules.js';
 
 export * from './types.js';
 export * from './evaluate.js';
+export * as tracking from './tracking/index.js';
 
 // Explicit registration. A mechanical test (test/registration.test.ts) asserts
 // every rule exported from a rule file is registered here and every registered
@@ -30,6 +40,14 @@ export const ALL_RULES: AnyRule[] = [
   consentAsymmetry,
   keyboardTrap,
   focusVisible,
+  // Consent & tracking by visitor location (plans/consent-design.md §2.6).
+  priorConsent,
+  withdrawal,
+  optOutSignal,
+  optOutDisplay,
+  optOutLink,
+  wiretapExposure,
+  unrecognizedParty,
 ];
 
 const RULE_BY_ID = new Map<string, AnyRule>(ALL_RULES.map((r) => [String(r.id), r]));

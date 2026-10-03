@@ -19,6 +19,11 @@ import type {
   CoverageGap,
   Disposition,
   Artifact,
+  Timeline,
+  TimelineEvent,
+  LocationSpec,
+  LocationVerification,
+  TrackingEvaluation,
 } from './record/index.js';
 import type {
   Config,
@@ -28,6 +33,7 @@ import type {
   RoutesConfig,
   BudgetConfig,
   ReviewConfig,
+  ConsentConfig,
 } from './config.js';
 import type {
   Requirement,
@@ -35,6 +41,8 @@ import type {
   Citation,
   EngineRuleMapping,
   VerifiedUrl,
+  KnowledgeEntry,
+  KnowledgeBase,
 } from './registry/index.js';
 import type { RuleMeta, Rule, LlmRule } from './rules/index.js';
 
@@ -60,6 +68,14 @@ export type _check_MatrixCell = Expect<Mutual<MatrixCell, Public.MatrixCell>>;
 export type _check_CoverageGap = Expect<Mutual<CoverageGap, Public.CoverageGap>>;
 export type _check_Disposition = Expect<Mutual<Disposition, Public.Disposition>>;
 export type _check_Artifact = Expect<Mutual<Artifact, Public.Artifact>>;
+export type _check_Timeline = Expect<Mutual<Timeline, Public.Timeline>>;
+export type _check_TimelineEvent = Expect<Mutual<TimelineEvent, Public.TimelineEvent>>;
+export type _check_LocationSpec = Expect<Mutual<LocationSpec, Public.LocationSpec>>;
+export type _check_LocationVerification = Expect<Mutual<LocationVerification, Public.LocationVerification>>;
+export type _check_TrackingEvaluation = Expect<Mutual<TrackingEvaluation, Public.TrackingEvaluation>>;
+export type _check_ConsentConfig = Expect<Mutual<ConsentConfig, Public.ConsentConfig>>;
+export type _check_KnowledgeEntry = Expect<Mutual<KnowledgeEntry, Public.KnowledgeEntry>>;
+export type _check_KnowledgeBase = Expect<Mutual<KnowledgeBase, Public.KnowledgeBase>>;
 
 export type _check_Config = Expect<Mutual<Config, Public.Config>>;
 export type _check_Property = Expect<Mutual<Property, Public.Property>>;

@@ -1,5 +1,5 @@
 import type { Artifact, ArtifactKind, RawFinding, EvidenceKind, Severity, Confidence } from '../record/index.js';
-import type { RequirementId, RuleId, ApplicabilityTag } from '../registry/index.js';
+import type { RequirementId, RuleId, ApplicabilityTag, KnowledgeBase } from '../registry/index.js';
 
 // The executable rule interfaces. rules/ may import record + registry (never a
 // collector — that boundary is dependency-cruiser-enforced). The `consumes`
@@ -32,6 +32,10 @@ export interface PropertyContext {
 
 export interface EvalContext {
   property: string;
+  /** Hand-set property tags (e.g. 'ccpa-covered' lifts a US opt-out finding to a violation). */
+  tags?: string[];
+  /** Knowledge base for party recognition (consent evaluation); default: the seed KB. */
+  knowledgeBase?: KnowledgeBase;
 }
 
 /** A deterministic rule: pure `(artifacts) => RawFinding[]`. */

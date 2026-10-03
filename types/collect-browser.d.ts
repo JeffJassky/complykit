@@ -99,3 +99,74 @@ export interface BrowserCollection {
   scanned: string[];
 }
 export function collectBrowser(opts: CollectBrowserOptions): Promise<BrowserCollection>;
+
+// --- consent & tracking evaluation (plans/consent-design.md §2) -------------
+import type {
+  LocationSpec,
+  LocationVerification,
+  GeoSourceResult,
+  ScenarioId,
+  ScenarioSummary,
+  NotTestedItem,
+  Timeline,
+} from './index.js';
+
+export interface GeoSource {
+  name: string;
+  lookup(fetchJson: (url: string) => Promise<unknown>, spec: LocationSpec): Promise<Omit<GeoSourceResult, 'name'>>;
+}
+export const DEFAULT_GEO_SOURCES: GeoSource[];
+export const LOCAL_LOCATION: LocationSpec;
+
+export interface JourneyOptions {
+  dwellMs?: number;
+  pageDwellMs?: number;
+  scrollSteps?: number;
+  paths?: string[];
+  maxPages?: number;
+  navTimeoutMs?: number;
+}
+export function resolveJourney(j?: JourneyOptions): Required<Omit<JourneyOptions, 'paths'>> & { paths?: string[] };
+
+export interface EvaluationPolicy {
+  registrableDomain(host: string): string;
+  verify(spec: LocationSpec, sources: GeoSourceResult[]): LocationVerification;
+  scenariosFor(spec: LocationSpec, verification: LocationVerification): ScenarioId[];
+}
+export interface ConsentEvaluationOptions {
+  property: string;
+  targetUrl: string;
+  runId: RunId;
+  cwd?: string;
+  locations?: LocationSpec[];
+  scenarios?: ScenarioId[];
+  journey?: JourneyOptions;
+  geoSources?: GeoSource[];
+  rawEvidence?: boolean;
+  har?: boolean;
+  bannerWaitMs?: number;
+  scenarioTimeoutMs?: number;
+  launchArgs?: string[];
+  concurrency?: number;
+  policy: EvaluationPolicy;
+  trace?: (line: string) => void;
+}
+export interface LocationRun {
+  spec: LocationSpec;
+  verification: LocationVerification;
+  scenarios: ScenarioSummary[];
+}
+export interface ConsentEvaluationCollection {
+  artifacts: Artifact[];
+  timelines: Timeline[];
+  locations: LocationRun[];
+  notTested: NotTestedItem[];
+  site: { url: string; host: string; registrableDomain: string };
+  autoconsentVersion?: string;
+  startedAt: string;
+  finishedAt: string;
+}
+export function collectConsentEvaluation(opts: ConsentEvaluationOptions): Promise<ConsentEvaluationCollection>;
+/** Browser-context settings (proxy, timezone, locale) for a location. Playwright's options type, kept loose here. */
+export function contextOptionsFor(spec: LocationSpec): Record<string, unknown>;
+export function redactHar(har: { log?: { entries?: unknown[]; comment?: string } }): void;

@@ -99,6 +99,18 @@ export const Artifact = z.discriminatedUnion('kind', [
     pageState: z.string().optional(),
   }),
   z.object({
+    // One location × scenario of the consent evaluation (plans/consent-design.md
+    // §2.4): the timeline of everything the browser did, plus the end-of-visit
+    // snapshot. Inner shapes are record/tracking.ts's Timeline, parsed by rules.
+    kind: z.literal('consent-timeline'),
+    ...ArtifactBase,
+    scenario: z.string(),
+    location: Loose,
+    verification: Loose,
+    events: z.array(Loose),
+    snapshot: Loose,
+  }),
+  z.object({
     kind: z.literal('verdict'),
     ...ArtifactBase,
     ruleId: RuleId,

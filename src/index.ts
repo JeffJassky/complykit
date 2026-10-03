@@ -19,6 +19,7 @@ export type {
   RoutesConfig,
   ReviewConfig,
   BudgetConfig,
+  ConsentConfig,
 } from './config.js';
 
 // --- record: runtime ---------------------------------------------------------
@@ -43,6 +44,11 @@ export {
   asRuleId,
   asRunId,
   asInstrumentId,
+  TRACKING_SCHEMA_VERSION,
+  TRACKING_FILE,
+  redactTimeline,
+  writeTrackingEvaluation,
+  readTrackingEvaluation,
 } from './record/index.js';
 
 // --- record: types -----------------------------------------------------------
@@ -78,6 +84,24 @@ export type {
   FingerprintInput,
   FindingCaps,
   NormalizeContext,
+  ScenarioId,
+  ProxySpec,
+  LocationSpec,
+  GeoSourceResult,
+  LocationVerification,
+  Initiator,
+  RequestEvent,
+  TimelineEvent,
+  CookieSnapshot,
+  StorageSnapshot,
+  TimelineSnapshot,
+  Timeline,
+  PartySource,
+  PartyInventoryItem,
+  ScenarioSummary,
+  LocationSummary,
+  NotTestedItem,
+  TrackingEvaluation,
 } from './record/index.js';
 
 // --- registry: runtime -------------------------------------------------------
@@ -101,6 +125,24 @@ export {
   requirementApplies,
   classifyCookie,
   requiresConsent,
+  KB_VERSION,
+  KB_ENTRIES,
+  DEFAULT_KB,
+  CONSENT_CATEGORIES,
+  CONTEXT_CATEGORIES,
+  WIRETAP_CATEGORIES,
+  SALE_SHARE_CATEGORIES,
+  hostOf,
+  hostMatches,
+  isEuEea,
+  buildKnowledgeBase,
+  lookupEntry,
+  lookupStore,
+  entryStatus,
+  registrableDomain,
+  jurisdictionsFor,
+  requirementScopeFor,
+  normalizeRegion,
 } from './registry/index.js';
 
 // --- registry: types ---------------------------------------------------------
@@ -118,6 +160,15 @@ export type {
   VerifyReport,
   CookieCategory,
   CookieClassification,
+  JurisdictionScope,
+  RequirementKind,
+  KnowledgeBase,
+  KnowledgeEntry,
+  KnowledgeEntryInput,
+  PartyCategory,
+  ConsentDecoder,
+  SiteOverride,
+  MeasuredPlace,
 } from './registry/index.js';
 
 // --- engine normalization (engine output -> findings) -----------------------
@@ -129,6 +180,8 @@ export { buildCoverageIndex } from './coverage-index.js';
 
 // --- rules: runtime + types --------------------------------------------------
 export { ALL_RULES, getRule, resolveCapsFor, evaluate, isLlmRule } from './rules/index.js';
+export { decideVerification, defaultScenarios, locationPreset, buildTrackingEvaluation } from './rules/tracking/index.js';
+export type { EvaluationInput } from './rules/tracking/index.js';
 export type {
   RuleMeta,
   Rule,
@@ -153,6 +206,11 @@ export {
   budgetBreaches,
   coverage,
   renderCoverage,
+  findingKind,
+  citationLabel,
+  buildConsentReportModel,
+  renderConsentHtml,
+  renderConsentMarkdown,
 } from './report/index.js';
 export type {
   ReportFormat,
@@ -164,6 +222,11 @@ export type {
   CoverageIndex,
   CoverageRow,
   CoverageMatrix,
+  FindingKind,
+  GridCell,
+  ReportFinding,
+  ConsentReportModel,
+  ConsentHtmlOptions,
 } from './report/index.js';
 
 // --- orchestration ----------------------------------------------------------

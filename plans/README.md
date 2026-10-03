@@ -19,6 +19,13 @@ implementations to mine. It's greenfield, so planning starts from research.
 | [research-distribution.md](research-distribution.md) | How to distribute cross-platform — SKILL.md standard adoption, registries, installers, versioning/auto-update |
 | [research-compliance-sources.md](research-compliance-sources.md) | The authoritative legal/technical reference registry each skill cites — with verification status per URL |
 
+### Consent & tracking by visitor location (2026-09-30, plan approved 2026-10-02)
+
+| Doc | Question it answers |
+|---|---|
+| [research-consent-law.md](research-consent-law.md) | What US privacy statutes, US wiretap litigation, and EU/UK law actually require of pixels and banners; how regulators and plaintiffs find violations |
+| [consent-design.md](consent-design.md) | **Approved plan.** How an evaluation works and what the report shows; knowledge base + AI/human research workflow; in-house consent tool; guard; milestones M6–M13 |
+
 ## Findings that shape the build
 
 1. **Format is settled.** SKILL.md (agentskills.io) is an open standard adopted by all

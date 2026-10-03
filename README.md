@@ -57,6 +57,21 @@ product; git, a laptop, or a scheduled agent can all produce and read it.
 | browser probes (keyboard walk) + GDPR consent evidence (three-way, dark patterns, cookie classification) | `playwright` | ✅ |
 | C1 LLM review — mode-1 crop adjudication, pHash dedupe, verdict cache | `@anthropic-ai/sdk` | ✅ |
 | C1 tiled visual sweep (Set-of-Marks) + C2 skills + static-HTML report | `@anthropic-ai/sdk` | ✅ |
+| consent & tracking by visitor location (`complykit consent`: verified locations, 12 scenarios, ePrivacy / PECR / CCPA / state opt-out signals, wiretap exposure, HAR evidence) | `playwright` | ✅ |
+
+## Consent & tracking by location
+
+```bash
+npx complykit consent --url https://shop.example.com
+```
+
+A real browser visits the site from each **verified** location (two
+geolocation sources, through the location's own proxy), in each consent
+scenario (do nothing, reject, accept, withdraw, Global Privacy Control, opt-out
+link, typed markers…), records every request, cookie and storage write with the
+script that caused it, and reports findings under that location's rules — plus
+an inventory of every outside party and everything not tested. See
+[the guide](https://jeffjassky.github.io/complykit/guide/consent).
 
 ## Reports
 

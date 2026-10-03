@@ -4,7 +4,11 @@ import type { Rule, EvalContext } from '../types.js';
 import { asRuleId, asRequirementId, classifyCookie, requiresConsent } from '../../registry/index.js';
 
 // A tracker cookie set BEFORE any consent interaction — the pre-consent baseline
-// capture (browser-analysis-design D). Non-necessary cookies (analytics /
+// capture (browser-analysis-design D). The legal hook is ePrivacy Art. 5(3)
+// (storage/access needs prior consent), not GDPR Art. 7(4) as first wired
+// (plans/consent-design.md §8). The fingerprint is unchanged (requirement ids
+// are not part of a presence fingerprint). For location-aware evidence — UK
+// PECR, US opt-out signals, wiretap exposure — see `complykit consent`. Non-necessary cookies (analytics /
 // advertising) present pre-consent are set without a lawful basis. A cookie we
 // can attribute to a known vendor is a violation; an unknown/heuristic match is
 // needs-review. Fingerprints collapse the same cookie across route instances.
@@ -13,7 +17,7 @@ const Cookie = z.object({ name: z.string(), domain: z.string().optional() });
 
 export const preConsentTracker: Rule<readonly ['cookie-capture']> = {
   id: asRuleId('consent.pre-consent-tracker'),
-  requirements: [asRequirementId('gdpr.art7.4')],
+  requirements: [asRequirementId('eprivacy.art5.3')],
   layer: 'browser',
   confidence: 'violation',
   detects: 'presence',
@@ -38,7 +42,7 @@ export const preConsentTracker: Rule<readonly ['cookie-capture']> = {
         seen.add(name);
         out.push({
           ruleId: asRuleId('consent.pre-consent-tracker'),
-          requirementId: asRequirementId('gdpr.art7.4'),
+          requirementId: asRequirementId('eprivacy.art5.3'),
           subject: {
             property: ctx.property,
             // The page the cookie was observed on — the finding's locus.

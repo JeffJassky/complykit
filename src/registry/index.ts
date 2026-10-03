@@ -28,6 +28,29 @@ export {
 } from './mappings/index.js';
 export { verifyRegistry, unmappedEngineRules } from './verify.js';
 export { classifyCookie, requiresConsent, type CookieCategory, type CookieClassification } from './cookies.js';
+export { jurisdictionsFor, requirementScopeFor, normalizeRegion, isEuEea, type MeasuredPlace } from './jurisdictions.js';
+export {
+  KB_VERSION,
+  KB_ENTRIES,
+  DEFAULT_KB,
+  buildKnowledgeBase,
+  lookupEntry,
+  lookupStore,
+  entryStatus,
+  registrableDomain,
+  hostOf,
+  hostMatches,
+  CONSENT_CATEGORIES,
+  CONTEXT_CATEGORIES,
+  WIRETAP_CATEGORIES,
+  SALE_SHARE_CATEGORIES,
+  type KnowledgeBase,
+  type KnowledgeEntry,
+  type KnowledgeEntryInput,
+  type PartyCategory,
+  type ConsentDecoder,
+  type SiteOverride,
+} from './kb/index.js';
 
 // --- types ------------------------------------------------------------------
 export type { RequirementId, RuleId, InstrumentId, IsoDate, Severity, Confidence } from './ids.js';
@@ -40,6 +63,8 @@ export type {
   RequirementFilter,
   Instrument,
   EngineRuleMapping,
+  JurisdictionScope,
+  RequirementKind,
 } from './schema.js';
 export type { RuleSet } from './rulesets.js';
 export type { VerifyReport } from './verify.js';
@@ -48,7 +73,7 @@ export type { EngineTable } from './mappings/index.js';
 // Stamped into every run.json (types-sketch Run.versions.registry): a finding
 // means what the registry meant at the version that produced it. Bump on any
 // requirement/mapping change; entries are append-mostly, never edited in place.
-export const REGISTRY_VERSION = '0.1.0';
+export const REGISTRY_VERSION = '0.2.0';
 
 const REQUIREMENT_BY_ID = new Map<string, Requirement>(
   ALL_REQUIREMENTS.map((r) => [String(r.id), r]),

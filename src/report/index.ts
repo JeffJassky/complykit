@@ -10,3 +10,6 @@ export * from './json.js';
 export * from './model.js';
 export * from './coverage.js';
 export * from './dispositions.js';
+export * from './consent-model.js';
+export * from './consent-html.js';
+export * from './consent-md.js';
