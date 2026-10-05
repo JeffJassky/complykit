@@ -188,6 +188,13 @@ export function decideVerdict(hist: RatioHistogram, required: number): Verdict {
 export const DIFF_FLOOR = 6; // |ΔR|+|ΔG|+|ΔB| at or below this = no change
 export const MASK_FRACTION = 0.25; // glyph pixel: d >= max(DIFF_FLOOR, MASK_FRACTION*maxDiff)
 export const CORE_FRACTION = 0.6; // core pixel: d >= max(DIFF_FLOOR, CORE_FRACTION*maxDiff)
+// When the CSS colour doesn't predict the rendered ink (an overlay over the
+// text, a filter), each pixel is measured as rendered — and an anti-aliased
+// edge pixel at 60% coverage is a blend, not the text colour. Thin, grayscale-
+// antialiased text (Linux) has many such pixels: black text under a 10% white
+// scrim measured 4.3:1 from its edges instead of ~17:1. Rendered-ink pixels
+// must be (nearly) fully covered.
+export const RENDERED_CORE_FRACTION = 0.85;
 export const INK_TOLERANCE = 36; // |pred−A| channel sum for an ink match
 export const INK_MIN_MATCHES = 3;
 
@@ -350,6 +357,7 @@ export function measureGlyphs(input: GlyphInput): GlyphResult {
 
   const useCss = fg !== null && inkMatches >= Math.min(INK_MIN_MATCHES, coreCount);
   const fgSource: 'css' | 'rendered' = useCss ? 'css' : 'rendered';
+  const renderedCoreThreshold = Math.max(DIFF_FLOOR, RENDERED_CORE_FRACTION * maxDiff);
 
   let worst: { fg: Rgb; bg: Rgb; ratio: number } | null = null;
   let best: { fg: Rgb; bg: Rgb; ratio: number } | null = null;
@@ -360,7 +368,6 @@ export function measureGlyphs(input: GlyphInput): GlyphResult {
     if (addedPaint(pa, pb)) return;
     const d = channelSum(pa, pb);
     const isGlyph = d >= glyphThreshold;
-    const isCore = d >= coreThreshold;
     if (!isGlyph) return;
 
     let contributes = false;
@@ -369,7 +376,7 @@ export function measureGlyphs(input: GlyphInput): GlyphResult {
       // fg is non-null whenever useCss is true.
       pixelFg = composite((fg as { rgb: Rgb; alpha: number }).rgb, ea, pb);
       contributes = true;
-    } else if (isCore) {
+    } else if (d >= renderedCoreThreshold) {
       pixelFg = pa;
       contributes = true;
     }

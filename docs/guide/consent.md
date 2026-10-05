@@ -136,8 +136,8 @@ scan ──► queue ──► proposal (cited) ──► a person confirms ─�
   or `--kb-dir`), because it names the sites you scanned.
 - **Proposal.** `complykit kb research` asks the Anthropic API (with web search;
   needs `ANTHROPIC_API_KEY`) to research the most widespread open items and
-  propose entries **with cited sources**. Without a key, `complykit kb packet
-  <domain>` prints the same brief for a person or a coding agent, and
+  propose entries **with cited sources**. Without a key, `complykit kb packet <domain>`
+  prints the same brief for a person or a coding agent, and
   `complykit kb propose <domain> --file result.json --by <who>` imports the result.
   What complykit observed outranks a vendor's documentation; where they disagree,
   the proposal records it.
@@ -156,8 +156,8 @@ complykit kb proposals
 complykit kb confirm p-pixelco.io-1 --by jeff
 ```
 
-`complykit kb ingest <run-dir…>` adds earlier runs to the queue; `kb dismiss
-<domain>` removes noise (the site's own infrastructure) without an entry. The web
+`complykit kb ingest <run-dir…>` adds earlier runs to the queue; `kb dismiss <domain>`
+removes noise (the site's own infrastructure) without an entry. The web
 service exposes the same queue and review under **Knowledge base**.
 
 ## Configuration
