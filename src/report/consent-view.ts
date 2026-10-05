@@ -1,3 +1,4 @@
+import { workspaceId, classificationControls, tone } from './workspace.js';
 import type { PartyInventoryItem } from '../record/index.js';
 import type { ConsentReportModel, ReportFinding } from './consent-model.js';
 import { escapeHtml as esc, explain, type Explanation } from './human.js';
@@ -109,16 +110,18 @@ export function toolStatus(p: PartyInventoryItem, groups: ActionGroup[], m: Cons
 }
 export function toolInventory(m: ConsentReportModel, groups: ActionGroup[]): string {
   return m.inventory.map((p, i) => {
+    const classKey = workspaceId('tool', [p.partyId, p.domain]);
     const linked = relatedActions(p, groups);
     const review = purposeNeedsReview(p, m);
     const state = [linked.some((g) => g.kind === 'violation') ? 'problem' : '', review ? 'classify' : '', linked.some((g) => g.kind !== 'violation') ? 'review' : '', !linked.length ? 'none' : ''].filter(Boolean).join(' ');
-    return `<article class="human-card tool-card" id="tool-${i + 1}" data-tool-state="${state}">
-      <span class="human-status">${esc(toolStatus(p, groups, m))}</span><h3>${esc(p.label)}</h3>
+    return `<article class="human-card tool-card" id="tool-${i + 1}" data-tool-state="${state}" data-original-tool-state="${state}" data-class-key="${classKey}" data-class-required="${review}" data-scan-tone="${linked.some((g) => g.kind === 'violation') ? 'red' : review || linked.length ? 'amber' : 'neutral'}" data-tone="${linked.some((g) => g.kind === 'violation') ? 'red' : review || linked.length ? 'amber' : 'neutral'}">
+      <span class="human-status" data-tone="${tone(toolStatus(p, groups, m))}">${esc(toolStatus(p, groups, m))}</span> <span class="classification-badge" data-class-badge></span><h3>${esc(p.label)}</h3>
       <p>${esc(purpose(p))}${review ? ' — this description needs confirmation.' : '.'}</p>
       <p><strong>Information observed:</strong> ${p.sends.length ? esc(p.sends.map((k) => DATA_LABEL[k] ?? k).join(', ')) : 'No recognized information fields recorded. This does not mean no information was sent.'}</p>
       <p><strong>Cookies and other browser storage:</strong> ${p.stores.length ? p.stores.map((s) => `<code>${esc(s.name)}</code> (${s.kind === 'cookie' ? 'cookie' : 'other browser storage'})`).join(', ') : 'None recorded for this tool.'}</p>
       <p><strong>Next step:</strong> ${review ? 'Confirm the owner, purpose and category with the vendor or site owner. Check whether your privacy notice and consent settings describe this use.' : linked.length ? 'Review the linked actions below.' : 'Keep this tool in your inventory. No issue was linked by these checks; other uses and locations may still need review.'}</p>
       ${linked.length ? `<p>${linked.map((g) => `<a class="human-link" href="#${g.id}">${esc(actionTitle(g))}</a>`).join('<br>')}</p>` : ''}
+${classificationControls(classKey, p.label)}
       <details class="human-details"><summary>Technical details and observed visitor actions</summary><div>
       <p>Associated domain: <code>${esc(p.domain)}</code>. ${p.owner ? `Owner: ${esc(p.owner)}.` : 'Owner not identified.'} Recognition: ${esc(p.kbStatus)}.</p>
       <p>Hosts: ${p.hosts.map((h) => `<code>${esc(h)}</code>`).join(', ')}</p>
@@ -135,11 +138,12 @@ export function cookieInventory(m: ConsentReportModel, groups: ActionGroup[]): s
     // own purpose, exact domain or a violation of its own.
     const stores = new Map(p.stores.map((s) => [JSON.stringify([s.name, s.kind, s.lifetimeDays]), s]));
     return [...stores.values()].map((s) => {
+      const classKey = workspaceId('storage', [p.partyId, p.domain, s.kind, s.name]);
       const linked = relatedActions(p, groups);
       const exactProblems = linked.filter((g) => s.kind === 'cookie' && g.kind === 'violation' && g.findings.some((f) => f.evidence.some((e) => e.kind === 'cookie' && e.name === s.name && (e.domain.replace(/^\./, '') === p.domain || p.hosts.includes(e.domain.replace(/^\./, ''))))));
       const status = exactProblems.length ? 'Cookie problem observed' : purposeNeedsReview(p, m) ? 'Needs classification or verification' : 'No cookie-specific problem recorded';
-      const state = [exactProblems.length ? 'problem' : 'none', purposeNeedsReview(p, m) ? 'classify' : ''].filter(Boolean).join(' ');
-      return `<tr data-cookie-state="${state}"><td><code>${esc(s.name)}</code><br>${s.kind === 'cookie' ? 'Cookie' : 'Other browser storage'}</td><td>${esc(p.label)}</td><td>${esc(purpose(p))}<br><span class="human-muted">Tool category; verify this item’s purpose</span></td><td>${s.lifetimeDays === null ? 'No expiry recorded' : s.lifetimeDays === 0 ? 'Current browser session' : `${s.lifetimeDays} day(s)`}</td><td>${esc(status)}${linked.length ? `<br>${linked.map((g) => `<a class="human-link" href="#${g.id}">${esc(KIND_HUMAN[g.kind])} for this tool</a>`).join('<br>')}` : ''}</td></tr>`;
+      const state = [exactProblems.length ? 'problem' : 'none', 'classify'].join(' ');
+      return `<tr data-cookie-state="${state}" data-original-cookie-state="${state}" data-class-key="${classKey}" data-class-required="true"><td><code>${esc(s.name)}</code><br>${s.kind === 'cookie' ? 'Cookie' : 'Other browser storage'}</td><td>${esc(p.label)}</td><td>${esc(purpose(p))}<br><span class="human-muted">Tool category; verify this item’s purpose</span></td><td>${s.lifetimeDays === null ? 'No expiry recorded' : s.lifetimeDays === 0 ? 'Current browser session' : `${s.lifetimeDays} day(s)`}</td><td><span class="human-status" data-tone="${tone(status)}">${esc(status)}</span><br><span class="classification-badge" data-class-badge></span>${classificationControls(classKey, s.name)}${linked.length ? `<br>${linked.map((g) => `<a class="human-link" href="#${g.id}">${esc(KIND_HUMAN[g.kind])} for this tool</a>`).join('<br>')}` : ''}</td></tr>`;
     });
   });
   return rows.length ? `<label>Show storage items <select id="cookie-filter"><option value="all">All items</option><option value="classify">Needs classification or verification</option><option value="problem">Cookie problem observed</option><option value="none">No cookie-specific problem recorded</option></select></label><div class="human-table-wrap"><table class="human-table"><caption>Tool-level tracking findings do not automatically make every cookie from that tool a violation.</caption><thead><tr><th>Name and type</th><th>Associated tool</th><th>Purpose to verify</th><th>How long it stays</th><th>What needs attention</th></tr></thead><tbody>${rows.join('')}</tbody></table></div><p id="cookie-filter-empty" class="human-empty" hidden>No storage items match this view.</p>` : '<p class="human-empty">No cookies or other browser storage were recorded in the tool inventory. Tracking can still happen without cookies.</p>';

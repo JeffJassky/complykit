@@ -7,13 +7,13 @@ const CONNECTION_LABEL: Record<Connection, string> = {
   connecting: 'Connecting…',
   live: 'Live',
   reconnecting: 'Reconnecting…',
-  polling: 'Polling every 5s',
+  polling: 'Updates every few seconds',
   offline: 'Offline',
 };
 
 const VIEWS: Array<{ id: View; href: string; label: string; icon: IconName }> = [
-  { id: 'checks', href: '#', label: 'Checks', icon: 'shield' },
-  { id: 'kb', href: '#kb', label: 'Knowledge base', icon: 'book' },
+  { id: 'checks', href: '#', label: 'Website scans', icon: 'shield' },
+  { id: 'kb', href: '#kb', label: 'Tool research', icon: 'book' },
 ];
 
 interface Props {
@@ -37,8 +37,8 @@ export function Header({ view, server, running, queued, connection }: Props) {
             </svg>
           </span>
           <div>
-            <h1 className="brand-name">complykit</h1>
-            <p className="brand-tag">Checks what a website sends to trackers before consent, after a reject and under Global Privacy Control.</p>
+            <span className="brand-name">complykit</span>
+            <p className="brand-tag">Understand your website. Know what to do next.</p>
           </div>
         </div>
         <nav className="views" aria-label="Sections">
@@ -49,7 +49,7 @@ export function Header({ view, server, running, queued, connection }: Props) {
             </a>
           ))}
         </nav>
-        <dl className="server-facts" aria-label="Server status">
+        <details className="service-status"><summary><span className={`conn conn-${connection}`}><span className="conn-dot" aria-hidden="true" />{CONNECTION_LABEL[connection]}</span></summary><dl className="server-facts" aria-label="Server status">
           <div className="fact">
             <dt>Running</dt>
             <dd>
@@ -71,11 +71,11 @@ export function Header({ view, server, running, queued, connection }: Props) {
             <span className="conn-dot" aria-hidden="true" />
             <span>{CONNECTION_LABEL[connection]}</span>
           </div>
-        </dl>
+        </dl></details>
       </div>
       {server ? (
         <p className="retention">
-          Reports are kept {server.retentionDays} {server.retentionDays === 1 ? 'day' : 'days'}, then deleted. Download anything you need to keep.
+          Reports are available for {server.retentionDays} {server.retentionDays === 1 ? 'day' : 'days'}, then deleted. Download anything you need to keep.
         </p>
       ) : null}
     </header>

@@ -101,12 +101,11 @@ export function KnowledgeBase({ version, pushToast }: { version: number; pushToa
       <div>
         <section className="panel kb-intro" aria-labelledby={`${id}-title`}>
           <div className="kb-intro-text">
-            <h2 id={`${id}-title`} className="panel-title">
-              Knowledge base
-            </h2>
+            <h1 id={`${id}-title`} className="research-title">
+              Make sense of unfamiliar tools
+            </h1>
             <p className="muted">
-              Parties a scan couldn’t recognize land in the research queue. Research turns each into a proposal with cited sources; a person confirms or rejects it. Confirmed entries are recognized on
-              every later scan.
+              Some tools need a closer look. Research their provider and purpose, review the sources, then confirm what belongs in your shared tool library. Future scans use confirmed entries.
             </p>
             {data ? (
               <dl className="kb-facts">
@@ -127,7 +126,7 @@ export function KnowledgeBase({ version, pushToast }: { version: number; pushToa
           </div>
           <div className="kb-reviewer">
             <label htmlFor={`${id}-reviewer`} className="field-label">
-              Reviewer
+              Your name for reviews
             </label>
             <input
               id={`${id}-reviewer`}
@@ -166,8 +165,8 @@ export function KnowledgeBase({ version, pushToast }: { version: number; pushToa
         )
       ) : (
         <>
-          <KbProposals proposals={proposed} reviewer={reviewer.trim()} reviewerInputId={`${id}-reviewer`} onChanged={refresh} pushToast={pushToast} />
           <KbQueue data={data} onResearch={startResearch} onChanged={refresh} pushToast={pushToast} />
+          <KbProposals proposals={proposed} reviewer={reviewer.trim()} reviewerInputId={`${id}-reviewer`} onChanged={refresh} pushToast={pushToast} />
           <KbEntries entries={data.entries} dir={data.dir} />
         </>
       )}

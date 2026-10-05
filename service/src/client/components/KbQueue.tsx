@@ -249,7 +249,7 @@ function ItemDetail({
           </GuardedButton>
           <button type="button" className="btn btn-secondary btn-sm" disabled={copying} onClick={() => void copyPacket()}>
             <Icon name="copy" size={14} />
-            {copying ? 'Copying…' : 'Copy packet'}
+            {copying ? 'Copying…' : 'Copy research brief'}
           </button>
           {item.status !== 'dismissed' ? (
             <button ref={dismissRef} type="button" className="btn btn-ghost btn-sm" onClick={() => setDismissing(true)}>
@@ -283,21 +283,18 @@ export function KbQueue({ data, onResearch, onChanged, pushToast }: { data: KbRe
     <section className="section" aria-labelledby="kb-queue-title">
       <div className="section-head">
         <h2 id="kb-queue-title" className="section-title">
-          Research queue
+          1. Research unfamiliar tools
           <span className="section-count">{openCount} open</span>
         </h2>
         <GuardedButton blocker={blocker ?? (openCount ? null : 'Nothing open to research.')} className="btn btn-secondary btn-sm" onClick={() => onResearch({ top: TOP })}>
           <Icon name="spark" size={14} />
-          Research top {TOP}
+          Research {TOP} tools
         </GuardedButton>
       </div>
       {!data.researchAvailable ? (
-        <p className="legend">
-          Research by API is off on this server (no <code>ANTHROPIC_API_KEY</code>). Expand an item and use <strong>Copy packet</strong> to research it by hand, then import the result with{' '}
-          <code>complykit kb propose</code>.
-        </p>
+        <div className="legend"><p>Automatic research isn’t configured. Expand a tool to copy a research brief for a person or agent.</p><details className="advanced-options"><summary>How to import research results</summary><p>Use <code>complykit kb propose</code> to import an answer. An administrator can enable automatic research by configuring <code>ANTHROPIC_API_KEY</code> on the server.</p></details></div>
       ) : (
-        <p className="legend">Most widespread first. Research turns an item into a proposal for review above.</p>
+        <p className="legend">Start with tools seen most often. Research creates suggested answers with sources for you to review below.</p>
       )}
 
       <div className="kbq-toolbar">
@@ -335,8 +332,8 @@ export function KbQueue({ data, onResearch, onChanged, pushToast }: { data: KbRe
 
       {data.queue.length === 0 ? (
         <div className="empty">
-          <p className="empty-title">The queue is empty</p>
-          <p className="empty-text">Run a consent check — parties it can’t recognize are queued here.</p>
+          <p className="empty-title">No unfamiliar tools to research</p>
+          <p className="empty-text">Run a visitor privacy scan. Tools it cannot identify will appear here for research.</p>
         </div>
       ) : rows.length === 0 ? (
         <div className="empty">

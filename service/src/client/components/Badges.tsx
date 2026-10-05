@@ -4,9 +4,9 @@ import { STATUS_LABEL } from '../lib/format';
 type Totals = NonNullable<JobResult['consent']>['totals'];
 
 export const KINDS: Array<{ key: keyof Totals; label: string; cls: string; help: string }> = [
-  { key: 'violation', label: 'Violation', cls: 'violation', help: 'Conduct a rule prohibits' },
+  { key: 'violation', label: 'Problems', cls: 'violation', help: 'Conduct a rule prohibits' },
   { key: 'needs-review', label: 'Needs review', cls: 'review', help: 'Depends on facts the scan can’t see' },
-  { key: 'exposure', label: 'Exposure', cls: 'exposure', help: 'Litigation theory for counsel, not a violation' },
+  { key: 'exposure', label: 'Legal review', cls: 'exposure', help: 'Litigation theory for counsel, not a violation' },
   { key: 'practice', label: 'Needs research', cls: 'research', help: 'Unrecognized party or practice to look into' },
 ];
 

@@ -1,3 +1,4 @@
+import { researchAction, researchWorkflow, storageResearch } from './research.js';
 import type { Finding, Run } from '../record/index.js';
 import { runDir } from '../record/index.js';
 import { getRequirement, getInstrument } from '../registry/index.js';
@@ -124,6 +125,7 @@ export function renderJsonReport(run: Run, findings: Finding[], opts: JsonReport
     counts: { ...counts, defects: model.length, sightings: model.reduce((a, m) => a + m.n, 0) },
     requirements,
     defects,
+    researchWorkflow: researchWorkflow('general', run.property, String(run.id), [...defects.map((d, i) => researchAction({kind:'defect',pointer:'/defects/'+i,label:d.message}, d.ruleId, d.requirementId, ['/defects/'+i, '/requirements/'+d.requirementId.replace(/~/g, '~0').replace(/\//g, '~1'), '/gaps', ...(opts.coverage?.length ? ['/coverage'] : [])], String(groups[i].rep.fingerprint))), ...defects.flatMap((d, i) => (d.evidence ?? []).flatMap((e, j) => e.type === 'cookie' ? [storageResearch(e.name, e.domain, `/defects/${i}/evidence/${j}`)] : []))]),
     ...(opts.coverage?.length ? { coverage: opts.coverage } : {}),
     gaps: run.gaps,
   };

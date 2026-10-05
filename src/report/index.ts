@@ -13,3 +13,5 @@ export * from './dispositions.js';
 export * from './consent-model.js';
 export * from './consent-html.js';
 export * from './consent-md.js';
+
+export type { ResearchWorkflow, ResearchItem } from './research.js';

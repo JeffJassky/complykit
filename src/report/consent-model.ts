@@ -1,3 +1,4 @@
+import { consentResearch, type ResearchWorkflow } from './research.js';
 import type { Finding, TrackingEvaluation, ScenarioId, Evidence } from '../record/index.js';
 import { getRequirement, getInstrument, type Requirement } from '../registry/index.js';
 
@@ -94,6 +95,7 @@ export interface ConsentReportModel {
   inventory: TrackingEvaluation['inventory'];
   notTested: TrackingEvaluation['notTested'];
   researchQueue: TrackingEvaluation['researchQueue'];
+  researchWorkflow?: ResearchWorkflow;
   evidenceIndex: Array<{ location: string; scenario: ScenarioId; har?: string; timeline?: string; screenshots: string[] }>;
 }
 
@@ -214,7 +216,7 @@ export function buildConsentReportModel(evaluation: TrackingEvaluation, findings
     }
   }
 
-  return {
+  const model: ConsentReportModel = {
     site: evaluation.site,
     runId: evaluation.runId,
     property: evaluation.property,
@@ -241,4 +243,6 @@ export function buildConsentReportModel(evaluation: TrackingEvaluation, findings
     researchQueue: evaluation.researchQueue,
     evidenceIndex,
   };
+  model.researchWorkflow = consentResearch(model);
+  return model;
 }

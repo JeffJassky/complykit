@@ -17,9 +17,9 @@ export const SCENARIO_LABEL: Record<string, string> = {
 
 export const PHASE_LABEL: Record<JobProgress['phase'], string> = {
   queued: 'Waiting in queue',
-  'verifying-location': 'Verifying location',
-  scenarios: 'Running scenarios',
-  analyzing: 'Analyzing',
+  'verifying-location': 'Checking the test location',
+  scenarios: 'Testing visitor choices',
+  analyzing: 'Preparing your findings',
   accessibility: 'Accessibility scan',
   finished: 'Finished',
 };

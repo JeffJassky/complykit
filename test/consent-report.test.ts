@@ -149,11 +149,11 @@ describe('human consent report', () => {
     const html = renderConsentHtml(model);
     expect(html).toContain('data-tool-state="problem classify"');
     expect(html).toContain('Needs classification or verification');
-    expect(html).not.toContain('Cookie problem observed</td>');
+    expect(html).not.toContain('Cookie problem observed</span>');
     expect(html).toContain('Tool-level tracking findings do not automatically');
     const f = model.findings[0];
     const exact = { ...model, findings: [{ ...f, evidence: [{ kind: 'cookie' as const, name: '_test', domain: '.x.example', phase: 'pre-consent' as const, flags: { secure: true, httpOnly: false } }] }] };
-    expect(renderConsentHtml(exact)).toContain('Cookie problem observed<br>');
+    expect(renderConsentHtml(exact)).toContain('Cookie problem observed</span>');
   });
 
   it('escapes untrusted descriptions and blocks executable evidence links', () => {

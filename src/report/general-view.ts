@@ -1,6 +1,7 @@
 import type { Finding, Run } from '../record/index.js';
 import { defectKey, aggregate, orderFindings, type DefectGroup } from './model.js';
 import { explain, findingStatus, elementLabel, escapeHtml as esc, GAP_EXPLANATIONS } from './human.js';
+import { workspaceId, classificationControls, tone } from './workspace.js';
 
 export interface HumanDefect extends DefectGroup { members: Finding[]; }
 
@@ -42,7 +43,10 @@ export function generalCookieInventory(findings: Finding[]): string {
     cookies.set(key, c);
   }
   if (!cookies.size) return '';
-  return `<section id="cookies"><h2 class="human-section-title">Cookies needing attention</h2><p>This is a list of cookies attached to findings, not a complete cookie inventory. Classification describes the recorded purpose; it does not establish that use is appropriate.</p><div class="human-table-wrap"><table class="human-table"><thead><tr><th>Cookie</th><th>Domain</th><th>Recorded classification</th><th>What needs attention</th></tr></thead><tbody>${[...cookies.values()].map((c) => `<tr><td><code>${esc(c.name)}</code></td><td>${esc(c.domain)}</td><td>${esc([...c.classes].join(', ') || 'Needs classification')}</td><td>${esc([...c.statuses].join(', '))}<details class="human-details"><summary>Observed timing</summary><div>${esc([...c.phases].join(', '))}</div></details></td></tr>`).join('')}</tbody></table></div><p class="human-muted">Use a consent scan for the broader tool and storage inventory. This report cannot identify cookies with no findings attached.</p></section>`;
+  return `<section id="cookies"><h2 class="human-section-title">Cookies needing attention</h2><p>This is a list of cookies attached to findings, not a complete cookie inventory. Classification describes the recorded purpose; it does not establish that use is appropriate.</p><div class="human-table-wrap"><table class="human-table"><thead><tr><th>Cookie</th><th>Domain</th><th>Recorded classification</th><th>What needs attention</th></tr></thead><tbody>${[...cookies.values()].map((c) => {
+    const key = workspaceId('storage', [c.name, c.domain]);
+    return `<tr data-class-key="${key}" data-class-required="${!c.classes.size || c.classes.has('unknown')}"><td><code>${esc(c.name)}</code></td><td>${esc(c.domain)}</td><td>${esc([...c.classes].join(', ') || 'Needs classification')}<br><span class="classification-badge" data-class-badge></span>${classificationControls(key, c.name)}</td><td><span class="human-status" data-tone="${tone([...c.statuses].join(', '))}">${esc([...c.statuses].join(', '))}</span><details class="human-details"><summary>Observed timing</summary><div>${esc([...c.phases].join(', '))}</div></details></td></tr>`;
+  }).join('')}</tbody></table></div><p class="human-muted">Use a consent scan for the broader tool and storage inventory. This report cannot identify cookies with no findings attached.</p></section>`;
 }
 
 export function generalCoverage(run: Run): string {
@@ -64,7 +68,7 @@ export function generalBrief(groups: HumanDefect[], run: Run): string {
   }
   const first = [...groups].sort((a, b) => actionRank(a) - actionRank(b)).slice(0, 3);
   return `<section id="overview"><p class="human-intro">${groups.length ? `We found ${groups.length} action item${groups.length === 1 ? '' : 's'} across ${[...topics].map(([topic, n]) => `${topic.toLowerCase()} (${n})`).join(', ')}.` : 'The checks that ran produced no findings.'} ${run.partial ? 'This was a targeted scan, so these results cover only the selected checks.' : 'Review the priorities below and check the scan coverage before drawing conclusions about the whole site.'}</p>
-  <div class="human-stats">${['Problem observed', 'Needs confirmation', 'Needs investigation', 'Legal review'].map((s) => `<div class="human-stat"><strong>${counts.get(s) ?? 0}</strong><span>${s === 'Problem observed' ? 'Problems observed' : s === 'Legal review' ? 'Actions for legal review' : s}</span></div>`).join('')}</div>
+  <div class="human-stats">${['Problem observed', 'Needs confirmation', 'Needs investigation', 'Legal review'].map((s) => `<div class="human-stat" data-tone="${tone(s)}"><strong>${counts.get(s) ?? 0}</strong><span>${s === 'Problem observed' ? 'Problems observed' : s === 'Legal review' ? 'Actions for legal review' : s}</span></div>`).join('')}</div>
   <p class="human-muted">Counts are grouped action items, not raw detections. Repeated sightings are retained in each item’s evidence.</p>
   ${run.gaps.length ? `<p class="human-callout"><strong>${run.gaps.length} scan limitation(s) need attention.</strong> <a class="human-link" href="#coverage">See what could not be checked.</a></p>` : ''}
   <h2 class="human-section-title">Start here</h2>${first.length ? `<ol class="human-next">${first.map((g) => {

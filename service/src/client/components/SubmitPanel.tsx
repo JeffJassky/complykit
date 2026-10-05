@@ -61,12 +61,12 @@ export function SubmitPanel({ onCreated }: Props) {
   return (
     <form className="panel submit" onSubmit={submit} aria-labelledby={`${id}-title`}>
       <div className="panel-head">
-        <h2 id={`${id}-title`} className="panel-title">New check</h2>
+        <h2 id={`${id}-title`} className="panel-title">Scan a website</h2>
         <span className="hint">Up to {MAX_URLS_PER_BATCH} sites</span>
       </div>
 
-      <label htmlFor={`${id}-urls`} className="field-label">
-        Paste websites — one per line, or comma-separated
+      <div className="submit-fields"><label htmlFor={`${id}-urls`} className="field-label">
+        Website address
       </label>
       <textarea
         id={`${id}-urls`}
@@ -77,8 +77,8 @@ export function SubmitPanel({ onCreated }: Props) {
           if (result) setResult(null);
         }}
         onKeyDown={onKeyDown}
-        placeholder={'storyfolder.com\nhttps://www.example.org/pricing\nacme.co, northwind.io'}
-        rows={7}
+        placeholder={'example.com\nAdd more websites on separate lines'}
+        rows={4}
         spellCheck={false}
         autoCapitalize="off"
         autoCorrect="off"
@@ -101,7 +101,7 @@ export function SubmitPanel({ onCreated }: Props) {
             </ul>
           </>
         ) : raw.trim() ? null : (
-          <p className="preview-empty">Scheme optional — https:// is assumed. Duplicates are ignored.</p>
+          <p className="preview-empty">Use a domain or full URL. Add several sites on separate lines or separate them with commas.</p>
         )}
         {parsed.rejected.length > 0 ? (
           <p className="rejected">
@@ -113,34 +113,34 @@ export function SubmitPanel({ onCreated }: Props) {
         ) : null}
       </div>
 
-      <fieldset className="options">
-        <legend className="field-label">Checks</legend>
+      </div><div className="submit-settings"><fieldset className="options">
+        <legend className="field-label">What would you like to check?</legend>
         <label className="option">
           <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
           <span className="option-text">
-            <span className="option-title">Consent &amp; tracking</span>
-            <span className="option-desc">Before consent, after reject, under GPC, across locations</span>
+            <span className="option-title">Visitor privacy</span>
+            <span className="option-desc">See how cookies and tracking respond to visitors’ privacy choices.</span>
           </span>
         </label>
         <label className="option">
           <input type="checkbox" checked={a11y} onChange={(e) => setA11y(e.target.checked)} />
           <span className="option-text">
-            <span className="option-title">Accessibility (WCAG)</span>
-            <span className="option-desc">Slower — crawls up to 15 pages</span>
+            <span className="option-title">Accessibility</span>
+            <span className="option-desc">Find barriers that make your site difficult to use. Checks up to 15 pages.</span>
           </span>
         </label>
-        <label className="option option-switch">
+      </fieldset><details className="advanced-options"><summary>Scan options</summary><label className="option option-switch">
           <span className="option-text">
             <span className="option-title">Quick mode</span>
             <span className="option-desc">Shorter visits, fewer scenarios</span>
           </span>
           <input type="checkbox" role="switch" className="switch" checked={quick} onChange={(e) => setQuick(e.target.checked)} disabled={!consent} />
         </label>
-      </fieldset>
+      </details>
 
       <div className="submit-row">
         <button type="submit" className="btn btn-primary btn-lg" disabled={disabled} aria-describedby={noChecks ? `${id}-nochecks` : undefined}>
-          {busy ? 'Queuing…' : n === 0 ? 'Run checks' : `Run ${plural(n, 'check')}`}
+          {busy ? 'Starting scan…' : n <= 1 ? 'Start scan' : `Scan ${plural(n, 'website')}`}
         </button>
         <kbd className="kbd" aria-hidden="true">
           ⌘ ↵
@@ -155,12 +155,12 @@ export function SubmitPanel({ onCreated }: Props) {
       <div aria-live="polite">
         {error ? (
           <p className="form-note error" role="alert">
-            Couldn’t queue: {error}
+            Couldn’t start the scan: {error}
           </p>
         ) : null}
         {result ? (
           <div className="form-note success">
-            Queued {plural(result.queued, 'check')}.
+            {plural(result.queued, 'scan')} added. Follow progress below; your report will appear when it’s ready.
             {result.rejected.length > 0 ? (
               <p className="rejected">
                 <span className="rejected-label">The server skipped:</span>{' '}
@@ -171,6 +171,7 @@ export function SubmitPanel({ onCreated }: Props) {
             ) : null}
           </div>
         ) : null}
+      </div>
       </div>
     </form>
   );

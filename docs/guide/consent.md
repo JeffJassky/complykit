@@ -115,6 +115,31 @@ The HTML includes a short disclaimer and contextual notes about uncertainty.
 The JSON model and its original per-finding counts remain unchanged; the HTML’s
 grouped action counts and separate tool counts can overlap and are labeled.
 
+The HTML also works as a local checklist. Red identifies observed problems,
+amber identifies reviews and unanswered questions, and green identifies answers
+or tasks completed by the reviewer. Text labels accompany each color.
+
+Research tools and individual cookies or browser-storage items by recording their
+category, actual purpose, owner, information collected/read/stored/sent, consent
+or other control decision, decision rationale, and supporting source/reviewer.
+Partial answers save as you type and survive reloads. The report lists missing
+answers; a review is complete only when each of these fields is answered.
+Older category/purpose-only answers are preserved as incomplete research.
+Actions have finding-specific questions (such as consent test results, legal
+review decisions, or accessibility corrections and verification), plus assignee
+and sources. Unanswered action questions are counted independently of task status. Remaining questions update
+immediately. Tasks support To do, In progress, Done, and notes; use the checklist
+filter to focus on unfinished work. A saved classification does not erase an
+observed consent problem, and marking a task done does not verify the fix.
+
+Progress is stored in browser local storage under a key specific to the report
+kind, site, scan ID, and finding fingerprints. A new scan starts a separate
+checklist. Download a progress backup before switching browsers or moving the
+report; Restore progress accepts only backups for that report. If browser storage
+is unavailable, the checklist still works during the session and explains that a
+backup is needed. Reset clears only the current report's progress. User answers
+and notes are local work records and do not alter the scan JSON or evidence.
+
 Re-render any time: `complykit report --format consent-html|consent-md|consent-json`.
 
 ## The knowledge base and research
@@ -195,3 +220,11 @@ what vendors do afterwards, contracts, backend consent records, unvisited
 pages, storage inside sandboxed frames, or `navigator.globalPrivacyControl`
 inside workers (the `Sec-GPC` header is still sent) — each run lists these as
 not tested.
+
+## Agent-readable research questions
+
+The consent JSON includes `researchWorkflow`: explicit questions, evidence
+pointers and a cited-answer schema. Agents can research provider, purpose,
+information used, recipients and proposed controls, while internal assignment
+and legal approval remain human decisions. See [Agent research](agent-research.md)
+for the answer format and boundaries.

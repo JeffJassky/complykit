@@ -106,7 +106,7 @@ function ReportRow({ job, now, onDeleted }: { job: JobSummary; now: number; onDe
   const a11y = job.result?.accessibility;
   const finished = job.finishedAt ?? job.createdAt;
   const hasActions = !!(consent || a11y || job.result?.downloadUrl);
-  const checks = [job.checks.includes('consent') ? 'Consent' : null, job.checks.includes('accessibility') ? 'WCAG' : null].filter(Boolean).join(' + ');
+  const checks = [job.checks.includes('consent') ? 'Privacy' : null, job.checks.includes('accessibility') ? 'Accessibility' : null].filter(Boolean).join(' + ');
   return (
     <li className={`report report-${job.status}`}>
       <div className="report-main">
@@ -144,15 +144,15 @@ function ReportRow({ job, now, onDeleted }: { job: JobSummary; now: number; onDe
       {hasActions ? (
         <div className="report-actions">
           {consent ? (
-            <a className="btn btn-secondary btn-sm" href={consent.reportUrl} target="_blank" rel="noopener">
-              View consent report
+            <a className="btn btn-primary btn-sm" href={consent.reportUrl} target="_blank" rel="noopener">
+              Open privacy report
               <Icon name="external" size={14} />
               <span className="visually-hidden"> for {job.host} (opens in a new tab)</span>
             </a>
           ) : null}
           {a11y ? (
-            <a className="btn btn-secondary btn-sm" href={a11y.reportUrl} target="_blank" rel="noopener">
-              View accessibility report
+            <a className={`btn ${consent ? 'btn-secondary' : 'btn-primary'} btn-sm`} href={a11y.reportUrl} target="_blank" rel="noopener">
+              Open accessibility report
               <Icon name="external" size={14} />
               <span className="visually-hidden"> for {job.host} (opens in a new tab)</span>
             </a>
@@ -160,15 +160,15 @@ function ReportRow({ job, now, onDeleted }: { job: JobSummary; now: number; onDe
           {job.result?.downloadUrl ? (
             <a className="btn btn-ghost btn-sm" href={job.result.downloadUrl} download>
               <Icon name="download" size={14} />
-              Download .zip
+              Download files
               <span className="visually-hidden"> for {job.host}</span>
             </a>
           ) : null}
           <span className="spacer" />
           {consent || a11y?.findings !== undefined ? (
             <span className="report-facts">
-              {consent ? <span>{plural(consent.parties, 'outside party', 'outside parties')}</span> : null}
-              {consent?.unrecognized ? <span className="unrec">{consent.unrecognized} unrecognized</span> : null}
+              {consent ? <span>{plural(consent.parties, 'outside tool', 'outside tools')}</span> : null}
+              {consent?.unrecognized ? <span className="unrec">{consent.unrecognized} to identify</span> : null}
               {a11y?.findings !== undefined ? <span>{plural(a11y.findings, 'accessibility finding')}</span> : null}
             </span>
           ) : null}
@@ -190,7 +190,7 @@ export function CompletedList({ jobs, onDeleted }: { jobs: JobSummary[]; onDelet
     <section className="section" aria-labelledby="reports-title">
       <div className="section-head">
         <h2 id="reports-title" className="section-title">
-          Reports
+          Your reports
           {jobs.length ? <span className="section-count">{jobs.length}</span> : null}
         </h2>
         {jobs.length > 3 ? (
@@ -201,13 +201,12 @@ export function CompletedList({ jobs, onDeleted }: { jobs: JobSummary[]; onDelet
           </label>
         ) : null}
       </div>
-      <p className="legend">
-        <strong>Exposure</strong> is a litigation theory for counsel, not a violation. <strong>Needs research</strong> marks parties or practices the knowledge base doesn’t recognize yet.
-      </p>
+      <p className="section-description">Open a report to see what was found, answer research questions, and track your next steps.</p>
+      {jobs.length > 0 ? <details className="report-key"><summary>What do these counts mean?</summary><p>Problems are observations flagged for correction. Review and research items need more information. Legal review identifies potential legal exposure, not a proven violation. These are scan findings, not a compliance score.</p></details> : null}
       {jobs.length === 0 ? (
         <div className="empty">
           <p className="empty-title">No reports yet</p>
-          <p className="empty-text">Finished checks land here with their report and a downloadable .zip.</p>
+          <p className="empty-text">Start a scan above. Your report will appear here with clear explanations and a checklist.</p>
         </div>
       ) : shown.length === 0 ? (
         <div className="empty">

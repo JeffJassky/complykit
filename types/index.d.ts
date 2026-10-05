@@ -851,6 +851,21 @@ export interface ReportFinding {
   plaintiffRank: number;
   regulatorRank: number;
 }
+export interface ResearchItem {
+  id: string;
+  target: { kind: 'finding' | 'defect' | 'tool' | 'storage'; pointer: string; label: string };
+  context?: { domain?: string; partyId?: string; storageName?: string; storageKind?: string };
+  evidencePointers: string[];
+  suggestedMethods: string[];
+  questions: Array<{ id: string; prompt: string; guidance: string; responsibility: 'agent' | 'agent-with-human-review' | 'human'; requires: 'research' | 'site-access-or-existing-evidence' | 'human-input' }>;
+}
+export interface ResearchWorkflow {
+  schemaVersion: 1;
+  reportId: string;
+  instructions: string[];
+  items: ResearchItem[];
+  answerSchema: Record<string, unknown>;
+}
 export interface ConsentReportModel {
   site: TrackingEvaluation['site'];
   runId: string;
@@ -876,6 +891,7 @@ export interface ConsentReportModel {
   inventory: PartyInventoryItem[];
   notTested: NotTestedItem[];
   researchQueue: TrackingEvaluation['researchQueue'];
+  researchWorkflow?: ResearchWorkflow;
   evidenceIndex: Array<{ location: string; scenario: ScenarioId; har?: string; timeline?: string; screenshots: string[] }>;
 }
 export interface ConsentHtmlOptions {

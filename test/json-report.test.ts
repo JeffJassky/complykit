@@ -84,6 +84,27 @@ describe('JSON report sidecar', () => {
     expect(doc.defects[0].computedStyle['color-var']).toBeUndefined();
   });
 
+  it('exposes agent questions, evidence references and a separate answer contract', () => {
+    const workflow = doc.researchWorkflow;
+    expect(workflow.schemaVersion).toBe(1);
+    expect(workflow.items[0].target.pointer).toBe('/defects/0');
+    expect(workflow.items[0].evidencePointers).toContain('/gaps');
+    expect(workflow.items[0].questions.find((q: any) => q.id === 'implementation').prompt).toContain('contrast');
+    expect(workflow.items[0].questions.find((q: any) => q.id === 'assignee').responsibility).toBe('human');
+    expect(workflow.answerSchema.properties.reportId.const).toBe(workflow.reportId);
+    expect(doc.counts.defects).toBe(1);
+  });
+
+  it('includes individual storage research from cookie evidence', () => {
+    const f = finding('/');
+    f.evidence.push({kind:'cookie',name:'visitor',domain:'tracker.example',phase:'pre-consent',flags:{httpOnly:false,secure:true}});
+    const result = JSON.parse(renderJsonReport(run, [f]));
+    const item = result.researchWorkflow.items.find((i: any) => i.target.kind === 'storage');
+    expect(item.context.storageName).toBe('visitor');
+    expect(item.evidencePointers).toContain('/defects/0/evidence/1');
+    expect(item.questions.find((q: any) => q.id === 'recipients')).toBeDefined();
+  });
+
   it('carries coverage gaps', () => {
     expect(doc.gaps[0].reason).toBe('bot-blocked');
   });

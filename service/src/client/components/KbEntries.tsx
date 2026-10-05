@@ -17,13 +17,11 @@ export function KbEntries({ entries, dir }: { entries: KbEntry[]; dir: string })
         <h2 id={`${id}-title`} className="section-title">
           <button type="button" className="section-toggle" aria-expanded={open} aria-controls={`${id}-list`} onClick={() => setOpen((o) => !o)}>
             <Icon name="chevron" size={15} />
-            Confirmed entries
+            3. Your confirmed tool library
           </button>
           <span className="section-count">{entries.length}</span>
         </h2>
-        <span className="hint mono" title="Knowledge-base store on the server">
-          {dir}
-        </span>
+        <details className="storage-details"><summary>Library storage details</summary><p className="hint mono">{dir}</p></details>
       </div>
       {open ? (
         <div id={`${id}-list`}>

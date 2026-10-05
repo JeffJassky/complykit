@@ -1,3 +1,4 @@
+import { workspaceId, tone, actionControls, workspacePanel, workspaceScript, WORKSPACE_CSS } from './workspace.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { PNG } from 'pngjs';
@@ -241,13 +242,14 @@ export function renderHtmlReport(run: Run, findings: Finding[], opts: HtmlOption
     const observation = known ? `${p.title}${name ? ` near “${name}”` : ''}. The scan flagged this for ${m.status === 'Problem observed' ? 'correction' : 'review'}.` : f.message;
     const photos = unique.flatMap((member) => member.evidence.filter((e) => e.kind === 'screenshot' || e.kind === 'verdict'));
     const photoHtml = evidenceHtml({ ...f, evidence: [...new Map(photos.map((e) => [JSON.stringify(e), e])).values()] }, runDirPath);
-    return `<article class="finding human-card sv-${m.sev}" id="finding-${i}" data-i="${i}">
-<span class="human-status">${esc(m.status)}</span>
+    return `<article class="finding human-card sv-${m.sev}" id="finding-${i}" data-i="${i}" data-action-key="${workspaceId('action', [m.status, members.map((member) => member.fingerprint).sort()])}" data-scan-tone="${tone(m.status)}" data-tone="${tone(m.status)}">
+<span class="human-status" data-tone="${tone(m.status)}">${esc(m.status)}</span>
 <h3>${esc(p.title)}</h3><p><strong>What happened:</strong> ${esc(observation)}</p>
 ${m.status === 'Legal review' ? '<p class="human-muted">Potential legal exposure, not a detected violation. A qualified adviser needs to assess the context.</p>' : m.status === 'Needs confirmation' ? '<p class="human-muted">Confirm the observation and context before deciding whether this is a problem.</p>' : m.status === 'Needs investigation' ? '<p class="human-muted">Identification alone does not establish a violation. Confirm the purpose and use.</p>' : ''}
 ${m.routes.length || m.url ? `<p><strong>Where:</strong> ${esc(m.routes.join(', ') || m.url || '')}${name ? ` · ${esc(name)}` : ''}.</p>` : ''}
 ${m.n > 1 ? `<p class="human-muted">Grouped from ${m.n} observation(s)${m.routes.length ? ` on ${m.routes.length} page pattern(s)` : ''}. One action item; all observations are retained below.</p>` : ''}
 ${workBrief(p)}
+${actionControls(String(f.ruleId), String(f.requirementId))}
 ${photoHtml ? `<details class="human-details"><summary>See the affected area</summary><div>${photoHtml}</div></details>` : ''}
 <details class="human-details"><summary>Technical evidence and requirement references</summary><div>
 <div class="fhead"><span class="sev p-sev">${esc(m.sev)}</span><span class="conf p-conf">${esc(m.conf)}</span><span class="prod p-prod">${esc(prodShort(m.prod))}</span></div>
@@ -437,13 +439,16 @@ ${['sev', 'conf', 'prod', 'rule', 'req', 'page', 'file', 'sel', 'code', 'style',
   .map((p) => `body.hide-${p} .p-${p}{display:none!important}`)
   .join('\n')}
 ${HUMAN_CSS}
+${WORKSPACE_CSS}
 </style></head><body><main class="wrap">
 <header>
 <div class="eyebrow">ComplyKit · Website review</div><h1>${esc(run.property)}</h1>
 <p class="human-muted">Scanned ${esc(run.startedAt.slice(0, 16).replace('T', ' '))}${/^\d{4}-/.test(run.startedAt) ? ' UTC' : ''}</p>
-<nav class="human-nav" aria-label="Report sections"><a href="#overview">Overview</a><a href="#actions">Action plan</a>${[...new Set(model.map((m) => m.human.topic))].map((topic) => `<a href="#${topicId(topic)}">${esc(topic)}</a>`).join('')}${findings.some((f) => f.evidence.some((e) => e.kind === 'cookie')) ? '<a href="#cookies">Cookie inventory</a>' : ''}<a href="#coverage">Scan coverage</a></nav>
+<nav class="human-nav" aria-label="Report sections"><a href="#overview">Overview</a><a href="#report-workspace">Your checklist</a><a href="#actions">Action plan</a>${[...new Set(model.map((m) => m.human.topic))].map((topic) => `<a href="#${topicId(topic)}">${esc(topic)}</a>`).join('')}${findings.some((f) => f.evidence.some((e) => e.kind === 'cookie')) ? '<a href="#cookies">Cookie inventory</a>' : ''}<a href="#coverage">Scan coverage</a></nav>
 </header>
 ${generalBrief(groupsAgg, run)}
+<div class="status-legend"><span class="human-status" data-tone="red">Red: problem observed</span><span class="human-status" data-tone="amber">Amber: review or answer needed</span><span class="human-status" data-tone="green">Green: your completed work</span></div>
+${workspacePanel()}
 <section id="actions"><h2 class="human-section-title">Your action plan</h2><p>Start with the observed problems, then investigate uncertain findings. Each item includes a suggested owner and a way to check the fix. Technical evidence is collapsed until you need it.</p>
 <details class="human-details"><summary>Filter, search or regroup the action plan</summary><div>
 ${spectrumHtml}
@@ -601,6 +606,8 @@ ${generalCookieInventory(findings)}
 
   // ---- visibility ----
   function visible(f){
+    var el = cards[f.i];
+    if (window.ComplyKitWorkspace && !window.ComplyKitWorkspace.shouldShow(el.dataset.actionKey)) return false;
     for (var k in off) {
       if (!off[k].size) continue;
       if (k === 'route') {
@@ -822,16 +829,19 @@ ${generalCookieInventory(findings)}
       q = ''; document.getElementById('q').value = '';
       document.querySelectorAll('#facets input[type=checkbox]').forEach(function(cb){ cb.checked = true; });
       document.querySelectorAll('#facets details.dd').forEach(function(dd){ dd.dataset.active = '0'; });
+      var wf = document.getElementById('work-filter'); if (wf) { wf.value = 'all'; }
       groupBy = 'topic'; document.getElementById('groupBy').value = 'topic'; apply();
       finding = document.getElementById(id);
     }
     if (finding) { finding.scrollIntoView(); }
   }
+  window.addEventListener('complykit-workflow-changed',apply);
   window.addEventListener('hashchange', revealHash);
   document.querySelectorAll('a[href^="#finding-"],a[href^="#topic-"]').forEach(function(a){a.addEventListener('click',function(){setTimeout(revealHash,0);});});
   apply();
   revealHash();
 })();
 </script>
+${workspaceScript('general', run.property, String(run.id), findings.map((f) => String(f.fingerprint)))}
 </main></body></html>`;
 }

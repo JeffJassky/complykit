@@ -92,7 +92,7 @@ function RunningCard({ job, now, onUpdated }: { job: JobSummary; now: number; on
         ) : null}
       </div>
 
-      <dl className="metrics">
+      <details className="scan-details"><summary>Live scan details</summary><dl className="metrics">
         <Metric label="Requests" value={m.requests.toLocaleString()} />
         <Metric label="Third-party" value={m.thirdPartyRequests.toLocaleString()} sub={m.requests ? `${third}%` : undefined} />
         <Metric label="Parties" value={m.parties} hint="Outside parties seen (max in one scenario)" />
@@ -113,7 +113,7 @@ function RunningCard({ job, now, onUpdated }: { job: JobSummary; now: number; on
         />
       </dl>
 
-      <ScenarioStrip scenarios={m.scenarios} pending={pending} />
+      <ScenarioStrip scenarios={m.scenarios} pending={pending} /></details>
 
       <div className="job-foot">
         <CheckTags job={job} />
@@ -153,7 +153,7 @@ export function ActiveJobs({ jobs, onUpdated }: { jobs: JobSummary[]; onUpdated:
     <section className="section" aria-labelledby="active-title">
       <div className="section-head">
         <h2 id="active-title" className="section-title">
-          In progress
+          Scanning now
           {jobs.length ? <span className="section-count">{jobs.length}</span> : null}
         </h2>
       </div>

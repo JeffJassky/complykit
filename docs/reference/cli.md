@@ -75,3 +75,8 @@ complykit diff --base <baselineRunId> --head <thisRunId> --fail-on new-critical
 
 Exit `1` when new findings at or above the severity floor appear; `0` otherwise.
 `--fail-on` is `new-critical` (default), `new-serious`, or `none`.
+
+JSON and consent JSON reports also include an additive `researchWorkflow` with
+agent research questions and a report-specific answer schema. See
+[Agent research](../guide/agent-research.md). Answers are separate work records;
+they do not change scan findings or automatically update HTML progress.

@@ -346,14 +346,14 @@ export function KbProposals({
     <section className="section" aria-labelledby="kb-proposals-title">
       <div className="section-head">
         <h2 id="kb-proposals-title" className="section-title">
-          Proposals awaiting review
+          2. Review suggested answers
           {proposals.length ? <span className="section-count">{proposals.length}</span> : null}
         </h2>
       </div>
       {sorted.length === 0 ? (
         <div className="empty">
           <p className="empty-title">Nothing to review</p>
-          <p className="empty-text">Research an item from the queue below, or import one with complykit kb propose.</p>
+          <p className="empty-text">Research a tool above. Its suggested classification and sources will appear here for you to review.</p>
         </div>
       ) : (
         <ul className="kbp-list">

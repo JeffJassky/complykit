@@ -216,6 +216,8 @@ export type {
   ReportFormat,
   HtmlOptions,
   JsonReportOptions,
+  ResearchWorkflow,
+  ResearchItem,
   RunDiff,
   BudgetGate,
   RuleLayer,

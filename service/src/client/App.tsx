@@ -27,7 +27,7 @@ export function App() {
         const n = totalFindings(next);
         pushToast({
           tone: 'success',
-          title: `${next.host} — done, ${plural(n, 'finding')}`,
+          title: `${next.host} — report ready, ${plural(n, 'finding')}`,
           href: next.result?.consent?.reportUrl ?? next.result?.accessibility?.reportUrl,
           hrefLabel: 'View report',
         });
@@ -83,6 +83,16 @@ export function App() {
         </main>
       ) : (
         <main id="main" ref={mainRef} tabIndex={-1} className="layout">
+          <section className="page-intro" aria-labelledby="page-title">
+            <p className="eyebrow">Website health, made clearer</p>
+            <h1 id="page-title">Find the issues. Plan the next step.</h1>
+            <p>Check how your website handles visitor privacy and accessibility. Get a readable report with evidence and practical next steps.</p>
+            <ol className="journey" aria-label="How it works">
+              <li><span>1</span><div><strong>Scan a website</strong><small>Choose what to check.</small></div></li>
+              <li><span>2</span><div><strong>Understand the findings</strong><small>See problems and open questions.</small></div></li>
+              <li><span>3</span><div><strong>Work through the fixes</strong><small>Use the checklist in your report.</small></div></li>
+            </ol>
+          </section>
           <div className="col-side">
             <SubmitPanel onCreated={onCreated} />
           </div>
@@ -99,7 +109,7 @@ export function App() {
               </div>
             ) : (
               <>
-                <ActiveJobs jobs={active} onUpdated={upsert} />
+                {active.length > 0 ? <ActiveJobs jobs={active} onUpdated={upsert} /> : null}
                 <CompletedList jobs={completed} onDeleted={remove} />
               </>
             )}
