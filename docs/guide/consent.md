@@ -90,19 +90,30 @@ tag — the law's thresholds aren't observable from a browser.
 
 `<run>/consent-report.html` (self-contained) and a JSON model next to it:
 
-1. **Summary grid** — locations × scenarios with finding counts; "no banner",
-   "not tested" and unverified locations shown as such.
-2. **Findings** — plain language, with when (relative to load and to the
-   banner), what was sent and stored, what the vendor was told, where it came
-   from, the rule and its source, the fix, and evidence. Sort as regulators
-   test, or as plaintiffs build cases.
-3. **Inventory** — every outside party seen, recognized or not.
-4. **Research queue** and **not tested** — including the flows a browser can
-   never see (server-to-server conversion APIs, contracts, backend consent
-   records).
-5. **Evidence** — a HAR file and the timeline per location × scenario.
-   Cookie values, auth headers and request bodies are redacted unless you pass
-   `--raw-evidence`.
+1. **Overview and priorities** — a plain-language briefing with grouped action
+   counts and suggested first steps. Problems, uncertain observations, research
+   tasks and legal-review items stay distinct.
+2. **Action plan** — what happened, why it matters, who can help, what to change
+   and how to check the fix. Repeated observations with the same tool, behavior,
+   certainty and fix location are grouped. Original findings, legal references,
+   implementation details and evidence are retained in collapsed sections.
+3. **Cookies and browser storage** — names, associated tools, provisional
+   purposes, retention and items needing classification. A finding about a
+   tool does not automatically mean every cookie it uses is a violation.
+4. **Tracking tools and outside services** — purposes, observed information,
+   next steps and links to related actions. Provisional vendor entries and
+   research requests are clearly identified.
+5. **Visitor experience** — results explained through visitor actions such as
+   rejecting cookies or withdrawing permission. Failed choices and untested
+   actions are visible. No finding recorded is not a verified pass.
+6. **Scan coverage and evidence** — recorded locations and limitations,
+   including flows a browser cannot see, plus an expandable test matrix,
+   network logs, timelines and scan metadata. Evidence links need the
+   accompanying run files. Values are redacted unless you pass `--raw-evidence`.
+
+The HTML includes a short disclaimer and contextual notes about uncertainty.
+The JSON model and its original per-finding counts remain unchanged; the HTML’s
+grouped action counts and separate tool counts can overlap and are labeled.
 
 Re-render any time: `complykit report --format consent-html|consent-md|consent-json`.
 

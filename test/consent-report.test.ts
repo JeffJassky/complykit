@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { resolveFinding, asRunId, TrackingEvaluation, type Finding } from '../src/record/index.js';
 import { resolveCapsFor } from '../src/rules/index.js';
 import { buildConsentReportModel, renderConsentHtml, renderConsentMarkdown, containsBannedVocabulary, findingKind } from '../src/report/index.js';
+import { groupConsentActions } from '../src/report/consent-view.js';
 
 // The consent report: grid counts per location × scenario, finding kinds from
 // the requirement (exposure is never a violation), the two sort orders, and
@@ -98,3 +99,69 @@ describe('consent report model', () => {
     expect(md).toContain('| Germany |');
   });
 });
+
+describe('human consent report', () => {
+  const m = buildConsentReportModel(evaluation, findings);
+
+  it('groups the same work across citations while preserving original evidence and certainty', () => {
+    const first = m.findings.find((f) => f.ruleId === 'tracking.prior-consent')!;
+    const second = { ...first, fingerprint: 'another', requirementId: 'pecr.reg6', citation: 'PECR Reg. 6', scope: 'uk', message: 'A separate UK observation' };
+    const uncertain = { ...second, fingerprint: 'uncertain', kind: 'needs-review' as const };
+    const model = { ...m, findings: [first, second, uncertain] };
+    expect(groupConsentActions(model)).toHaveLength(2);
+    const html = renderConsentHtml(model);
+    expect(html.match(/data-action-kind=/g)).toHaveLength(2);
+    expect(html).toContain('PECR Reg. 6');
+    expect(html).toContain('A separate UK observation');
+    expect(html).toContain('Needs confirmation');
+    expect(html).toContain('observation needs confirmation');
+    expect(renderConsentHtml(m)).toContain('not a detected violation');
+  });
+
+  it('does not merge different fix locations or different behaviors for one tool', () => {
+    const f = m.findings[0];
+    const model = { ...m, findings: [f, { ...f, details: { ...f.details, source: 'platform' } }, { ...f, details: { ...f.details, pattern: 'different-behavior' } }] };
+    expect(groupConsentActions(model)).toHaveLength(3);
+  });
+
+  it('renders work briefs and keeps every technical record collapsed without changing the model', () => {
+    const before = JSON.stringify(m);
+    const html = renderConsentHtml(m);
+    expect(html).toContain('Who can help');
+    expect(html).toContain('How to check the fix');
+    expect(html).toContain('Technical evidence and legal references');
+    expect(html).not.toMatch(/<details[^>]*\bopen\b/);
+    expect(html).toContain('not legal advice');
+    expect(JSON.stringify(m)).toBe(before);
+  });
+
+  it('never treats a failed choice with zero findings as a successful privacy check', () => {
+    const model = { ...m, grid: { de: { reject: { status: 'tested' as const, choice: 'reject (failed)', counts: { violation: 0, 'needs-review': 0, exposure: 0, practice: 0 } } } } };
+    const html = renderConsentHtml(model);
+    expect(html).toContain('attempted visitor choice did not succeed');
+    expect(html).toContain('not verified passes');
+    expect(html).toContain('Choices that did not succeed');
+  });
+
+  it('keeps provisional classification separate from tool problems and cookie-specific evidence', () => {
+    const inventory = [{ partyId: 'x', label: 'X', domain: 'x.example', hosts: ['x.example'], recognized: true, kbStatus: 'proposed' as const, categories: ['analytics'], behavesLikeTracker: true, trackerSignals: [], sends: ['page-address'], stores: [{ name: '_test', kind: 'cookie', lifetimeDays: 400 }], sources: ['injected' as const], loadedBy: [], samples: [], seenIn: [] }];
+    const model = { ...m, inventory, findings: [m.findings.find((f) => f.kind === 'violation')!] };
+    const html = renderConsentHtml(model);
+    expect(html).toContain('data-tool-state="problem classify"');
+    expect(html).toContain('Needs classification or verification');
+    expect(html).not.toContain('Cookie problem observed</td>');
+    expect(html).toContain('Tool-level tracking findings do not automatically');
+    const f = model.findings[0];
+    const exact = { ...model, findings: [{ ...f, evidence: [{ kind: 'cookie' as const, name: '_test', domain: '.x.example', phase: 'pre-consent' as const, flags: { secure: true, httpOnly: false } }] }] };
+    expect(renderConsentHtml(exact)).toContain('Cookie problem observed<br>');
+  });
+
+  it('escapes untrusted descriptions and blocks executable evidence links', () => {
+    const malicious = { ...m, findings: [{ ...m.findings[0], sourceUrl: 'javascript:alert(1)', message: '<img src=x onerror=alert(1)>', details: { party: { label: '<script>alert(1)</script>', domain: 'x.example' } } }] };
+    const html = renderConsentHtml(malicious);
+    expect(html).not.toContain('<img src=x');
+    expect(html).not.toContain('href="javascript:');
+    expect(html).toContain('&lt;img src=x');
+  });
+});
+

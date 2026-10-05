@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Evidence } from '../record/index.js';
-import { KIND_LABEL, SCENARIO_LABEL, type ConsentReportModel, type ReportFinding, type FindingKind } from './consent-model.js';
+import { KIND_LABEL, SCENARIO_LABEL, type ConsentReportModel, type FindingKind } from './consent-model.js';
 
 // The consent evaluation report as ONE self-contained HTML file (inline CSS +
 // a few lines of JS, screenshots as data URIs, no fetches) — it opens from
@@ -15,6 +15,9 @@ function esc(s: unknown): string {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
+import { HUMAN_CSS, workBrief, safeHref } from './human.js';
+import { VISITOR_ACTION, KIND_HUMAN, KIND_NOTE, details, groupConsentActions, actionTitle, groupObservation, implementationHint, occurrences, toolInventory, cookieInventory, consentLimitations, purposeNeedsReview, type ActionGroup } from './consent-view.js';
+
 function inlineImage(runDir: string | undefined, rel: string): string | null {
   if (!runDir) return null;
   try {
@@ -26,62 +29,6 @@ function inlineImage(runDir: string | undefined, rel: string): string | null {
     return null;
   }
 }
-
-const FIELD_WORD: Record<string, string> = {
-  'page-address': 'page address',
-  'page-title': 'page title',
-  'browser-id': 'stored browser ID',
-  'click-id': 'ad-click ID',
-  'form-input': 'typed form text',
-  'search-term': 'typed search text',
-  'hashed-email': 'hashed email',
-  'event-name': 'event name',
-  identifier: 'identifier-like value',
-};
-
-const PHASE_WORD: Record<string, string> = {
-  'no-banner': 'no banner, nothing clicked',
-  'before-banner': 'before the banner appeared',
-  'before-choice': 'banner showing, no choice',
-  'after-accept': 'after accept',
-  'after-reject': 'after reject',
-  'after-dismiss': 'after dismiss',
-  'after-partial': 'after analytics-only',
-  'after-withdraw': 'after withdrawal',
-  'after-opt-out-link': 'after the opt-out link',
-};
-
-const SIGNAL_WORD: Record<string, string> = {
-  'stores-long-lived-id': 'stores a long-lived ID',
-  'sends-stored-id': 'sends a stored ID',
-  'sends-page-address': 'sends the page address',
-  'repeats-id-across-pages': 'same ID on every page',
-  'receives-first-party-cookie': 'receives the site’s own cookie',
-  'receives-typed-input': 'receives typed input',
-  'receives-click-id': 'receives ad-click IDs',
-  'sends-on-page-exit': 'sends as the page closes',
-};
-
-/** "gstatic.com/…/merchantwidget.js" with the full URL on hover. */
-function shortUrl(u: string): string {
-  try {
-    const url = new URL(u);
-    const parts = url.pathname.split('/').filter(Boolean);
-    const tail = parts.length > 1 ? `/…/${parts[parts.length - 1]}` : url.pathname;
-    return `<code title="${esc(u)}">${esc(url.host + tail)}</code>`;
-  } catch {
-    return `<code>${esc(u)}</code>`;
-  }
-}
-
-const SOURCE_WORD: Record<string, string> = {
-  markup: 'in the site’s HTML',
-  'markup-leak': 'HTML tag that leaks past script gating',
-  injected: 'injected by another script',
-  platform: 'platform sandbox / worker',
-  'first-party-proxy': 'first-party subdomain pointing at a vendor',
-  unknown: 'unclear',
-};
 
 function cell(c: ConsentReportModel['grid'][string][keyof ConsentReportModel['grid'][string]] | undefined): string {
   if (!c) return '<td class="na">—</td>';
@@ -102,12 +49,12 @@ function cell(c: ConsentReportModel['grid'][string][keyof ConsentReportModel['gr
 
 function evidenceBlock(ev: Evidence[], runDir: string | undefined): string {
   const out: string[] = [];
-  const shots = ev.filter((e): e is Extract<Evidence, { kind: 'screenshot' }> => e.kind === 'screenshot').slice(0, 1);
+  const shots = ev.filter((e): e is Extract<Evidence, { kind: 'screenshot' }> => e.kind === 'screenshot');
   for (const s of shots) {
     const uri = inlineImage(runDir, s.path);
     out.push(uri ? `<figure><img src="${uri}" alt="${esc(s.pageState)}"><figcaption>${esc(s.pageState)}</figcaption></figure>` : `<p class="mono">screenshot: ${esc(s.path)}</p>`);
   }
-  const reqs = ev.filter((e): e is Extract<Evidence, { kind: 'network-request' }> => e.kind === 'network-request').slice(0, 3);
+  const reqs = ev.filter((e): e is Extract<Evidence, { kind: 'network-request' }> => e.kind === 'network-request');
   if (reqs.length) {
     out.push(
       `<details><summary>Requests (${reqs.length} shown)</summary>${reqs
@@ -122,43 +69,34 @@ function evidenceBlock(ev: Evidence[], runDir: string | undefined): string {
     if (head?.evidence?.har) files.add(head.evidence.har);
     if (head?.evidence?.timeline) files.add(head.evidence.timeline);
   }
-  if (files.size) out.push(`<p class="files">Evidence: ${[...files].map((f) => `<a href="${esc(f)}">${esc(f.split('/').slice(-3).join('/'))}</a>`).join(' · ')}</p>`);
+  if (files.size) out.push(`<p class="files">Evidence: ${[...files].map((f) => `<a href="${esc(safeHref(f))}">${esc(f.split('/').slice(-3).join('/'))}</a>`).join(' · ')}</p>`);
   return out.join('');
 }
 
-function findingCard(f: ReportFinding, runDir: string | undefined): string {
-  const d = f.details as {
-    party?: { label: string; owner?: string; domain: string; recognized: boolean; kbStatus: string; categories: string[] };
-    source?: string;
-    loadedBy?: string[];
-    fix?: string;
-    notes?: string[];
-    occurrences?: Array<{ location: string; scenario: string; phases: string[]; firstMs: number; sinceBannerMs?: number; requests: number; sent: string[]; stored: string[]; decoded: string[]; markers: string[]; idsFrom?: string[] }>;
-  };
-  const rows: string[] = [];
-  for (const o of d.occurrences ?? []) {
-    rows.push(`<tr><td>${esc(o.location)}</td><td>${esc(SCENARIO_LABEL[o.scenario as keyof typeof SCENARIO_LABEL] ?? o.scenario)}</td>
-<td>${o.phases.map((p) => esc(PHASE_WORD[p] ?? p)).join('<br>')}</td>
-<td class="mono">${(o.firstMs / 1000).toFixed(1)}s${o.sinceBannerMs !== undefined ? `<br><span class="dim">${o.sinceBannerMs >= 0 ? '+' : ''}${(o.sinceBannerMs / 1000).toFixed(1)}s vs banner</span>` : ''}</td>
-<td>${o.sent.map((k) => esc(FIELD_WORD[k] ?? k)).join(', ') || '—'}${o.idsFrom?.length ? `<br><span class="dim">ID from ${esc(o.idsFrom.join(', '))}</span>` : ''}${o.markers.length ? `<br><span class="warn">markers: ${esc(o.markers.join(', '))}</span>` : ''}</td>
-<td>${o.stored.map(esc).join('<br>') || '—'}</td>
-<td>${o.decoded.map(esc).join('<br>') || '—'}</td><td class="mono">${o.requests}</td></tr>`);
+function actionCard(g: ActionGroup, m: ConsentReportModel, runDir: string | undefined): string {
+  const os = occurrences(g);
+  const contexts = [...new Set(os.map((o) => `${m.locations.find((l) => l.id === o.location)?.label ?? o.location}: ${VISITOR_ACTION[o.scenario] ?? o.scenario}`))];
+  for (const f of g.findings) {
+    const d = details(f);
+    if (d.location) contexts.push(`${m.locations.find((l) => l.id === d.location)?.label ?? d.location}${d.scenario ? `: ${VISITOR_ACTION[d.scenario] ?? d.scenario}` : ''}`);
   }
-  const party = d.party
-    ? `<div class="party"><b>${esc(d.party.label)}</b>${d.party.owner ? ` · ${esc(d.party.owner)}` : ''} · <span class="mono">${esc(d.party.domain)}</span> · ${esc(d.party.categories.join(', '))} · <span class="kb kb-${esc(d.party.kbStatus)}">${d.party.kbStatus === 'unrecognized' ? 'not in knowledge base' : d.party.kbStatus === 'proposed' ? 'knowledge base: unconfirmed seed entry' : 'knowledge base: confirmed'}</span></div>`
-    : '';
-  const came = d.source ? `<p><span class="lbl">Came from</span> ${esc(SOURCE_WORD[d.source] ?? d.source)}${d.loadedBy?.length ? ` — ${d.loadedBy.slice(0, 3).map(shortUrl).join(' ← ')}` : ''}</p>` : '';
-  return `<article class="finding k-${f.kind}" data-reg="${f.regulatorRank}" data-pl="${f.plaintiffRank}" data-kind="${f.kind}">
-<header><span class="badge b-${f.kind}">${esc(KIND_LABEL[f.kind])}</span> <span class="scope">${esc(f.scope)}</span> <span class="rule mono">${esc(f.ruleId)}</span></header>
-<h3>${esc(f.message)}</h3>
-${party}
-${rows.length ? `<table class="occ"><thead><tr><th>Location</th><th>Scenario</th><th>When</th><th>At</th><th>Sent</th><th>Stored</th><th>Vendor was told</th><th>Req.</th></tr></thead><tbody>${rows.join('')}</tbody></table>` : ''}
-${came}
-<p><span class="lbl">Rule</span> ${esc(f.requirementTitle)} — ${f.sourceUrl ? `<a href="${esc(f.sourceUrl)}">${esc(f.citation)}</a>` : esc(f.citation)}</p>
-${d.fix ? `<p><span class="lbl">Fix</span> ${esc(d.fix)}</p>` : ''}
-${(d.notes ?? []).length ? `<ul class="notes">${d.notes!.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
-${evidenceBlock(f.evidence, runDir)}
-</article>`;
+  const hint = implementationHint(g);
+  const notes = [...new Set(g.findings.flatMap((f) => details(f).notes ?? []))];
+  const raw = [...new Map(g.findings.map((f) => [JSON.stringify(f), f])).values()];
+  return `<article class="human-card" id="${g.id}" data-action-kind="${g.kind}">
+<span class="human-status">${esc(KIND_HUMAN[g.kind])}</span>
+<h3>${esc(actionTitle(g))}</h3>
+<p><strong>What happened:</strong> ${esc(groupObservation(g))}</p>
+${os.some((o) => o.markers.length) ? '<p class="human-muted">Some data-sharing observations used sample values supplied by the scanner to test the flow. They do not establish that real customer data was shared.</p>' : ''}
+<p class="human-muted">${esc(KIND_NOTE[g.kind])}</p>
+${contexts.length ? `<p><strong>Where / when:</strong> ${[...new Set(contexts)].map(esc).join('; ')}.</p>` : ''}
+${workBrief(g.profile)}
+${hint ? `<p class="human-callout"><strong>Where to start:</strong> ${esc(hint)}</p>` : ''}
+${notes.length ? `<details class="human-details"><summary>Important context (${notes.length})</summary><div><ul>${notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div></details>` : ''}
+<details class="human-details"><summary>Technical evidence and legal references (${g.findings.length} finding${g.findings.length === 1 ? '' : 's'})</summary><div>
+<p>This action groups repeated observations of the same behavior and tool. Each original finding and its location-specific legal reference is retained below.</p>
+${raw.map((f) => `<section><h4>${esc(f.requirementTitle)}</h4><p>${f.sourceUrl ? `<a href="${esc(safeHref(f.sourceUrl))}">${esc(f.citation)}</a>` : esc(f.citation)} · ${esc(f.scope)} · <code>${esc(f.ruleId)}</code> · ${esc(f.severity)}</p><p>${esc(f.message)}</p>${details(f).fix ? `<p><strong>Implementation detail:</strong> ${esc(details(f).fix)}</p>` : ''}${evidenceBlock(f.evidence, runDir)}<details class="human-details"><summary>Original finding record</summary><div><pre>${esc(JSON.stringify(f, null, 2))}</pre></div></details></section>`).join('')}
+</div></details></article>`;
 }
 
 export interface ConsentHtmlOptions {
@@ -167,73 +105,73 @@ export interface ConsentHtmlOptions {
 }
 
 export function renderConsentHtml(m: ConsentReportModel, opts: ConsentHtmlOptions = {}): string {
-  const head = `<tr><th>Location</th>${m.scenarios.map((s) => `<th>${esc(SCENARIO_LABEL[s])}</th>`).join('')}</tr>`;
-  const body = m.locations
-    .map((l) => `<tr><th class="loc"><b>${esc(l.label)}</b> <span class="mono dim">${esc(l.id)}</span><br><span class="ver v-${esc(l.verdict)}">${esc(l.verdict)}</span> <span class="dim">${esc(l.observed)}${l.proxied ? ' via proxy' : ''}</span></th>${m.scenarios.map((s) => cell(m.grid[l.id]?.[s])).join('')}</tr>`)
-    .join('');
-  const inv = m.inventory
-    .map(
-      (p) => `<tr class="${p.behavesLikeTracker ? 'trk' : ''}"><td><b>${esc(p.label)}</b><br><span class="mono dim">${esc(p.hosts.slice(0, 3).join(', '))}</span></td>
-<td>${p.recognized ? esc(p.kbStatus === 'confirmed' ? 'confirmed' : 'seed (unconfirmed)') : '<span class="warn">unrecognized</span>'}</td>
-<td>${esc(p.categories.join(', '))}</td><td>${p.behavesLikeTracker ? '<span class="warn">yes</span>' : 'no'}${p.trackerSignals.length ? `<br><span class="dim">${p.trackerSignals.map((x) => esc(SIGNAL_WORD[x] ?? x)).join('<br>')}</span>` : ''}</td>
-<td>${p.sends.map((k) => esc(FIELD_WORD[k] ?? k)).join(', ') || '—'}</td>
-<td>${p.stores.map((s) => `${esc(s.kind)} ${esc(s.name)}${s.lifetimeDays === null ? ' ∞' : s.lifetimeDays ? ` ${s.lifetimeDays}d` : ''}`).join('<br>') || '—'}</td>
-<td>${p.sources.map((s) => esc(SOURCE_WORD[s] ?? s)).join(', ')}${p.loadedBy.length ? `<br>${shortUrl(p.loadedBy[0])}` : ''}</td>
-<td>${[...new Set(p.seenIn.map((x) => x.location))].map(esc).join(', ')}<br><span class="dim">${[...new Set(p.seenIn.map((x) => x.scenario))].length} scenario(s)</span></td></tr>`,
-    )
-    .join('');
-  const nt = m.notTested.map((n) => `<li><span class="mono">${esc(n.scope)}${n.location ? ` · ${esc(n.location)}` : ''} · ${esc(n.id)}</span> — ${esc(n.reason)}</li>`).join('');
-  const rq = m.researchQueue.map((q) => `<li><span class="mono">${esc(q.domain)}</span> — ${esc(q.reason)}</li>`).join('');
-  const evidence = m.evidenceIndex
-    .map((e) => `<tr><td>${esc(e.location)}</td><td>${esc(SCENARIO_LABEL[e.scenario])}</td><td>${e.har ? `<a href="${esc(e.har)}">HAR</a>` : '—'}</td><td>${e.timeline ? `<a href="${esc(e.timeline)}">timeline</a>` : '—'}</td><td>${e.screenshots.length}</td></tr>`)
-    .join('');
-  const locations = m.locations
-    .map((l) => `<li><b>${esc(l.label)}</b> (${esc(l.id)}): <span class="ver v-${esc(l.verdict)}">${esc(l.verdict)}</span> — exit in ${esc(l.observed)}${l.jurisdictions.length ? `, rules for ${esc(l.jurisdictions.join(' + '))}` : ''}${l.note ? ` <span class="dim">(${esc(l.note)})</span>` : ''}${l.siteReported.length ? `<br><span class="dim">site reported: ${l.siteReported.map((s) => `${esc(s.source)} = ${esc(s.value)}`).join('; ')}</span>` : ''}</li>`)
-    .join('');
-  const t = m.totals;
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Consent & tracking — ${esc(m.site.host)}</title>
-<style>
-:root{--bg:#fbfaf8;--fg:#1b1b1b;--dim:#6b6b6b;--line:#e3e0da;--card:#fff;--v:#b42318;--r:#b54708;--x:#6941c6;--p:#175cd3;--ok:#067647;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-@media (prefers-color-scheme:dark){:root{--bg:#141414;--fg:#ececec;--dim:#9a9a9a;--line:#2c2c2c;--card:#1c1c1c;--v:#f97066;--r:#fdb022;--x:#b692f6;--p:#84adff;--ok:#47cd89}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-main{max-width:1180px;margin:0 auto;padding:24px 16px 64px}h1{font-size:26px;margin:0 0 4px}h2{font-size:18px;margin:36px 0 10px;text-transform:uppercase;letter-spacing:.06em}
-h3{font-size:16px;margin:6px 0 8px;font-weight:600}.dim{color:var(--dim)}.mono,code{font-family:var(--mono);font-size:12.5px}code{word-break:break-all}
-.totals span{display:inline-block;margin-right:14px}.pill{display:inline-block;min-width:22px;padding:0 6px;margin:1px;border-radius:10px;color:#fff;font:600 12px/20px var(--mono);text-align:center}
-.pill.v,.b-violation{background:var(--v)}.pill.r,.b-needs-review{background:var(--r)}.pill.x,.b-exposure{background:var(--x)}.pill.p,.b-practice{background:var(--p)}
-.wrap{overflow-x:auto}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
-.grid td,.grid th{text-align:center}.grid th.loc{text-align:left;white-space:nowrap}.grid td.na{color:var(--dim)}.grid td.nt{color:var(--dim);font-style:italic}.none{color:var(--ok);font-size:12px}
-.ver{font:600 11px var(--mono);text-transform:uppercase}.v-verified{color:var(--ok)}.v-mismatch,.v-unknown{color:var(--v)}
-.finding{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:6px;padding:12px 14px;margin:12px 0}
-.k-violation{border-left-color:var(--v)}.k-needs-review{border-left-color:var(--r)}.k-exposure{border-left-color:var(--x)}.k-practice{border-left-color:var(--p)}
-.badge{color:#fff;border-radius:4px;padding:1px 7px;font:600 11px var(--mono);text-transform:uppercase}.scope{font:600 12px var(--mono)}.rule{color:var(--dim);float:right}
-.occ{font-size:13px;margin:6px 0}.occ th{font-size:11px;text-transform:uppercase;color:var(--dim)}.lbl{font:600 11px var(--mono);text-transform:uppercase;color:var(--dim);margin-right:6px}
-.notes{margin:6px 0;padding-left:18px;color:var(--dim);font-size:13.5px}.warn{color:var(--r)}.kb{font-size:12px}.kb-unrecognized{color:var(--r)}.kb-proposed{color:var(--dim)}
-figure{margin:8px 0}figure img{max-width:360px;border:1px solid var(--line)}figcaption{font-size:12px;color:var(--dim)}.req{margin:4px 0}.chain{font-size:12px;color:var(--dim)}
-.inv td{font-size:13px}.inv td:first-child{min-width:190px}.inv tr.trk td:first-child{border-left:3px solid var(--r)}.files{font-size:13px}.sort button{font:inherit;padding:3px 10px;margin-right:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:4px;cursor:pointer}.sort button[aria-pressed=true]{border-color:var(--fg)}
-.callout{border:1px solid var(--line);background:var(--card);padding:10px 14px;border-radius:6px;font-size:14px}
+  const groups = groupConsentActions(m);
+  const counts = (kind: ActionGroup['kind']): number => groups.filter((g) => g.kind === kind).length;
+  const classify = m.inventory.filter((p) => purposeNeedsReview(p, m)).length;
+  const head = `<tr><th>Location</th>${m.scenarios.map((s) => `<th>${esc(VISITOR_ACTION[s] ?? SCENARIO_LABEL[s])}</th>`).join('')}</tr>`;
+  const body = m.locations.map((l) => `<tr><th>${esc(l.label)}<br><span class="human-muted">${esc(l.verdict)} · ${esc(l.observed)}</span></th>${m.scenarios.map((s) => cell(m.grid[l.id]?.[s])).join('')}</tr>`).join('');
+  const tested = m.locations.flatMap((l) => Object.entries(m.grid[l.id] ?? {}).filter(([, c]) => c?.status === 'tested').map(([scenario, c]) => ({ location: l, scenario, cell: c! })));
+  const quiet = tested.filter(({ cell: c }) => Object.values(c.counts).every((n) => n === 0));
+  const failedChoices = tested.filter(({ cell: c }) => c.choice?.includes('(failed)'));
+  const nt = consentLimitations(m);
+  const unverified = m.locations.filter((l) => l.verdict !== 'verified');
+  const evidence = m.evidenceIndex.map((e) => `<tr><td>${esc(m.locations.find((l) => l.id === e.location)?.label ?? e.location)}</td><td>${esc(VISITOR_ACTION[e.scenario] ?? e.scenario)}</td><td>${e.har ? `<a href="${esc(safeHref(e.har))}">Network log (HAR)</a>` : 'Not available'}</td><td>${e.timeline ? `<a href="${esc(safeHref(e.timeline))}">Browser timeline</a>` : 'Not available'}</td><td>${e.screenshots.map((s) => `<a href="${esc(safeHref(s))}">Screenshot</a>`).join('<br>') || 'None'}</td></tr>`).join('');
+  const first = groups.slice(0, 3);
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Website privacy report — ${esc(m.site.host)}</title><style>
+:root{--bg:#f6f7f9;--fg:#1b1e24;--card:#fff;--line:#dde1e7;--muted:#5f6875;--dim:#5f6875;--accent:#2456d6;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--v:#b42318;--r:#b54708;--x:#6941c6;--p:#175cd3}
+@media(prefers-color-scheme:dark){:root{--bg:#131519;--fg:#e7e9ec;--card:#1b1e24;--line:#2b3038;--muted:#a5aebb;--dim:#a5aebb;--accent:#82aaff;--v:#f97066;--r:#fdb022;--x:#b692f6;--p:#84adff}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,Segoe UI,sans-serif}main{max-width:1080px;margin:0 auto;padding:30px 22px 70px}h1{font-size:34px;line-height:1.2;letter-spacing:-.02em;margin:8px 0}h4{font-size:16px}code,.mono{font:12px/1.6 var(--mono)}a{color:var(--accent)}.dim{color:var(--dim)}.eyebrow{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}select,button{font:inherit;padding:7px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}[hidden]{display:none!important}.pill{display:inline-block;padding:2px 6px;margin:2px;border:1px solid var(--line);border-radius:4px;font-size:12px}.pill.v{color:var(--v)}.pill.r{color:var(--r)}.pill.x{color:var(--x)}.pill.p{color:var(--p)}.grid{min-width:1200px}.grid td{min-width:120px}figure img{max-width:100%;max-height:420px;object-fit:contain}figure{margin:14px 0}.req code{overflow-wrap:anywhere}section{margin:20px 0}.na,.nt{color:var(--muted)}
+${HUMAN_CSS}
 </style></head><body><main>
-<h1>Consent &amp; tracking evaluation</h1>
-<p class="dim"><b>${esc(m.site.url)}</b> · run <span class="mono">${esc(m.runId)}</span> · ${esc(m.startedAt.slice(0, 16).replace('T', ' '))} UTC · knowledge base ${esc(m.versions.kb)} · registry ${esc(m.versions.registry)}${m.versions.autoconsent ? ` · autoconsent ${esc(m.versions.autoconsent)}` : ''}${m.redacted ? ' · evidence redacted' : ' · <b>raw evidence</b>'}</p>
-<p class="totals"><span><span class="pill v">${t.violation}</span> violations</span><span><span class="pill r">${t['needs-review']}</span> need review</span><span><span class="pill x">${t.exposure}</span> exposure</span><span><span class="pill p">${t.practice}</span> need research</span></p>
-<p class="callout">This report states what a real browser observed, from each verified location, in each scenario. “No finding observed” covers only the locations, scenarios and pages actually tested — it is never a clean bill of health. Exposure items are litigation theories for counsel, not violations. Everything that could not be tested is listed below.</p>
-<h2>Locations</h2><ul>${locations}</ul>
-<h2>Summary</h2><div class="wrap"><table class="grid"><thead>${head}</thead><tbody>${body}</tbody></table></div>
-<p class="dim">Each cell counts findings that occurred in that location × scenario (a finding can occur in several). Hover a cell for the banner and the choice made.</p>
-<h2>Findings</h2>
-<p class="sort">Sort: <button data-sort="reg" aria-pressed="true">as regulators test</button><button data-sort="pl" aria-pressed="false">as plaintiffs build cases</button></p>
-<div id="findings">${m.findings.map((f) => findingCard(f, opts.runDir)).join('') || '<p>No findings observed in what was tested.</p>'}</div>
-<h2>Inventory</h2><p class="dim">Every outside party seen, recognized or not — the tracker inventory regulators have ordered companies to keep.</p>
-<div class="wrap"><table class="inv"><thead><tr><th>Party</th><th>Knowledge base</th><th>Category</th><th>Behaves like a tracker</th><th>Sent</th><th>Stored</th><th>Came from</th><th>Seen</th></tr></thead><tbody>${inv}</tbody></table></div>
-<h2>Research queue</h2>${rq ? `<ul>${rq}</ul>` : '<p class="dim">Every party was recognized.</p>'}
-<h2>Not tested</h2><ul>${nt}</ul>
-<h2>Evidence</h2><p class="dim">Per location × scenario. ${m.redacted ? 'Cookie values, auth headers and request bodies are redacted; re-run with raw evidence to keep them.' : 'Raw: these files contain cookies and tokens.'}</p>
-<div class="wrap"><table><thead><tr><th>Location</th><th>Scenario</th><th>HAR</th><th>Timeline</th><th>Screenshots</th></tr></thead><tbody>${evidence}</tbody></table></div>
-</main>
-<script>
-(function(){var box=document.getElementById('findings');var btns=document.querySelectorAll('.sort button');
-btns.forEach(function(b){b.addEventListener('click',function(){var key=b.getAttribute('data-sort');btns.forEach(function(x){x.setAttribute('aria-pressed',String(x===b));});
-var cards=Array.prototype.slice.call(box.querySelectorAll('.finding'));cards.sort(function(a,c){return Number(a.getAttribute('data-'+key))-Number(c.getAttribute('data-'+key));});cards.forEach(function(c){box.appendChild(c);});});});})();
+<header id="overview"><div class="eyebrow">ComplyKit · Website privacy report</div><h1>${esc(m.site.host)}</h1><p class="human-muted">${esc(m.site.url)} · Scanned ${esc(m.startedAt.slice(0, 16).replace('T', ' '))} UTC</p>
+<p class="human-intro">${groups.length ? `We found ${groups.length} action item${groups.length === 1 ? '' : 's'} involving cookies, tracking or visitor privacy.` : 'The checks that ran produced no action items.'} ${classify ? `${classify} outside tool${classify === 1 ? ' also needs' : 's also need'} a purpose or classification review.` : 'Review the tool inventory and scan coverage to understand what was observed.'} ${tested.length ? `The report includes ${tested.length} tested visitor-action/location combination${tested.length === 1 ? '' : 's'}.` : 'No completed visitor-action tests were recorded.'}</p>
+<div class="human-stats"><div class="human-stat"><strong>${counts('violation')}</strong><span>Problems observed</span></div><div class="human-stat"><strong>${counts('needs-review') + counts('practice')}</strong><span>Actions needing confirmation or research</span></div><div class="human-stat"><strong>${counts('exposure')}</strong><span>Actions for legal review</span></div><div class="human-stat"><strong>${classify}</strong><span>Tools needing purpose verification</span></div></div>
+<p class="human-muted">Action counts group repeated findings. Tool counts are a separate inventory and can overlap with actions.</p>
+${m.notTested.length || unverified.length || failedChoices.length ? `<p class="human-callout"><strong>Some results are incomplete.</strong> ${m.notTested.length} recorded limitation(s), ${unverified.length} unverified location(s), and ${failedChoices.length} unsuccessful choice attempt(s). <a href="#coverage">See what could not be checked.</a></p>` : ''}
+<nav class="human-nav" aria-label="Report sections"><a href="#overview">Overview</a><a href="#actions">Action plan</a><a href="#storage">Cookies &amp; storage</a><a href="#tools">Tracking tools</a><a href="#visitor-tests">Visitor experience</a><a href="#coverage">Scan coverage</a></nav>
+</header>
+<section aria-labelledby="start-title"><h2 id="start-title" class="human-section-title">Start here</h2>
+${first.length ? `<ol class="human-next">${first.map((g) => `<li><a href="#${g.id}">${esc(actionTitle(g))}</a><br><span class="human-muted">${esc(g.profile.owner)} · ${esc(KIND_HUMAN[g.kind])}</span></li>`).join('')}</ol>` : `<p>${classify ? 'Begin by verifying the purposes of the tools below.' : 'Review the completed tests and arrange manual checks for any missing coverage.'}</p>`}
+<p class="human-muted">Suggested order: observed problems first, then confirmation and research, then legal-review items. Your team can adjust the order based on context.</p></section>
+<section id="actions"><h2 class="human-section-title">Your action plan</h2><p>Each item explains what happened, why it matters and how to check a fix. Open the technical evidence when your developer or adviser needs more detail.</p>
+<label>Show actions <select id="action-filter"><option value="all">All actions</option>${Object.entries(KIND_HUMAN).map(([k, label]) => `<option value="${k}">${esc(label)}</option>`).join('')}</select></label>
+<button type="button" id="copy-actions">Copy shown action briefs</button><span id="copy-status" role="status" aria-live="polite"></span>
+<div id="action-list">${groups.map((g) => actionCard(g, m, opts.runDir)).join('') || '<p class="human-empty">No findings were produced by the checks that ran. This is not an overall assurance about the site.</p>'}</div><p id="action-filter-empty" class="human-empty" hidden>No actions match this view.</p></section>
+<section id="storage"><h2 class="human-section-title">Cookies and browser storage</h2><p>Cookies are small pieces of information saved in a visitor’s browser. Other browser storage can remember information too. Check the purpose of each item and whether the visitor’s choices control its use.</p>${cookieInventory(m, groups)}</section>
+<section id="tools"><h2 class="human-section-title">Tracking tools and outside services</h2><p>These are the outside services observed during the scan. Some provide ordinary site features; others measure visits or advertising. A recognized vendor name does not establish that its use on your site is appropriate.</p>
+<label>Show tools <select id="tool-filter"><option value="all">All tools</option><option value="problem">Problems observed</option><option value="classify">Purpose needs verification</option><option value="review">Other review items</option><option value="none">No finding linked</option></select></label>${toolInventory(m, groups)}<p id="tool-filter-empty" class="human-empty" hidden>No tools match this view.</p>
+${m.researchQueue.length ? `<details class="human-details"><summary>Additional research requests (${m.researchQueue.length})</summary><div><ul>${m.researchQueue.map((q) => `<li><code>${esc(q.domain)}</code>: ${esc(q.reason)}. Confirm its owner, purpose and actual use.</li>`).join('')}</ul></div></details>` : ''}</section>
+<section id="visitor-tests"><h2 class="human-section-title">What visitors experience</h2><p>We tested different visitor choices. These summaries describe the findings recorded for each choice; they do not certify that the choice worked correctly.</p>
+${m.scenarios.map((s) => {
+  const cells = m.locations.map((l) => ({ l, c: m.grid[l.id]?.[s] }));
+  const ran = cells.filter(({ c }) => c?.status === 'tested');
+  const issues = ran.filter(({ c }) => Object.values(c!.counts).some((n) => n > 0));
+  const related = groups.filter((g) => occurrences(g).some((o) => o.scenario === s) || g.findings.some((f) => details(f).scenario === s));
+  return `<details class="human-details"><summary>${esc(VISITOR_ACTION[s] ?? s)} — ${ran.length ? issues.length ? 'findings recorded' : 'no findings recorded' : 'not tested'}</summary><div><ul>${cells.map(({ l, c }) => `<li><strong>${esc(l.label)}:</strong> ${c?.status === 'tested' ? `Test ran. ${Object.entries(c.counts).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${KIND_HUMAN[k as keyof typeof KIND_HUMAN].toLowerCase()} finding(s)`).join(', ') || 'No findings recorded.'}${c.choice?.includes('(failed)') ? ' The attempted visitor choice did not succeed; this does not show behavior after a successful choice.' : ''}` : `Not tested${c?.reason ? `: ${esc(c.reason)}` : ' in this location'}.`}</li>`).join('')}</ul>${related.map((g) => `<p><a href="#${g.id}">${esc(actionTitle(g))}</a></p>`).join('')}</div></details>`;
+}).join('')}
+<details class="human-details"><summary>Tests with no findings recorded (${quiet.length})</summary><div><p>These checks produced no findings. They are not verified passes, and a failed choice or missing check can still limit the result.</p><ul>${quiet.map(({ location, scenario, cell: c }) => `<li>${esc(location.label)}: ${esc(VISITOR_ACTION[scenario] ?? scenario)}${c.choice?.includes('(failed)') ? ' — choice attempt failed' : ''}.</li>`).join('') || '<li>No such tests were recorded.</li>'}</ul></div></details></section>
+<section id="coverage"><h2 class="human-section-title">What we checked and what is missing</h2><p>This report covers the recorded locations, pages and visitor actions only. A result from one location may not describe how your site behaves elsewhere.</p>
+<ul>${m.locations.map((l) => `<li><strong>${esc(l.label)}:</strong> ${l.verdict === 'verified' ? `location verified (${esc(l.observed)})` : `location could not be verified as requested (${esc(l.observed)}); do not use it as evidence for the intended location`}.${l.note ? ` ${esc(l.note)}` : ''}</li>`).join('')}</ul>
+<h3>Not tested</h3>${nt ? `<ul>${nt}</ul>` : '<p>No additional limitations were recorded. This does not establish complete coverage of the site.</p>'}
+${failedChoices.length ? `<h3>Choices that did not succeed</h3><ul>${failedChoices.map(({ location, scenario }) => `<li>${esc(location.label)}: ${esc(VISITOR_ACTION[scenario] ?? scenario)}. Retest with a working control or manual interaction.</li>`).join('')}</ul>` : ''}
+<details class="human-details"><summary>Detailed test matrix and original finding counts</summary><div><p>Counts are original findings, not grouped actions. The same finding may occur in several cells. Exposure items are for legal review, not violations.</p><div class="human-table-wrap"><table class="human-table grid"><thead>${head}</thead><tbody>${body}</tbody></table></div></div></details>
+<details class="human-details"><summary>Scan metadata and evidence files</summary><div><p>Run <code>${esc(m.runId)}</code> · package ${esc(m.versions.package)} · knowledge base ${esc(m.versions.kb)} · registry ${esc(m.versions.registry)}${m.versions.autoconsent ? ` · autoconsent ${esc(m.versions.autoconsent)}` : ''}.</p><p>${m.redacted ? 'Cookie values, authentication headers and request bodies were redacted.' : 'Raw evidence can contain cookies, tokens and visitor information. Handle it carefully.'} Evidence links require the accompanying run files.</p><div class="human-table-wrap"><table class="human-table"><thead><tr><th>Location</th><th>Visitor action</th><th>Network evidence</th><th>Timeline</th><th>Screenshots</th></tr></thead><tbody>${evidence}</tbody></table></div></div></details></section>
+<footer class="human-callout"><strong>About this report</strong><p>This is an automated review of observed website behavior, not legal advice or a legal conclusion. It does not assert conformance or guarantee that every issue was found. Requirements can depend on location, your organization and how a tool is used. Classifications may need confirmation, and some checks require a person. Review the evidence with your team and seek qualified advice for legal decisions.</p></footer>
+</main><script>
+(function(){
+function filter(selectId, selector, attr, emptyId){var select=document.getElementById(selectId);if(!select)return;select.addEventListener('change',function(){var shown=0;document.querySelectorAll(selector).forEach(function(el){el.hidden=select.value!=='all'&&!el.getAttribute(attr).split(' ').includes(select.value);if(!el.hidden)shown++;});document.getElementById(emptyId).hidden=shown!==0;});}
+filter('action-filter','[data-action-kind]','data-action-kind','action-filter-empty');
+filter('tool-filter','[data-tool-state]','data-tool-state','tool-filter-empty');
+filter('cookie-filter','[data-cookie-state]','data-cookie-state','cookie-filter-empty');
+document.getElementById('copy-actions').addEventListener('click',async function(){
+var cards=Array.from(document.querySelectorAll('[data-action-kind]')).filter(function(el){return !el.hidden;});
+var text=cards.map(function(el){return [el.querySelector('.human-status').innerText,el.querySelector('h3').innerText].concat(Array.from(el.querySelectorAll(':scope > p')).map(function(p){return p.innerText;}),[el.querySelector('.work-brief').innerText]).join('\\n');}).join('\\n\\n---\\n\\n');
+var status=document.getElementById('copy-status');if(!cards.length){status.textContent=' No actions shown to copy.';return;}
+try{if(navigator.clipboard&&navigator.clipboard.writeText){await navigator.clipboard.writeText(text);}else{var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();var ok=document.execCommand('copy');ta.remove();if(!ok)throw Error('clipboard blocked');}status.textContent=' Copied '+cards.length+' action brief(s).';}catch(e){status.textContent=' Copy unavailable. Select the action text to copy it manually.';}
+});
+function reveal(){var id=location.hash.slice(1);var el=document.getElementById(id);if(!el)return;if(el.hasAttribute('data-action-kind')&&el.hidden){document.getElementById('action-filter').value='all';document.querySelectorAll('[data-action-kind]').forEach(function(x){x.hidden=false;});document.getElementById('action-filter-empty').hidden=true;}el.scrollIntoView();}
+window.addEventListener('hashchange',reveal);document.querySelectorAll('a[href^="#action-"]').forEach(function(a){a.addEventListener('click',function(){setTimeout(reveal,0);});});reveal();
+})();
 </script></body></html>`;
-  return html;
 }

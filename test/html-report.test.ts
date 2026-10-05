@@ -91,6 +91,38 @@ describe('static HTML report', () => {
     expect(out).not.toContain('<img src=x onerror=alert(1)>');
     expect(out).toContain('&lt;img src=x');
   });
+
+  it('leads with an understandable brief and defaults to topics with collapsed evidence', () => {
+    expect(html).toContain('Text is difficult to read');
+    expect(html).toContain('Who can help');
+    expect(html).toContain('How to check the fix');
+    expect(html).toContain("var groupBy = 'topic'");
+    expect(html).toContain('Technical evidence and requirement references');
+    expect(html).not.toMatch(/<details[^>]*\bopen\b/);
+    expect(html).toContain('not legal advice');
+    expect(html).toContain('capabilities, not proof these checks ran');
+  });
+
+  it('retains every deduplicated observation and keeps uncertain observations separate', () => {
+    const second: Finding = { ...finding, message: 'Different ratio on another page', subject: { ...sub, routePattern: '/about' }, evidence: [{ kind: 'computed-style', properties: { ratio: '2.1' } }] };
+    const uncertain: Finding = { ...second, confidence: 'needs-review' };
+    const before = JSON.stringify([finding, second, uncertain]);
+    const out = renderHtmlReport(run, [finding, second, uncertain]);
+    expect(out.match(/data-i="\d+"/g)).toHaveLength(2);
+    expect(out).toContain('Grouped from 2 observation(s)');
+    expect(out).toContain('Different ratio on another page');
+    expect(out).toContain('/about');
+    expect(out).toContain('Needs confirmation');
+    expect(JSON.stringify([finding, second, uncertain])).toBe(before);
+  });
+
+  it('explains gaps without claiming a clean scan or showing a complete cookie inventory', () => {
+    expect(html).toContain('The site blocked the scanner');
+    const empty = renderHtmlReport({ ...run, partial: { routes: '/' } }, []);
+    expect(empty).toContain('This was a targeted scan');
+    expect(empty).toContain('No findings were produced by the checks that ran');
+    expect(empty).not.toContain('Cookies needing attention');
+  });
 });
 
 // Glyph-mask overlay: a same-size RGBA mask stacked exactly over the crop

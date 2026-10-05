@@ -4,14 +4,17 @@ import { PNG } from 'pngjs';
 import { runDir, type Finding, type Run, type Severity, type Box } from '../record/index.js';
 import { getRequirement, getInstrument } from '../registry/index.js';
 import type { CoverageMatrix } from './coverage.js';
-import { SEVERITY_ORDER, aggregate, buildModel, orderFindings, relabelStyle } from './model.js';
+import { SEVERITY_ORDER, buildModel, relabelStyle } from './model.js';
+
+import { HUMAN_CSS, explain, findingStatus, workBrief, elementLabel } from './human.js';
+import { humanDefects, generalBrief, generalCoverage, generalCookieInventory, topicId } from './general-view.js';
 
 // The deliverable UI (build-plan §8): ONE self-contained static HTML file per
 // run — inline CSS/JS, evidence images as data URIs, no fetches. It must open
 // from disk and attach to an email. Not a React SPA (the React rule governs
 // host-embedded UI, which this package does not have).
 //
-// The report is a power tool, not a brochure: findings are rendered flat with a
+// Advanced review tools remain available below the plain-language briefing: findings are rendered flat with a
 // client-side model (group-by, facet filters, display toggles, copy-visible) so
 // a reviewer can slice by file / rule / law and hand the visible set to an
 // agent as markdown. All state lives in the page; nothing fetches.
@@ -209,9 +212,9 @@ export function renderHtmlReport(run: Run, findings: Finding[], opts: HtmlOption
 
   // Stable order: severity-major, then rule — then collapse identical sightings
   // into defects (the model index IS the card id).
-  const groupsAgg = aggregate(orderFindings(findings));
+  const groupsAgg = humanDefects(findings);
   const ordered = groupsAgg.map((g) => g.rep);
-  const model = buildModel(groupsAgg);
+  const model = buildModel(groupsAgg).map((m, i) => ({ ...m, human: explain(m.rule, m.req), status: findingStatus(m.rule, m.req, m.conf), observations: groupsAgg[i].members.map((f) => ({ message: f.message, requirement: String(f.requirementId), subject: f.subject })) }));
 
   // Requirement metadata for group headers (title + legal text + instrument).
   const reqMeta: Record<string, { title: string; text: string; law: string }> = {};
@@ -228,56 +231,38 @@ export function renderHtmlReport(run: Run, findings: Finding[], opts: HtmlOption
 
   // Flat cards. Every detail wears a part class so display toggles work, and
   // the card wears data-i so the JS can regroup by moving nodes.
-  const cards = ordered
-    .map((f, i) => {
-      const m = model[i];
-      const ev = evidenceHtml(f, runDirPath);
-      const hasSnippet = f.evidence.some((e) => e.kind === 'file' || e.kind === 'dom-snippet');
-      // Long engine prose (axe "Fix any of the following: …") clamps to two
-      // lines; click expands. The full text always survives in copy.
-      const long = m.msg.length > 220;
-      const locBits: string[] = [];
-      if (m.name && !hasSnippet) locBits.push(`<span class="loc-name">${esc(m.name)}</span>`);
-      if (m.css) locBits.push(`<code class="loc-path">${esc(m.css)}</code>`);
-      const metaBits: string[] = [];
-      metaBits.push(`<div class="mf p-rule"><dt>rule</dt><dd><code>${esc(m.rule)}</code></dd></div>`);
-      metaBits.push(`<div class="mf p-req"><dt>requirement</dt><dd><code>${esc(m.req)}</code><span class="law">${esc(m.law)}</span></dd></div>`);
-      const page = m.routes.length ? m.routes[0] : m.url;
-      if (page)
-        metaBits.push(
-          `<div class="mf p-page"><dt>page</dt><dd><code>${esc(page)}</code>${m.routes.length > 1 ? `<span class="law">+${m.routes.length - 1} more</span>` : ''}</dd></div>`,
-        );
-      if (m.cells.length) metaBits.push(`<div class="mf p-page"><dt>seen</dt><dd><code>${esc(m.cells.join(' · '))}</code></dd></div>`);
-      if (m.file) metaBits.push(`<div class="mf p-file"><dt>file</dt><dd><code>${esc(m.file)}</code></dd></div>`);
-      // The roll-up: identical sightings collapsed onto this card. Routes expand.
-      const agg =
-        m.n > 1 || m.routes.length > 1
-          ? `<details class="agg p-agg"><summary>seen ×${m.n} on ${m.routes.length || 1} page${(m.routes.length || 1) === 1 ? '' : 's'}</summary><ul>${m.routes.map((r) => `<li>${esc(r)}</li>`).join('')}</ul></details>`
-          : '';
-      return `<article class="finding sv-${m.sev}" data-i="${i}">
-  <div class="fhead">
-    <span class="sev p-sev">${m.sev}</span>
-    <span class="conf c-${esc(m.conf)} p-conf">${esc(m.conf.replace(/-/g, ' '))}</span>
-    <span class="prod p-prod" title="${esc(m.prod)}">${esc(prodShort(m.prod))}</span>
-  </div>
-  <p class="fmsg${long ? ' clamp' : ''}">${esc(m.msg)}</p>
-  <dl class="fmeta">${metaBits.join('')}</dl>
-  ${locBits.length ? `<div class="floc p-sel"><span class="fl">element</span>${locBits.join('')}</div>` : ''}
-  ${agg}
-  ${ev ? `<div class="fev">${ev}</div>` : ''}
-</article>`;
-    })
-    .join('\n');
+  const cards = ordered.map((f, i) => {
+    const m = model[i];
+    const p = m.human;
+    const members = groupsAgg[i].members;
+    const unique = [...new Map(members.map((member) => [JSON.stringify(member), member])).values()];
+    const name = elementLabel(f);
+    const known = p.title !== 'Review this finding' && p.impact !== 'This check found something that needs review. Read the observation below to understand the affected behavior.';
+    const observation = known ? `${p.title}${name ? ` near “${name}”` : ''}. The scan flagged this for ${m.status === 'Problem observed' ? 'correction' : 'review'}.` : f.message;
+    const photos = unique.flatMap((member) => member.evidence.filter((e) => e.kind === 'screenshot' || e.kind === 'verdict'));
+    const photoHtml = evidenceHtml({ ...f, evidence: [...new Map(photos.map((e) => [JSON.stringify(e), e])).values()] }, runDirPath);
+    return `<article class="finding human-card sv-${m.sev}" id="finding-${i}" data-i="${i}">
+<span class="human-status">${esc(m.status)}</span>
+<h3>${esc(p.title)}</h3><p><strong>What happened:</strong> ${esc(observation)}</p>
+${m.status === 'Legal review' ? '<p class="human-muted">Potential legal exposure, not a detected violation. A qualified adviser needs to assess the context.</p>' : m.status === 'Needs confirmation' ? '<p class="human-muted">Confirm the observation and context before deciding whether this is a problem.</p>' : m.status === 'Needs investigation' ? '<p class="human-muted">Identification alone does not establish a violation. Confirm the purpose and use.</p>' : ''}
+${m.routes.length || m.url ? `<p><strong>Where:</strong> ${esc(m.routes.join(', ') || m.url || '')}${name ? ` · ${esc(name)}` : ''}.</p>` : ''}
+${m.n > 1 ? `<p class="human-muted">Grouped from ${m.n} observation(s)${m.routes.length ? ` on ${m.routes.length} page pattern(s)` : ''}. One action item; all observations are retained below.</p>` : ''}
+${workBrief(p)}
+${photoHtml ? `<details class="human-details"><summary>See the affected area</summary><div>${photoHtml}</div></details>` : ''}
+<details class="human-details"><summary>Technical evidence and requirement references</summary><div>
+<div class="fhead"><span class="sev p-sev">${esc(m.sev)}</span><span class="conf p-conf">${esc(m.conf)}</span><span class="prod p-prod">${esc(prodShort(m.prod))}</span></div>
+${unique.map((member) => {
+  const req = getRequirement(String(member.requirementId));
+  return `<section><p class="fmsg">${esc(member.message)}</p><dl class="fmeta"><div class="mf p-rule"><dt>rule</dt><dd><code>${esc(String(member.ruleId))}</code></dd></div><div class="mf p-req"><dt>requirement</dt><dd><code>${esc(String(member.requirementId))}</code> ${esc(req?.title ?? '')}</dd></div></dl>${req?.text ? `<p class="p-req">${esc(req.text)}</p>` : ''}${member.subject.locator?.cssPath ? `<p class="p-sel">Element: <code>${esc(member.subject.locator.cssPath)}</code></p>` : ''}${evidenceHtml({ ...member, evidence: member.evidence.filter((e) => e.kind !== 'screenshot' && e.kind !== 'verdict') }, runDirPath)}<details class="human-details p-agg"><summary>Original observation and full record</summary><div><pre>${esc(JSON.stringify(member, null, 2))}</pre></div></details></section>`;
+}).join('')}
+</div></details></article>`;
+  }).join('\n');
 
   const coverageHtml = (opts.coverage ?? [])
     .map(
-      (m) => `<li><strong>${esc(m.ruleset)}</strong>: ${m.total} in scope — ${m.autoChecked} auto, ${m.llmAssisted} llm-assisted, <strong>${m.manualOnly} manual-only</strong></li>`,
+      (m) => `<li><strong>${esc(m.ruleset)}</strong>: ${m.total} requirements in the ruleset — ${m.autoChecked} supported by automated checks, ${m.llmAssisted} supported by AI-assisted checks, <strong>${m.manualOnly} manual-only</strong> (capabilities, not proof these checks ran)</li>`,
     )
     .join('');
-
-  const gapsHtml = run.gaps.length
-    ? `<ul class="gaps">${run.gaps.map((g) => `<li>${esc(g.reason)}${g.note ? ` — ${esc(g.note)}` : ''}</li>`).join('')}</ul>`
-    : '<p class="muted">No coverage gaps recorded.</p>';
 
   // Header spectrum: proportional severity bar + clickable count chips. The
   // chips ARE the severity filter (kept in sync with the facet dropdown).
@@ -451,46 +436,29 @@ pre.ev{margin:0;background:color-mix(in srgb,var(--fg) 4%,transparent);border:1p
 ${['sev', 'conf', 'prod', 'rule', 'req', 'page', 'file', 'sel', 'code', 'style', 'shot', 'misc', 'agg']
   .map((p) => `body.hide-${p} .p-${p}{display:none!important}`)
   .join('\n')}
-</style></head><body><div class="wrap">
+${HUMAN_CSS}
+</style></head><body><main class="wrap">
 <header>
-<div class="eyebrow">complykit evidence report</div>
-<h1>${esc(run.property)}</h1>
-<p class="runline">${esc(String(run.id))}${run.gitSha ? ` · ${esc(run.gitSha.slice(0, 8))}` : ''} · complykit ${esc(run.versions.package)} · registry ${esc(run.versions.registry)}</p>
-${run.partial ? `<p class="partialnote">Targeted (partial) run — ${esc(Object.entries(run.partial).map(([k, v]) => `${k}=${v}`).join(' · '))}. Totals cover only the targeted slice; not comparable to a full run.</p>` : ''}
-<p class="note">States <strong>findings, evidence, and coverage</strong> — not a legal conclusion, and does not assert conformance. Each finding cites a specific requirement; review the evidence before acting.</p>
+<div class="eyebrow">ComplyKit · Website review</div><h1>${esc(run.property)}</h1>
+<p class="human-muted">Scanned ${esc(run.startedAt.slice(0, 16).replace('T', ' '))}${/^\d{4}-/.test(run.startedAt) ? ' UTC' : ''}</p>
+<nav class="human-nav" aria-label="Report sections"><a href="#overview">Overview</a><a href="#actions">Action plan</a>${[...new Set(model.map((m) => m.human.topic))].map((topic) => `<a href="#${topicId(topic)}">${esc(topic)}</a>`).join('')}${findings.some((f) => f.evidence.some((e) => e.kind === 'cookie')) ? '<a href="#cookies">Cookie inventory</a>' : ''}<a href="#coverage">Scan coverage</a></nav>
 </header>
-
+${generalBrief(groupsAgg, run)}
+<section id="actions"><h2 class="human-section-title">Your action plan</h2><p>Start with the observed problems, then investigate uncertain findings. Each item includes a suggested owner and a way to check the fix. Technical evidence is collapsed until you need it.</p>
+<details class="human-details"><summary>Filter, search or regroup the action plan</summary><div>
 ${spectrumHtml}
-
-<details class="panel"><summary>Coverage &amp; gaps</summary><div class="pbody">
-  <p>Access levels exercised: ${run.accessLevels.length ? esc(run.accessLevels.join(', ')) : 'none recorded'}</p>
-  ${coverageHtml ? `<ul>${coverageHtml}</ul>` : ''}
-  <h2>Gaps</h2>${gapsHtml}
-</div></details>
-
 <div class="bar" id="bar">
-  <label>Group <select id="groupBy">
-    <option value="req">requirement</option>
-    <option value="law">law</option>
-    <option value="sev">severity</option>
-    <option value="rule">violation type</option>
-    <option value="prod">detected by</option>
-    <option value="file">file</option>
-    <option value="route">page</option>
-    <option value="none">none</option>
-  </select></label>
-  <span id="facets"></span>
-  <input type="search" id="q" placeholder="filter text…">
-  <details class="dd" id="showDd"><summary>Display ▾</summary><div class="menu" id="showMenu"></div></details>
-  <button id="copyBtn" title="Copy visible findings as markdown">Copy visible</button>
-  <button id="clearBtn" hidden>Clear filters</button>
-  <span class="count" id="count"></span>
-</div>
-
-<div id="groups">
-${ordered.length ? cards : '<p class="muted">No findings were produced by the checks that ran. See coverage above for what was and was not exercised.</p>'}
-</div>
-<div class="toast" id="toast"></div>
+  <label>Group <select id="groupBy"><option value="topic">Topic</option><option value="status">Action status</option><option value="req">Requirement</option><option value="law">Law</option><option value="sev">Severity</option><option value="rule">Check type</option><option value="prod">Detected by</option><option value="file">File</option><option value="route">Page</option><option value="none">None</option></select></label>
+  <span id="facets"></span><label>Search <input type="search" id="q" placeholder="Find a tool, page or problem…"></label>
+  <details class="dd" id="showDd"><summary>Evidence display ▾</summary><div class="menu" id="showMenu"></div></details><button type="button" id="copyBtn" title="Copy visible action briefs as markdown">Copy visible actions</button><button type="button" id="clearBtn" hidden>Clear filters</button><span class="count" id="count"></span>
+</div></div></details>
+<div id="groups">${ordered.length ? cards : '<p class="human-empty">No findings were produced by the checks that ran. See scan coverage for what was and was not exercised.</p>'}</div>
+</section>
+${generalCookieInventory(findings)}
+<section id="coverage"><h2 class="human-section-title">What we checked and what is missing</h2>${generalCoverage(run)}
+<details class="human-details"><summary>Scan metadata and supported requirements</summary><div><p class="runline">${esc(String(run.id))}${run.gitSha ? ` · ${esc(run.gitSha.slice(0, 8))}` : ''} · complykit ${esc(run.versions.package)} · registry ${esc(run.versions.registry)}</p>${run.partial ? `<p>Targeted scan settings: ${esc(Object.entries(run.partial).map(([k, v]) => `${k}=${v}`).join(' · '))}</p>` : ''}${coverageHtml ? `<ul>${coverageHtml}</ul>` : ''}<p>Executed checks: ${esc(run.rulesExecuted.join(', ') || 'none recorded')}.</p><p>Supported requirements describe the toolkit’s capabilities, not successful execution or a passing result. Review the recorded scope and gaps above.</p></div></details></section>
+<footer class="human-callout"><strong>About this report</strong><p>This automated report states findings, evidence and coverage. It is not legal advice or a legal conclusion, does not assert conformance and cannot guarantee that every issue was found. Results cover only the pages, states and checks exercised. Confirm uncertain findings, perform any needed manual review, and consult a qualified adviser for legal decisions.</p></footer>
+<div class="toast" id="toast" role="status"></div>
 
 <script type="application/json" id="fdata">${modelJson}</script>
 <script type="application/json" id="rdata">${reqJson}</script>
@@ -506,6 +474,8 @@ ${ordered.length ? cards : '<p class="muted">No findings were produced by the ch
 
   // facet accessors — also the group-by accessors
   var GET = {
+    topic: function(f){ return f.human.topic; },
+    status: function(f){ return f.status; },
     sev: function(f){ return f.sev; },
     conf: function(f){ return f.conf; },
     law: function(f){ return f.law; },
@@ -521,14 +491,16 @@ ${ordered.length ? cards : '<p class="muted">No findings were produced by the ch
   function disp(key, v){
     v = String(v);
     if (key === 'prod') return v === 'rule' ? 'complykit' : v.replace(/^engine:/,'').replace(/^agent:/,'');
-    if (key === 'conf') return v.replace(/-/g,' ');
+    if (key === 'conf') return v === 'violation' ? 'Problem observed' : 'Needs confirmation';
+    if (key === 'rule') { var f = M.find(function(f){ return f.rule === v; }); return f ? f.human.title : v; }
     return v;
   }
 
   // ---- facet filters (checkbox dropdowns) ----
   var FACETS = [
     {key:'sev', label:'Severity'},
-    {key:'conf', label:'Confidence'},
+    {key:'status', label:'Action status'},
+    {key:'conf', label:'Check confidence'},
     {key:'law', label:'Law'},
     {key:'prod', label:'Detected by'},
     {key:'rule', label:'Type'},
@@ -547,7 +519,7 @@ ${ordered.length ? cards : '<p class="muted">No findings were produced by the ch
       vs.forEach(function(v){ seen.set(v, (seen.get(v)||0)+1); });
     });
     var vals = Array.from(seen.entries());
-    if (key === 'sev') vals.sort(function(a,b){ return (SEV_RANK[a[0]]||9)-(SEV_RANK[b[0]]||9); });
+    if (key === 'sev') vals.sort(function(a,b){ return (SEV_RANK[a[0]]??9)-(SEV_RANK[b[0]]??9); });
     else vals.sort(function(a,b){ return b[1]-a[1] || String(a[0]).localeCompare(String(b[0])); });
     return vals;
   }
@@ -623,7 +595,7 @@ ${ordered.length ? cards : '<p class="muted">No findings were produced by the ch
   });
   function matchesSearch(f){
     if (!q) return true;
-    var hay = [f.msg, f.rule, f.req, f.law, f.file, f.routes.join(' '), f.url, f.css, f.name, f.prod].join(' ').toLowerCase();
+    var hay = [f.human.title, f.human.fix, f.human.impact, f.status, f.msg, f.rule, f.req, f.law, f.file, f.routes.join(' '), f.url, f.css, f.name, f.prod].join(' ').toLowerCase();
     return hay.indexOf(q) !== -1;
   }
 
@@ -696,7 +668,7 @@ ${ordered.length ? cards : '<p class="muted">No findings were produced by the ch
   }
 
   // ---- grouping + render ----
-  var groupBy = 'req';
+  var groupBy = 'topic';
   document.getElementById('groupBy').addEventListener('change', function(e){
     groupBy = e.target.value; apply();
   });
@@ -725,7 +697,8 @@ ${ordered.length ? cards : '<p class="muted">No findings were produced by the ch
       // the overview; open a group to drill in. "none" stays expanded.
       var sec = document.createElement('details');
       sec.className = 'grp';
-      if (groupBy === 'none') sec.open = true;
+      if (groupBy === 'none' || groupBy === 'topic' || groupBy === 'status') sec.open = true;
+      if (groupBy === 'topic') sec.id = 'topic-' + String(k).toLowerCase().replace(/[^a-z0-9]+/g, '-');
       var h = document.createElement('summary');
       var title = disp(groupBy, k);
       var titleHtml;
@@ -748,13 +721,16 @@ ${ordered.length ? cards : '<p class="muted">No findings were produced by the ch
       var sight = fs.reduce(function(a,f){ return a + f.n; }, 0);
       h.innerHTML = '<span class="gtitle">'+titleHtml+'</span>' +
         '<span class="gspec" aria-hidden="true">'+spec+'</span>' +
-        '<span class="gcount">'+fs.length+(sight>fs.length?' · '+sight+' sightings':'')+'</span>' +
-        '<button class="gcopy" title="Copy this group as markdown">copy</button>';
-      h.querySelector('.gcopy').addEventListener('click', function(e){
-        e.preventDefault(); e.stopPropagation(); // copy must not toggle the group
+        '<span class="gcount">'+fs.length+(sight>fs.length?' · '+sight+' sightings':'')+'</span>';
+      sec.appendChild(h);
+      var copy = document.createElement('button');
+      copy.type = 'button'; copy.className = 'gcopy';
+      copy.textContent = 'Copy group actions';
+      copy.style.marginTop = '10px';
+      copy.addEventListener('click', function(){
         copyFindings(fs, String(title));
       });
-      sec.appendChild(h);
+      sec.appendChild(copy);
       if (groupBy === 'req' && REQ[k] && REQ[k].text) {
         var bq = document.createElement('blockquote');
         bq.textContent = REQ[k].text;
@@ -766,19 +742,19 @@ ${ordered.length ? cards : '<p class="muted">No findings were produced by the ch
     });
     if (!keys.length) {
       var p = document.createElement('p'); p.className = 'muted';
-      p.textContent = 'No findings match the current filters.';
+      p.textContent = M.length ? 'No actions match the current filters.' : 'No findings were produced by the checks that ran. Review scan coverage before drawing conclusions.';
       groupsEl.appendChild(p);
     }
     var sightings = vis.reduce(function(a,f){ return a + f.n; }, 0);
     document.getElementById('count').textContent =
-      (vis.length === M.length ? M.length + ' defects' : vis.length + ' of ' + M.length + ' defects') +
+      (vis.length === M.length ? M.length + ' action items' : vis.length + ' of ' + M.length + ' action items') +
       ' · ' + sightings + ' sightings';
     clearBtn.hidden = !anyFilter();
   }
 
   // ---- copy visible as markdown (honours display toggles) ----
   function findingMd(f){
-    var lines = [];
+    var lines = ['## ' + f.human.title, '- Status: ' + f.status, '- Suggested owner: ' + f.human.owner, '', 'Why it matters: ' + f.human.impact, '', 'What to do: ' + f.human.fix, '', 'How to check the fix: ' + f.human.verify, '', 'Supporting details:'];
     var head = [];
     if (!hidden.has('sev')) head.push('['+f.sev+']');
     if (!hidden.has('rule')) head.push(f.rule);
@@ -798,7 +774,7 @@ ${ordered.length ? cards : '<p class="muted">No findings were produced by the ch
       if (f.name) lines.push('- Element: ' + f.name);
     }
     lines.push('');
-    lines.push(f.msg);
+    f.observations.forEach(function(o){ lines.push('- ' + o.message + ' (' + o.requirement + ')', '  Location: ' + (o.subject.routePattern || o.subject.instanceUrl || o.subject.property)); });
     if (!hidden.has('code') && f.snips.length) {
       f.snips.forEach(function(s){ lines.push('', '\`\`\`', s, '\`\`\`'); });
     }
@@ -837,8 +813,25 @@ ${ordered.length ? cards : '<p class="muted">No findings were produced by the ch
     return s.replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; });
   }
 
+  function revealHash(){
+    var id = location.hash.slice(1);
+    if (!id) return;
+    var finding = document.getElementById(id);
+    if (id.indexOf('finding-') === 0 || id.indexOf('topic-') === 0) {
+      for (var k in off) off[k].clear();
+      q = ''; document.getElementById('q').value = '';
+      document.querySelectorAll('#facets input[type=checkbox]').forEach(function(cb){ cb.checked = true; });
+      document.querySelectorAll('#facets details.dd').forEach(function(dd){ dd.dataset.active = '0'; });
+      groupBy = 'topic'; document.getElementById('groupBy').value = 'topic'; apply();
+      finding = document.getElementById(id);
+    }
+    if (finding) { finding.scrollIntoView(); }
+  }
+  window.addEventListener('hashchange', revealHash);
+  document.querySelectorAll('a[href^="#finding-"],a[href^="#topic-"]').forEach(function(a){a.addEventListener('click',function(){setTimeout(revealHash,0);});});
   apply();
+  revealHash();
 })();
 </script>
-</div></body></html>`;
+</main></body></html>`;
 }
