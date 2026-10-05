@@ -291,7 +291,9 @@ suite('glyph-init page API', () => {
       // The owner's own text rects must show no ink: every pixel in them
       // matches the page background (white) exactly.
       for (const r of subject!.rects) {
-        const crop = await screenshotRect(r);
+        // No padding: the 2px default reached the neighbouring icon's edge
+        // under some font metrics (ubuntu CI) and read as leftover ink.
+        const crop = await screenshotRect(r, 0);
         expect(hasAnyInk(crop, [255, 255, 255])).toBe(false);
       }
       expect(pixelsEqual(before, afterHide)).toBe(false); // the text really did change something
