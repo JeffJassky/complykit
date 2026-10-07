@@ -60,9 +60,13 @@ word "compliant" never appears in report output; a test asserts it.
 
    Defaults per location: EU/UK get the banner scenarios plus withdraw,
    partial, return visit and markers; US states with opt-out-signal laws get
-   reject, the signal, "opt out every way" and the link walk; other US states
-   get reject, the signal and markers. `--quick` runs a reduced set with
-   shorter visits.
+   reject, accept, the signal, "opt out every way" and the link walk; other US
+   states get reject, accept, the signal and markers. Accept is planned in the
+   US because a banner there can hold the main trackers until the visitor
+   accepts; without that visit they would never be observed from that
+   location. Like reject, it is not applicable (one landing) where no banner
+   is shown. `--quick` runs a reduced set with shorter visits (US locations
+   keep accept).
 4. **Banner driving** uses `@duckduckgo/autoconsent` (rules for hundreds of
    consent tools) with its "hide the banner" rules off — hiding is not
    rejecting — and a heuristic fallback. Every click is confirmed by reading

@@ -83,6 +83,7 @@ export function compareCookieBehavior(facts: ComparisonFacts, decision: PurposeD
     if (refused) { off = true; expected = 'Off: the site offered a choice and the visitor refused'; }
     else if (optedOut && saleShare && (regime === 'opt-out-signal' || s !== 'gpc')) { off = true; expected = s === 'gpc' ? 'Off or restricted while the browser sends the opt-out signal' : 'Off or restricted after the visitor opted out'; }
     else if (optedOut && saleShare) expected = 'May run: this state does not require honoring the signal';
+    else if (s === 'accept') expected = 'May run: the visitor accepted';
     else expected = noChoice ? 'May run before a choice under these rules' : 'May run: opting out of sale/sharing does not cover this use';
   } else if (context) expected = regime === 'opt-in' ? 'May run only when needed for a feature the visitor uses' : 'May run';
   else if (regime === 'unknown' && needsConsent) expected = 'No automatic expectation for this location';

@@ -6,10 +6,16 @@ import { ALL_REQUIREMENTS, jurisdictionsFor, normalizeRegion } from '../../regis
 // verdict. Pure.
 
 const EU_UK: ScenarioId[] = ['do-nothing', 'browse', 'dismiss', 'reject', 'accept', 'partial', 'withdraw', 'return-visit', 'markers'];
-const US_PRIVACY_STATE: ScenarioId[] = ['do-nothing', 'browse', 'reject', 'gpc', 'opt-out-all', 'opt-out-link', 'markers'];
 // 'reject' everywhere a banner might appear: a rejection that leaks is evidence in
 // wiretap suits too (it costs one landing when there is no banner).
-const US_OTHER: ScenarioId[] = ['do-nothing', 'browse', 'reject', 'gpc', 'markers'];
+// 'accept' too: a banner shown under US opt-out rules can still hold the main
+// trackers until the visitor accepts (Shopify does, in some states) — without an
+// accept visit those vendors are never seen from that location, so the report,
+// the consent-tool proof ("ran when granted") and the to-do list miss them.
+// Both are banner-gated in the runner: no banner ⇒ not applicable after one
+// landing, so in effect they run only where a banner is detected.
+const US_PRIVACY_STATE: ScenarioId[] = ['do-nothing', 'browse', 'reject', 'accept', 'gpc', 'opt-out-all', 'opt-out-link', 'markers'];
+const US_OTHER: ScenarioId[] = ['do-nothing', 'browse', 'reject', 'accept', 'gpc', 'markers'];
 const ELSEWHERE: ScenarioId[] = ['do-nothing', 'browse', 'reject', 'accept'];
 
 /** US states whose law requires honoring opt-out signals — derived from the registry, not hand-listed. */
@@ -27,8 +33,10 @@ export function optOutSignalStates(): Set<string> {
  * Default scenario set for a verified location. EU/UK run the banner scenarios
  * plus withdraw, partial and markers; US privacy-law states add the do-not-sell
  * signal, "opt out every way" and the link walk; other US states run do
- * nothing, browse, reject, the signal and markers (reject, signal and markers
- * because of wiretap-law exposure).
+ * nothing, browse, reject, accept, the signal and markers (reject, signal and
+ * markers because of wiretap-law exposure). Every US set includes accept: a
+ * banner there may hold vendors until it is accepted (accept is not applicable
+ * where no banner is shown).
  */
 export function defaultScenarios(jurisdictions: readonly string[]): ScenarioId[] {
   if (jurisdictions.includes('eu') || jurisdictions.includes('uk')) return [...EU_UK];
@@ -39,10 +47,14 @@ export function defaultScenarios(jurisdictions: readonly string[]): ScenarioId[]
   return [...ELSEWHERE];
 }
 
-/** The quick set for a first look (`--quick`): fewer scenarios, same rules. */
+/**
+ * The quick set for a first look (`--quick`): fewer scenarios, same rules. US
+ * locations include accept — where a banner holds vendors it is the only visit
+ * that sees them; with no banner it is not applicable after one landing.
+ */
 export function quickScenarios(jurisdictions: readonly string[]): ScenarioId[] {
   if (jurisdictions.includes('eu') || jurisdictions.includes('uk')) return ['do-nothing', 'reject', 'accept'];
-  if (jurisdictions.includes('us')) return ['do-nothing', 'reject', 'gpc', 'markers'];
+  if (jurisdictions.includes('us')) return ['do-nothing', 'reject', 'accept', 'gpc', 'markers'];
   return ['do-nothing', 'reject'];
 }
 

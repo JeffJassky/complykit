@@ -536,6 +536,19 @@ describe('behaviorCellsFrom: the matrix expectation, narrowed', () => {
     expect(cells[0].reason).toMatch(/may run/);
   });
 
+  // The accept visit planned for US opt-out locations (a banner there can hold vendors until accepted):
+  // an advertising vendor running after acceptance is expected, never a mismatch.
+  it.each([
+    ['opt-out-signal (us-ca)', ['us', 'us-ca']],
+    ['opt-out (us-tx)', ['us', 'us-tx']],
+  ])('US %s: active after acceptance → may run, not a mismatch', (_name, jurisdictions) => {
+    const scenarios: LocationSummary['scenarios'] = [{ scenario: 'accept', status: 'tested', choice: { kind: 'accept', ok: true, method: 'autoconsent' }, evidence: { screenshots: [] } }];
+    const o = [{ ...obs({ 'after-accept': 4 }, {}, [{ name: '_fbp', presentAtEnd: true, writePhases: ['after-accept'] }])[0], scenario: 'accept' as const }];
+    const cells = behaviorCellsFrom({ locations: [loc({}, jurisdictions, scenarios)], inventory: inv, behaviorObservations: o });
+    expect(cells).toEqual([expect.objectContaining({ partyId: 'meta.pixel', scenario: 'accept', status: 'no-mismatch-observed', ref: '/behaviorObservations/0' })]);
+    expect(cells[0].reason).toMatch(/may run in this scenario under opt-out/);
+  });
+
   it.each([
     ['unverified location', loc({ verification: { verdict: 'unknown', expected: {}, observed: {}, sources: [], siteReported: [], jurisdictions: [], checkedAt: '' } }), /not verified/],
     ['unknown regime', loc({}, ['br']), /no automatic expectation/],

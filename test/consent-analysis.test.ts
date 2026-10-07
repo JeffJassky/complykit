@@ -16,7 +16,7 @@ import {
 import { redactTimeline, Timeline } from '../src/record/index.js';
 import { redactHar } from '../src/collect/browser/evaluation/har.js';
 
-const { parseFields, classifyFields, findMarkers, decodeConsent, allDenied, adsRestricted, decideVerification, defaultScenarios, locationPreset } = tracking;
+const { parseFields, classifyFields, findMarkers, decodeConsent, allDenied, adsRestricted, decideVerification, defaultScenarios, quickScenarios, locationPreset } = tracking;
 
 describe('vendor consent decoders', () => {
   it('Google gcs/gcd: denied, granted, restricted', () => {
@@ -112,10 +112,34 @@ describe('jurisdictions and scenario plans', () => {
   it('default scenario sets per jurisdiction', () => {
     expect(defaultScenarios(['eu', 'eu-de'])).toContain('withdraw');
     expect(defaultScenarios(['us', 'us-ca'])).toContain('opt-out-link');
-    expect(defaultScenarios(['us', 'us-fl'])).toEqual(['do-nothing', 'browse', 'reject', 'gpc', 'markers']);
+    expect(defaultScenarios(['us', 'us-fl'])).toEqual(['do-nothing', 'browse', 'reject', 'accept', 'gpc', 'markers']);
     expect(locationPreset('us-ca')).toMatchObject({ country: 'US', region: 'CA' });
     expect(locationPreset('uk')).toMatchObject({ country: 'GB' });
     expect(() => locationPreset('mars')).toThrow();
+  });
+
+  // A banner under US opt-out rules can hold the main trackers until accepted
+  // (Shopify, California): without an accept visit they are never observed there.
+  it('US opt-out and opt-out-signal locations plan an accept visit (banner-gated in the runner)', () => {
+    expect(defaultScenarios(['us', 'us-ca'])).toEqual(['do-nothing', 'browse', 'reject', 'accept', 'gpc', 'opt-out-all', 'opt-out-link', 'markers']);
+    expect(defaultScenarios(['us', 'us-co'])).toContain('accept');
+    expect(defaultScenarios(['us', 'us-tx'])).toContain('accept');
+    expect(defaultScenarios(['us'])).toContain('accept');
+    // Accept follows reject, so the refusal is still the earlier visit.
+    for (const j of [['us', 'us-ca'], ['us', 'us-fl']]) {
+      const s = defaultScenarios(j);
+      expect(s.indexOf('accept')).toBe(s.indexOf('reject') + 1);
+    }
+    // Unchanged elsewhere.
+    expect(defaultScenarios(['eu', 'eu-de'])).toEqual(['do-nothing', 'browse', 'dismiss', 'reject', 'accept', 'partial', 'withdraw', 'return-visit', 'markers']);
+    expect(defaultScenarios(['br'])).toEqual(['do-nothing', 'browse', 'reject', 'accept']);
+  });
+
+  it('quick mode adds accept for US locations only', () => {
+    expect(quickScenarios(['us', 'us-ca'])).toEqual(['do-nothing', 'reject', 'accept', 'gpc', 'markers']);
+    expect(quickScenarios(['us', 'us-fl'])).toEqual(['do-nothing', 'reject', 'accept', 'gpc', 'markers']);
+    expect(quickScenarios(['eu', 'eu-de'])).toEqual(['do-nothing', 'reject', 'accept']);
+    expect(quickScenarios(['br'])).toEqual(['do-nothing', 'reject']);
   });
 
   it('the registry still verifies clean with the tracking requirements', () => {

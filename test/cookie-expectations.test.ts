@@ -34,6 +34,17 @@ describe('expected behavior by category, visitor action and location rules', () 
     expect(status('gpc', 'opt-out-signal', ['analytics'])).toBe('match'); // not a sale/share use
   });
 
+  it('US opt-out rules: running after the visitor accepted the banner is expected, and the label says why', () => {
+    for (const regime of ['opt-out-signal', 'opt-out'] as const) {
+      for (const cats of [['advertising'], ['analytics'], ['session-recording']]) {
+        const r = compareCookieBehavior(facts('accept', regime), { categories: cats });
+        expect(r.status).toBe('match');
+        expect(r.expected).toBe('May run: the visitor accepted');
+        expect(compareCookieBehavior(facts('accept', regime, { hasActivity: false }), { categories: cats }).status).toBe('match');
+      }
+    }
+  });
+
   it('US without an opt-out-signal law: the signal is not required, but a refusal the site offered is', () => {
     expect(status('gpc', 'opt-out', ['advertising'])).toBe('match');
     expect(status('reject', 'opt-out', ['analytics'])).toBe('mismatch');

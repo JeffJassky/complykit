@@ -186,6 +186,33 @@ describe('D10 proof: detection and the per-vendor decision', () => {
     expect(vendor(ev, 'fixture.ads').reason).toMatch(/held before the choice in de\/accept/);
   });
 
+  // A real California scan (opt-out-signal rules): the banner held the ad vendors until accepted, and no accept
+  // visit was planned — they were never seen. The planned accept visit is the "ran when granted" half of the proof.
+  it('US opt-out-signal location: the accept visit supplies "ran when granted" → controlled; without it, not-observed', () => {
+    const optOutSignal = { state: { status: 'unset' as const, regime: 'opt-out-signal' as const, gpc: false, categories: { necessary: true, analytics: true, advertising: true } } };
+    const reject = { scenario: 'reject' as const, choice: { kind: 'reject', ok: true, method: 'selector:complykit' } };
+    const accept = { scenario: 'accept' as const, choice: { kind: 'accept', ok: true, method: 'selector:complykit' } };
+    const withAccept = evaluation({
+      jurisdictions: ['us', 'us-ca'],
+      snap: optOutSignal,
+      scenarios: [{ scenario: 'do-nothing' }, reject, accept],
+      observations: [observation('de', 'do-nothing', {}, KNOWN), observation('de', 'reject', {}, KNOWN), observation('de', 'accept', { 'fixture.ads': { 'after-accept': 3 } }, KNOWN)],
+    });
+    const ads = vendor(withAccept, 'fixture.ads');
+    expect(ads.result).toBe('controlled');
+    expect(ads.observations.some((o) => o.scenario === 'accept' && o.expectedGranted && o.observed === 'fired')).toBe(true);
+    expect(evaluateConsentToolProof(withAccept).findings.map((f) => f.code)).not.toContain('vendor-not-controlled');
+
+    const withoutAccept = evaluation({
+      jurisdictions: ['us', 'us-ca'],
+      snap: optOutSignal,
+      scenarios: [{ scenario: 'do-nothing' }, reject],
+      observations: [observation('de', 'do-nothing', {}, KNOWN), observation('de', 'reject', {}, KNOWN)],
+    });
+    expect(vendor(withoutAccept, 'fixture.ads').result).toBe('not-observed');
+    expect(vendor(withoutAccept, 'fixture.ads').reason).toMatch(/never seen running in a granted state/);
+  });
+
   it('a choice that did not take is skipped, not compared', () => {
     const ev = evaluation({ scenarios: [{ scenario: 'reject', choice: { kind: 'reject', ok: false, method: 'selector:complykit' } }, { scenario: 'accept', choice: { kind: 'accept', ok: true, method: 'selector:complykit' } }] });
     const p = evaluateConsentToolProof(ev);
