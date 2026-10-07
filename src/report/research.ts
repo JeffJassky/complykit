@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ResearchWorkflow, ResearchItem, ConsentReportModel } from '../../types/index.js';
 import { actionQuestions } from './questions.js';
+import { DEFAULT_KB, lookupStore } from '../registry/index.js';
 export type { ResearchWorkflow, ResearchItem } from '../../types/index.js';
 
 const id = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 32);
@@ -16,7 +17,7 @@ function inventoryItem(target: ResearchItem['target'], identity: unknown, eviden
   const fields = [
     ['owner', 'Who provides this technology?', 'Identify the vendor or organization. Internal ownership is a separate human question.'],
     ['purpose', 'What is it used for on this site?', 'Separate documented vendor capabilities from the purpose supported by site configuration or observed behavior.'],
-    ['category', 'Which purpose category is supported by the evidence?', 'Propose a category with reasoning; do not treat an unfamiliar domain as a violation.'],
+    ['category', 'Which purpose category is supported by the evidence?', 'Choose a main purpose: necessary, functional, analytics, performance, advertising (Advertisement in the human report), or other. List additional actual purposes when applicable. Preserve vendor technical tags as supporting detail. Necessary does not override an optional secondary use. Explain the evidence; purpose labels and applicable legal controls are separate decisions.'],
     ['information', 'What information is collected, read, stored or sent?', 'Inspect request field names, storage keys and observed field kinds. Do not reconstruct redacted values.'],
     ['recipients', 'Who receives the information?', 'Identify observed recipient hosts and supported organizations; distinguish endpoints from inferred downstream recipients.'],
     ['control', 'Does this use need consent or another control?', 'Propose applicable controls for the reported use and jurisdictions. A qualified person must confirm legal judgments.'],
@@ -29,11 +30,18 @@ function inventoryItem(target: ResearchItem['target'], identity: unknown, eviden
 }
 export function consentResearch(m: ConsentReportModel): ResearchWorkflow {
   const items = m.findings.map((f, i) => researchAction({kind:'finding',pointer:'/findings/'+i,label:f.message}, f.ruleId, f.requirementId, ['/findings/'+i, '/evidenceIndex', '/locations', '/notTested'], JSON.stringify([f.fingerprint,f.scope,f.kind])));
+  // Research only what the scan can't explain: an unidentified tool, a tool
+  // that behaved differently than its library entry (drift), and a cookie
+  // nobody can attribute — a cookie of an identified tool inherits its
+  // classification, and a known cookie name classifies itself.
   m.inventory.forEach((p, i) => {
-    const refs = ['/inventory/'+i, '/evidenceIndex', '/locations', '/notTested'];
+    const toolKnown = p.recognized && p.categories.length > 0 && !p.categories.includes('unknown') && !m.researchQueue.some((q) => q.partyId === p.partyId);
+    const unknownStores = p.stores.map((s, j) => ({ s, j })).filter(({ s }) => !(p.recognized && p.categories.length && !p.categories.includes('unknown')) && !lookupStore(DEFAULT_KB, s.name));
+    if (toolKnown && !unknownStores.length) return;
+    const refs = ['/inventory/'+i, '/evidenceIndex', '/locations', '/notTested', ...(m.behaviorObservations ? ['/behaviorObservations'] : []), ...(m.behaviorMatrix ? ['/behaviorMatrix'] : [])];
     m.findings.forEach((f, j) => {const party = (f.details?.party ?? {}) as {id?:string;domain?:string};if(party.id===p.partyId||party.domain===p.domain||f.party===p.label)refs.push('/findings/'+j);});
-    items.push(inventoryItem({kind:'tool',pointer:'/inventory/'+i,label:p.label}, [p.partyId,p.domain], refs, {domain:p.domain,partyId:p.partyId}));
-    p.stores.forEach((s,j) => items.push(inventoryItem({kind:'storage',pointer:`/inventory/${i}/stores/${j}`,label:s.name}, [p.partyId,p.domain,s.kind,s.name], refs.concat(`/inventory/${i}/stores/${j}`), {domain:p.domain,partyId:p.partyId,storageName:s.name,storageKind:s.kind})));
+    if (!toolKnown) items.push(inventoryItem({kind:'tool',pointer:'/inventory/'+i,label:p.label}, [p.partyId,p.domain], refs, {domain:p.domain,partyId:p.partyId}));
+    unknownStores.forEach(({s,j}) => items.push(inventoryItem({kind:'storage',pointer:`/inventory/${i}/stores/${j}`,label:s.name}, [p.partyId,p.domain,s.kind,s.name], refs.concat(`/inventory/${i}/stores/${j}`), {domain:p.domain,partyId:p.partyId,storageName:s.name,storageKind:s.kind})));
   });
   m.researchQueue.forEach((q,i) => {if(!m.inventory.some(p=>p.partyId===q.partyId&&p.domain===q.domain))items.push(inventoryItem({kind:'tool',pointer:'/researchQueue/'+i,label:q.domain},[q.partyId,q.domain],['/researchQueue/'+i,'/evidenceIndex'],{domain:q.domain,partyId:q.partyId}));});
   return researchWorkflow('consent',m.property,m.runId,items);

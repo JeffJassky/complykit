@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Gate defer fixture (gate installed in head)</title>
+<script src="/test-store.js"></script>
+<script src="/complykit-consent.js"></script>
+<script>TestStore.granted.analytics = true; window.__gate = ComplyKit.createScriptGate({ config: TestConfig, store: TestStore });</script>
+</head>
+<body>
+<!-- a deferred vendor script: natively it runs only after the whole document is parsed -->
+<script type="text/plain" data-category="analytics" defer data-src="/slow/defer-probe.js?ms=5"></script>
+<!-- a slow parser-blocking script keeps parsing going well past the deferred script's load -->
+<script src="/slow/order.js?n=block&ms=300"></script>
+<div id="tail"></div>
+</body>
+</html>

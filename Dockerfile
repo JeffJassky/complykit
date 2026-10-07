@@ -12,8 +12,13 @@ RUN npm ci --no-audit --no-fund
 COPY service/package.json service/package-lock.json ./service/
 RUN cd service && npm ci --no-audit --no-fund
 
+# The consent tool (client/) the install bundle ships. Its playwright is a test
+# dependency only; the base image already has the browsers.
+COPY client/package.json client/package-lock.json ./client/
+RUN cd client && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-audit --no-fund
+
 COPY . .
-RUN npm run build && cd service && npm run build
+RUN npm run build && (cd client && npm run build && npm run size) && cd service && npm run build
 
 # --- runtime -------------------------------------------------------------------
 FROM mcr.microsoft.com/playwright:v1.62.1-noble
@@ -37,6 +42,9 @@ COPY --from=build /app/dist ./dist
 COPY service/package.json service/package-lock.json ./service/
 RUN cd service && npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 COPY --from=build /app/service/dist ./service/dist
+# The two consent-tool files the install bundle zips (service default:
+# ../client/dist relative to service/).
+COPY --from=build /app/client/dist/complykit-consent.js /app/client/dist/complykit-consent-ui.js ./client/dist/
 COPY service/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN mkdir -p /data && chown pwuser:pwuser /data

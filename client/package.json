@@ -1,0 +1,29 @@
+{
+  "name": "@jeffjassky/complykit-consent",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Client-side consent tool: ask and remember, hold back, tell loaded scripts, withdraw. Zero runtime dependencies.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/complykit-consent.esm.js",
+  "module": "./dist/complykit-consent.esm.js",
+  "files": ["dist"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsup",
+    "size": "node scripts/check-size.mjs",
+    "check-pack": "node ../scripts/check-pack.mjs . --refuse-private",
+    "prepublishOnly": "node ../scripts/check-pack.mjs . --refuse-private && npm run check",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:engines": "CK_BROWSER=chromium vitest run && CK_BROWSER=firefox vitest run && CK_BROWSER=webkit vitest run",
+    "check": "npm run typecheck && npm run build && npm run size && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "playwright": "~1.62.1",
+    "tsup": "^8.5.1",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

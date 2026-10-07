@@ -15,7 +15,9 @@ import { cmdRegistryVerify } from './commands/registry-verify.js';
 import { cmdFixturesRecord } from './commands/fixtures-record.js';
 import { cmdRuns } from './commands/runs.js';
 import { cmdConsent } from './commands/consent.js';
+import { cmdConsentConfig } from './commands/consent-config.js';
 import { cmdKb } from './commands/kb.js';
+import { cmdVerifyChange } from './commands/verify-change.js';
 
 // cli/ is command wiring ONLY — parse args, sequence stages, print progress. No
 // logic worth testing lives here; every command delegates to a tested module.
@@ -51,10 +53,18 @@ Commands
                            browser, verified locations, consent scenarios, HAR
                            evidence (zero-config: complykit consent --url …;
                            see complykit consent --help)
+  consent-config <run-dir> The consent tool's config from a consent run:
+                           complykit-config.json, snippet.html, change-list.md
+                           (see complykit consent-config --help)
+  verify-change            Verify ONE remediation task: fetch its page / GTM
+                           container (or a one-page reject-then-accept spot
+                           check) and run its checker (see verify-change --help)
   static                   Static layer only: point at a repo, get an in-PR run
   report                   Render a run (--format jsonl|md|sarif|html|json;
                            html also writes a .json sidecar next to --out;
-                           consent runs: --format consent-html|consent-md|consent-json)
+                           consent runs: --format consent-html|consent-md|consent-json|consent-changes;
+                           --workspace <file> re-renders with the site's current
+                           classifications, no rescan; --previous <run dir> for "Since")
   review                   Adjudicate the needs-review queue with C1 (LLM); --dry to preview
   diff                     Compare two runs by fingerprint
   coverage                 Requirement coverage for a ruleset
@@ -86,8 +96,12 @@ async function main(argv: string[]): Promise<number> {
       return cmdScan(joinArgs(sub, rest), loadConfigFor);
     case 'consent':
       return cmdConsent(joinArgs(sub, rest), loadConfigFor);
+    case 'consent-config':
+      return cmdConsentConfig(joinArgs(sub, rest));
     case 'kb':
       return cmdKb(joinArgs(sub, rest));
+    case 'verify-change':
+      return cmdVerifyChange(joinArgs(sub, rest));
     case 'static':
       return cmdStatic(joinArgs(sub, rest));
     case 'report':

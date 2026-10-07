@@ -1,0 +1,147 @@
+{
+  "version": "1.0",
+  "generatedFrom": {
+    "runId": "2026-10-06T00-00-00-000Z",
+    "at": "2026-10-06T00:00:00.000Z",
+    "site": "example-shop.test",
+    "complykit": "0.0.0",
+    "kb": "2026-10-02"
+  },
+  "hash": "5b1c54ae8b6ff296a1e736abedccf0980cba491d3d10528925601e94bbf45368",
+  "regimeSource": {
+    "kind": "header",
+    "header": "cf-ipcountry",
+    "endpoint": "/.well-known/complykit-location"
+  },
+  "categories": [
+    {
+      "id": "necessary",
+      "label": "Necessary",
+      "description": "Required for the site to work.",
+      "defaultByRegime": {
+        "opt-in": true,
+        "opt-out-signal": true,
+        "opt-out": true
+      }
+    },
+    {
+      "id": "analytics",
+      "label": "Analytics",
+      "description": "How the site is used.",
+      "defaultByRegime": {
+        "opt-in": false,
+        "opt-out-signal": true,
+        "opt-out": true
+      }
+    },
+    {
+      "id": "advertising",
+      "label": "Advertising",
+      "description": "Ads and measurement.",
+      "defaultByRegime": {
+        "opt-in": false,
+        "opt-out-signal": false,
+        "opt-out": true
+      }
+    }
+  ],
+  "vendors": [
+    {
+      "id": "google.analytics",
+      "label": "Google Analytics 4",
+      "category": "analytics",
+      "control": "api",
+      "adapter": "google-consent-mode",
+      "stores": [
+        {
+          "name": "^_ga(_.+)?$",
+          "kind": "cookie"
+        }
+      ]
+    },
+    {
+      "id": "meta.pixel",
+      "label": "Meta Pixel",
+      "category": "advertising",
+      "control": "api",
+      "adapter": "meta",
+      "stores": [
+        {
+          "name": "^_fb[cp]$",
+          "kind": "cookie"
+        }
+      ]
+    },
+    {
+      "id": "example.widget",
+      "label": "Example widget",
+      "category": "analytics",
+      "control": "gate",
+      "stores": []
+    },
+    {
+      "id": "example.noscript-pixel",
+      "label": "Example pixel (noscript img)",
+      "category": "advertising",
+      "control": "none",
+      "stores": [],
+      "note": "markup leak: <noscript><img>"
+    }
+  ],
+  "gate": [
+    {
+      "category": "analytics",
+      "src": "^https://widget\\.example-vendor\\.test/",
+      "vendor": "example.widget"
+    },
+    {
+      "category": "advertising",
+      "selector": "script[data-ck-inline=\"meta\"]",
+      "vendor": "meta.pixel"
+    }
+  ],
+  "gtm": {
+    "containers": [
+      "GTM-XXXX01"
+    ],
+    "dataLayer": "dataLayer",
+    "consentMode": {
+      "ad_storage": "advertising",
+      "ad_user_data": "advertising",
+      "ad_personalization": "advertising",
+      "analytics_storage": "analytics",
+      "security_storage": "necessary"
+    },
+    "tags": [
+      {
+        "name": "GA4 - config",
+        "category": "analytics",
+        "vendor": "google.analytics"
+      }
+    ]
+  },
+  "platform": "none",
+  "theme": {
+    "accent": "#2563eb",
+    "radius": "6px"
+  },
+  "strings": {
+    "en": {
+      "banner.title": "Your privacy choices",
+      "byRegime": {
+        "opt-out-signal": {
+          "optOut.link": "Do Not Sell or Share My Personal Information"
+        }
+      }
+    }
+  },
+  "consent": {
+    "lifetimeDays": 180,
+    "cookieDomain": ".example-shop.test"
+  },
+  "privacyPolicyUrl": "https://example-shop.test/privacy",
+  "record": {
+    "endpoint": "/consent-record"
+  },
+  "layout": "bar"
+}

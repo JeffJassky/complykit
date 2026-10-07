@@ -10,6 +10,8 @@ import type { JobDetail } from '../shared/api.js';
 import type { ServiceConfig } from './config.js';
 import { ConsentProgress, NdjsonTail, fraction } from './events.js';
 import type { JobStore } from './store.js';
+import type { WorkspaceStore } from './workspace.js';
+import type { SiteWorkspace } from '../shared/api.js';
 
 /** Why a running job is being stopped from the outside. */
 type StopReason = 'cancelled' | 'stopped' | 'timeout';
@@ -35,6 +37,8 @@ export class Runner {
     private readonly config: ServiceConfig,
     /** Called whenever a job reaches a terminal state (idle tracking). */
     private readonly onSettled: () => void = () => {},
+    /** Site workspaces (C3): a consent job applies its site's workspace and records itself as a run. */
+    private readonly workspaces?: WorkspaceStore,
   ) {}
 
   get running(): number {
@@ -164,8 +168,9 @@ export class Runner {
       },
       this.config.pollMs,
     );
+    const site = await this.siteArgs(job, dir);
     tail.start();
-    const args = ['consent', '--url', job.url, '--cwd', dir, '--events', eventsFile, '--quiet', ...(job.quick ? ['--quick'] : [])];
+    const args = ['consent', '--url', job.url, '--cwd', dir, '--events', eventsFile, '--quiet', '--runs', String(this.config.consentRuns ?? 2), ...(job.quick ? ['--quick'] : []), ...site.args];
     let res: StepResult;
     try {
       res = await this.step(a, 'consent', args, dir);
@@ -176,6 +181,53 @@ export class Runner {
     if (mapper.error) throw new Error(withTail(`consent check failed: ${mapper.error}`, res.stderr));
     if (res.code !== 0) throw new Error(withTail(`consent check exited with ${exitText(res)}`, res.stderr));
     if (!mapper.done) throw new Error(withTail('consent check exited without a result', res.stderr));
+    if (site.domain) await this.recordRun(job, site.domain, mapper.done);
+  }
+
+  /**
+   * The site workspace for this job's domain, written into the job directory and
+   * passed as --workspace, plus the previous run of the site (--previous) when
+   * its job directory is still on disk. A workspace that can't be read doesn't
+   * stop the scan (a scan never needs it to judge the site); the log says so and
+   * the report then asks again what the team had classified.
+   */
+  private async siteArgs(job: JobDetail, dir: string): Promise<{ domain?: string; args: string[] }> {
+    if (!this.workspaces) return { args: [] };
+    let domain: string | undefined;
+    let ws: SiteWorkspace;
+    try {
+      domain = this.workspaces.domain(new URL(job.url).hostname);
+      ws = await this.workspaces.get(domain);
+    } catch (err) {
+      this.store.appendLog(job, [`[consent] site workspace not applied: ${(err as Error).message}`]);
+      return { domain, args: [] };
+    }
+    const file = path.join(dir, 'workspace.json');
+    await fsp.writeFile(file, JSON.stringify(ws, null, 2) + '\n');
+    const args = ['--workspace', file];
+    // Newest first: the latest earlier run whose evaluation is still on disk.
+    for (const r of [...ws.runs].reverse()) {
+      if (!r.jobId || r.jobId === job.id) continue;
+      const runDir = path.join(this.store.jobDir(r.jobId), 'consent', '.comply', 'runs', r.id);
+      if (fs.existsSync(path.join(runDir, 'tracking.json'))) {
+        args.push('--previous', runDir);
+        break;
+      }
+    }
+    const classified = Object.keys(ws.entries).filter((k) => k.startsWith('class:') && ws.entries[k].value !== null).length;
+    this.store.appendLog(job, [`[consent] site workspace ${domain}: ${classified} classification(s), ${ws.runs.length} earlier run(s)${args.includes('--previous') ? '' : '; no earlier run on disk to compare with'}`]);
+    return { domain, args };
+  }
+
+  /** A finished consent job appends itself to its site's runs. */
+  private async recordRun(job: JobDetail, domain: string, done: NonNullable<ConsentProgress['done']>): Promise<void> {
+    try {
+      await this.workspaces!.patch(domain, {
+        runs: [{ id: done.runId, at: done.at, jobId: job.id, url: job.url, meta: { findings: done.findings, totals: done.totals, parties: done.parties, unrecognized: done.unrecognized } }],
+      });
+    } catch (err) {
+      this.store.appendLog(job, [`[consent] could not record this run in the site workspace: ${(err as Error).message}`]);
+    }
   }
 
   private async runAccessibility(a: Active): Promise<void> {

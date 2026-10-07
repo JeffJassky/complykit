@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Gate data: URL fixture</title>
+<script src="/test-store.js"></script>
+</head>
+<body>
+<!-- A "delay JS" optimizer serves an inline snippet as a data: URL script; the
+     change list rewrites it to type="text/plain" data-category data-src="data:…". -->
+<script type="text/plain" data-category="analytics" data-src="data:text/javascript;base64,d2luZG93Ll9fb3JkZXI9KHdpbmRvdy5fX29yZGVyfHxbXSkuY29uY2F0KCdiNjQnKTt3aW5kb3cuX19kYXRhQjY0PSh3aW5kb3cuX19kYXRhQjY0fHwwKSsxOw==" id="dataurl"></script>
+<!-- the percent-encoded form -->
+<script type="text/plain" data-category="analytics" data-src="data:text/javascript,window.__order%3D(window.__order%7C%7C%5B%5D).concat('pct')%3Bwindow.__dataPct%3D(window.__dataPct%7C%7C0)%2B1%3B"></script>
+<!-- the same category, after both: document order holds across data: URLs -->
+<script type="text/plain" data-category="analytics">window.__order=(window.__order||[]).concat('inline');</script>
+<script type="text/plain" data-category="marketing" data-src="data:text/javascript;base64,d2luZG93Ll9fb3JkZXI9KHdpbmRvdy5fX29yZGVyfHxbXSkuY29uY2F0KCdiNjQnKTt3aW5kb3cuX19kYXRhQjY0PSh3aW5kb3cuX19kYXRhQjY0fHwwKSsxOw=="></script>
+</body>
+</html>

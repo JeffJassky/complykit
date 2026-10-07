@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Consent API fixture</title>
+<!--
+  A3 fixture: every consent / tag API the shim hooks, installed the way vendors
+  install them (stub first, real library later), with deliberate ordering bugs:
+    - Google: config runs and the "library" takes over dataLayer.push BEFORE the
+      Consent Mode default            -> default-after-load
+    - TikTok: grantConsent() on load  -> grant-on-load
+    - Meta: never told anything; still running at the reject -> not-called-after-refusal
+    - Clarity / UET: default denied before any choice (no state)
+    - Shopify: customerPrivacy defined late; reject sets everything false (no state)
+  The page also checks that each vendor's own code still works through the hooks
+  (window.__ok); the test asserts on it.
+-->
+<script>
+  // --- Google: gtag as a function DECLARATION (replaces the shim's accessor) ---
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-TEST01', { user_id: 'visitor-42' });
+</script>
+<script>
+  // "gtag.js / gtm.js" arriving: takes over dataLayer.push, calling the old one.
+  (function(){
+    var dl = window.dataLayer, orig = dl.push;
+    window.__gtmSeen = dl.length;
+    dl.push = function(){ var r = orig.apply(dl, arguments); window.__gtmSeen += arguments.length; return r; };
+  })();
+  // The ordering bug: the default arrives after the library and after config.
+  gtag('consent', 'default', { ad_storage: 'denied', analytics_storage: 'denied', wait_for_update: 500 });
+</script>
+<script>
+  // --- Meta Pixel: the standard stub, then the "real" fbevents taking over ---
+  !function(f){if(f.fbq)return;var n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];}(window);
+  fbq('init', '123456789', { em: 'person@example.com' });
+  fbq('track', 'PageView');
+</script>
+<script>
+  window.__fbCalls = [];
+  (function(){
+    var q = window.fbq.queue;
+    window.fbq.callMethod = function(){ window.__fbCalls.push(Array.prototype.slice.call(arguments)); };
+    for (var i = 0; i < q.length; i++) window.fbq.callMethod.apply(window.fbq, q[i]);
+  })();
+</script>
+<script>
+  // --- TikTok: the stub array with deferred methods; grants on load (bug) ---
+  var ttq = window.ttq = window.ttq || [];
+  ttq.methods = ['page', 'track', 'grantConsent', 'revokeConsent', 'holdConsent'];
+  ttq.setAndDefer = function(t, e){ t[e] = function(){ t.push([e].concat(Array.prototype.slice.call(arguments, 0))); }; };
+  for (var i = 0; i < ttq.methods.length; i++) ttq.setAndDefer(ttq, ttq.methods[i]);
+  ttq.page();
+  ttq.grantConsent();
+</script>
+<script>
+  // "TikTok events.js": replaces the global with the real object, draining the queue.
+  (function(){
+    var stub = window.ttq, calls = [];
+    var real = { _calls: calls };
+    ['page', 'track', 'grantConsent', 'revokeConsent', 'holdConsent'].forEach(function(m){ real[m] = function(){ calls.push(m); }; });
+    for (var i = 0; i < stub.length; i++) if (Array.isArray(stub[i])) calls.push(stub[i][0]);
+    window.ttq = real;
+  })();
+</script>
+<script>
+  // --- Microsoft Clarity: stub queue, default denied, then the real function ---
+  (function(c,a){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};})(window,'clarity');
+  clarity('consentv2', { ad_Storage: 'denied', analytics_Storage: 'denied' });
+  window.__clarityCalls = 0;
+  (function(){
+    var q = window.clarity.q || [];
+    window.clarity = function(){ window.__clarityCalls++; };
+    window.__clarityCalls += q.length;
+  })();
+</script>
+<script>
+  // --- Microsoft UET: queue array, default denied, then bat.js's object (push on the prototype) ---
+  window.uetq = window.uetq || [];
+  window.uetq.push('consent', 'default', { ad_storage: 'denied' });
+  window.__uetCalls = 0;
+  (function(){
+    var old = window.uetq;
+    function UET(){}
+    UET.prototype.push = function(){ window.__uetCalls++; };
+    window.uetq = new UET();
+    window.__uetCalls += old.length;
+  })();
+</script>
+<script>
+  // --- IAB TCF / GPP: CMP stub, then the CMP ---
+  window.__tcfapi = function(){ (window.__tcfapi.a = window.__tcfapi.a || []).push(arguments); };
+  __tcfapi('ping', 2, function(){});
+  (function(){
+    var pending = window.__tcfapi.a || [];
+    window.__tcfapi = function(cmd, v, cb){ if (cmd === 'displayConsentUi') clarity('set', 'cmp-ui', 'shown'); if (cb) cb({ cmpLoaded: true }, true); };
+    window.__tcfPending = pending.length;
+  })();
+  window.__gpp = function(cmd, cb){ if (cb) cb({ gppVersion: '1.1' }, true); };
+  __gpp('ping', function(){});
+</script>
+<script>
+  // --- Shopify: the platform global first, the Customer Privacy API later ---
+  window.Shopify = window.Shopify || {};
+  window.Shopify.shop = 'example-shop.test';
+  setTimeout(function(){
+    window.Shopify.customerPrivacy = {
+      setTrackingConsent: function(c, cb){ window.__shopConsent = c; if (cb) cb(); },
+      userCanBeTracked: function(){ return false; },
+    };
+    window.Shopify.customerPrivacy.userCanBeTracked();
+    window.__shopReady = true;
+  }, 50);
+</script>
+</head>
+<body>
+<h1>Consent API fixture</h1>
+<div id="banner">We use cookies. <button id="accept">Accept all</button> <button id="reject">Reject all</button></div>
+<script>
+  document.getElementById('reject').onclick = function(){
+    gtag('consent', 'update', { ad_storage: 'denied', analytics_storage: 'denied' });
+    ttq.revokeConsent();
+    Shopify.customerPrivacy.setTrackingConsent({ analytics: false, marketing: false, preferences: false, sale_of_data: false }, function(){});
+    // Meta: deliberately not told.
+    fbq('track', 'ViewContent');
+    document.getElementById('banner').style.display = 'none';
+  };
+  document.getElementById('accept').onclick = function(){
+    gtag('consent', 'update', { ad_storage: 'granted', analytics_storage: 'granted' });
+    fbq('consent', 'grant');
+    document.getElementById('banner').style.display = 'none';
+  };
+</script>
+</body>
+</html>

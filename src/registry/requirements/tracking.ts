@@ -1,5 +1,6 @@
 import type { Requirement } from '../schema.js';
 import { asRequirementId, asInstrumentId } from '../ids.js';
+import { US_OPT_OUT_SIGNAL_STATES } from '../regime.js';
 
 // Consent & tracking by visitor location (plans/consent-design.md §8; legal
 // detail and every citation in plans/research-consent-law.md). These entries
@@ -172,19 +173,12 @@ export const TRACKING_REQUIREMENTS: Requirement[] = [
     urls: [{ href: 'https://cppa.ca.gov/meetings/materials/20260806_07_02.pdf' }],
     effective: { from: '2024-07-01' },
     appliesIf: ['us-state-privacy-covered'],
-    jurisdictions: [
-      { code: 'us-co', from: '2024-07-01' },
-      { code: 'us-ct', from: '2025-01-01' },
-      { code: 'us-tx', from: '2025-01-01' },
-      { code: 'us-mt', from: '2025-01-01' },
-      { code: 'us-ne', from: '2025-01-01' },
-      { code: 'us-nh', from: '2025-01-01' },
-      { code: 'us-nj', from: '2025-07-15' },
-      { code: 'us-mn', from: '2025-07-31' },
-      { code: 'us-md', from: '2025-10-01' },
-      { code: 'us-or', from: '2026-01-01' },
-      { code: 'us-de', from: '2026-01-01' },
-    ],
+    // The state list is shared with the client's regime decision (../regime.ts);
+    // California's duty is ccpa.regs.7025 above.
+    jurisdictions: US_OPT_OUT_SIGNAL_STATES.filter((s) => s.state !== 'CA').map((s) => ({
+      code: `us-${s.state.toLowerCase()}`,
+      from: s.from,
+    })),
     kind: 'obligation',
     severity: 'serious',
     // Maryland drafting ambiguous; NJ regs pending; new states phase in 2027.

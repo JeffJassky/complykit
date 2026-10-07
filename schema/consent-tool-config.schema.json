@@ -1,0 +1,835 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://jeffjassky.github.io/complykit/schema/consent-tool-config.schema.json",
+  "title": "complykit consent tool config v1.0",
+  "description": "Inline configuration of the complykit consent tool, generated from a scan. Hand edits invalidate `hash`; the rescan reports them.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "description": "Config schema version \"<major>.<minor>\".",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$"
+    },
+    "generatedFrom": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "site": {
+          "description": "Registrable domain the scan ran against, e.g. example-shop.test.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+$"
+        },
+        "complykit": {
+          "description": "complykit package version that generated this.",
+          "type": "string",
+          "minLength": 1
+        },
+        "kb": {
+          "description": "Knowledge-base version.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "runId",
+        "at",
+        "site",
+        "complykit"
+      ]
+    },
+    "hash": {
+      "description": "sha-256 of the canonical JSON of every other field.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "regimeSource": {
+      "description": "Where the tool learns the visitor location. Never a third-party geo call; unknown ⇒ opt-in.",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "header"
+            },
+            "header": {
+              "description": "The request header the endpoint echoes, e.g. cf-ipcountry.",
+              "type": "string",
+              "minLength": 1
+            },
+            "endpoint": {
+              "description": "Same-origin path whose body is \"CC\" or \"CC-RR\".",
+              "type": "string",
+              "pattern": "^\\/"
+            }
+          },
+          "required": [
+            "kind",
+            "header",
+            "endpoint"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "meta"
+            },
+            "name": {
+              "description": "<meta name> whose content is \"CC\" or \"CC-RR\".",
+              "default": "complykit-region",
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "platform"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "fixed"
+            },
+            "regime": {
+              "type": "string",
+              "enum": [
+                "opt-in",
+                "opt-out-signal",
+                "opt-out"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "regime"
+          ]
+        }
+      ]
+    },
+    "categories": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "description": "Category id, as used in data-category and the consent record.",
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "defaultByRegime": {
+            "description": "Granted before the visitor chooses, per regime.",
+            "type": "object",
+            "properties": {
+              "opt-in": {
+                "type": "boolean"
+              },
+              "opt-out-signal": {
+                "type": "boolean"
+              },
+              "opt-out": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "opt-in",
+              "opt-out-signal",
+              "opt-out"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "description",
+          "defaultByRegime"
+        ]
+      }
+    },
+    "vendors": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "description": "Knowledge-base entry id, e.g. meta.pixel.",
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "category": {
+            "description": "Category id, as used in data-category and the consent record.",
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "control": {
+            "type": "string",
+            "enum": [
+              "gate",
+              "api",
+              "platform",
+              "none"
+            ]
+          },
+          "adapter": {
+            "description": "Adapter id; required when control is 'api'.",
+            "type": "string",
+            "minLength": 1
+          },
+          "stores": {
+            "description": "Keys this vendor sets, for withdrawal cleanup.",
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "description": "A JavaScript regular-expression source (no slashes, no flags).",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "default": "cookie",
+                  "type": "string",
+                  "enum": [
+                    "cookie",
+                    "local",
+                    "session"
+                  ]
+                }
+              },
+              "required": [
+                "name"
+              ]
+            }
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "category",
+          "control"
+        ]
+      }
+    },
+    "gate": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "description": "Category id, as used in data-category and the consent record.",
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "src": {
+            "description": "A JavaScript regular-expression source (no slashes, no flags).",
+            "type": "string",
+            "minLength": 1
+          },
+          "selector": {
+            "type": "string",
+            "minLength": 1
+          },
+          "vendor": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "category"
+        ]
+      }
+    },
+    "gtm": {
+      "type": "object",
+      "properties": {
+        "containers": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^GTM-[A-Z0-9]+$"
+          }
+        },
+        "dataLayer": {
+          "default": "dataLayer",
+          "type": "string",
+          "minLength": 1
+        },
+        "consentMode": {
+          "description": "Consent Mode signal → category that grants it. Unmapped signals stay denied.",
+          "default": {},
+          "type": "object",
+          "properties": {
+            "ad_storage": {
+              "description": "Category id, as used in data-category and the consent record.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$"
+            },
+            "ad_user_data": {
+              "description": "Category id, as used in data-category and the consent record.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$"
+            },
+            "ad_personalization": {
+              "description": "Category id, as used in data-category and the consent record.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$"
+            },
+            "analytics_storage": {
+              "description": "Category id, as used in data-category and the consent record.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$"
+            },
+            "functionality_storage": {
+              "description": "Category id, as used in data-category and the consent record.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$"
+            },
+            "personalization_storage": {
+              "description": "Category id, as used in data-category and the consent record.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$"
+            },
+            "security_storage": {
+              "description": "Category id, as used in data-category and the consent record.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$"
+            }
+          }
+        },
+        "tags": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "category": {
+                "description": "Category id, as used in data-category and the consent record.",
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]*$"
+              },
+              "vendor": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "name",
+              "category"
+            ]
+          }
+        }
+      },
+      "required": [
+        "containers"
+      ]
+    },
+    "platform": {
+      "default": "none",
+      "type": "string",
+      "enum": [
+        "none",
+        "shopify",
+        "wix",
+        "squarespace",
+        "wordpress"
+      ]
+    },
+    "theme": {
+      "default": {},
+      "description": "CSS values for --ck-bg, --ck-fg, --ck-accent, --ck-border, --ck-radius. Font is always inherit.",
+      "type": "object",
+      "properties": {
+        "bg": {
+          "type": "string"
+        },
+        "fg": {
+          "type": "string"
+        },
+        "accent": {
+          "type": "string"
+        },
+        "border": {
+          "type": "string"
+        },
+        "radius": {
+          "type": "string"
+        }
+      }
+    },
+    "strings": {
+      "description": "language tag → string table (overrides only).",
+      "default": {},
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$"
+      },
+      "additionalProperties": {
+        "description": "Overrides by string key; unknown keys and empty strings are refused.",
+        "type": "object",
+        "properties": {
+          "banner.title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "banner.body": {
+            "type": "string",
+            "minLength": 1
+          },
+          "banner.accept": {
+            "type": "string",
+            "minLength": 1
+          },
+          "banner.reject": {
+            "type": "string",
+            "minLength": 1
+          },
+          "banner.manage": {
+            "type": "string",
+            "minLength": 1
+          },
+          "settings.title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "settings.body": {
+            "type": "string",
+            "minLength": 1
+          },
+          "settings.acceptAll": {
+            "type": "string",
+            "minLength": 1
+          },
+          "settings.rejectAll": {
+            "type": "string",
+            "minLength": 1
+          },
+          "settings.save": {
+            "type": "string",
+            "minLength": 1
+          },
+          "settings.close": {
+            "type": "string",
+            "minLength": 1
+          },
+          "withdraw.link": {
+            "type": "string",
+            "minLength": 1
+          },
+          "withdraw.confirm": {
+            "type": "string",
+            "minLength": 1
+          },
+          "withdraw.note": {
+            "type": "string",
+            "minLength": 1
+          },
+          "withdraw.recall": {
+            "type": "string",
+            "minLength": 1
+          },
+          "privacyChoices.link": {
+            "type": "string",
+            "minLength": 1
+          },
+          "optOut.link": {
+            "type": "string",
+            "minLength": 1
+          },
+          "optOut.confirmed": {
+            "type": "string",
+            "minLength": 1
+          },
+          "optOut.iconAlt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "gpc.honored": {
+            "type": "string",
+            "minLength": 1
+          },
+          "privacyPolicy.link": {
+            "type": "string",
+            "minLength": 1
+          },
+          "byRegime": {
+            "description": "Per-regime overrides of the same keys.",
+            "type": "object",
+            "properties": {
+              "opt-in": {
+                "type": "object",
+                "properties": {
+                  "banner.title": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "banner.body": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "banner.accept": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "banner.reject": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "banner.manage": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.title": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.body": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.acceptAll": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.rejectAll": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.save": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.close": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "withdraw.link": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "withdraw.confirm": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "withdraw.note": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "withdraw.recall": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "privacyChoices.link": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "optOut.link": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "optOut.confirmed": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "optOut.iconAlt": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "gpc.honored": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "privacyPolicy.link": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              },
+              "opt-out-signal": {
+                "type": "object",
+                "properties": {
+                  "banner.title": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "banner.body": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "banner.accept": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "banner.reject": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "banner.manage": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.title": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.body": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.acceptAll": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.rejectAll": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.save": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.close": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "withdraw.link": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "withdraw.confirm": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "withdraw.note": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "withdraw.recall": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "privacyChoices.link": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "optOut.link": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "optOut.confirmed": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "optOut.iconAlt": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "gpc.honored": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "privacyPolicy.link": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              },
+              "opt-out": {
+                "type": "object",
+                "properties": {
+                  "banner.title": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "banner.body": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "banner.accept": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "banner.reject": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "banner.manage": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.title": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.body": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.acceptAll": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.rejectAll": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.save": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.close": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "withdraw.link": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "withdraw.confirm": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "withdraw.note": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "withdraw.recall": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "privacyChoices.link": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "optOut.link": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "optOut.confirmed": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "optOut.iconAlt": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "gpc.honored": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "privacyPolicy.link": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "consent": {
+      "default": {
+        "lifetimeDays": 365
+      },
+      "type": "object",
+      "properties": {
+        "lifetimeDays": {
+          "description": "Days a choice is remembered. At most 395 (13 months).",
+          "default": 365,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 395
+        },
+        "cookieDomain": {
+          "description": "Cookie domain, e.g. \".example.test\"; default: the current host.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "privacyPolicyUrl": {
+      "description": "Linked from the banner.",
+      "type": "string",
+      "pattern": "^https:\\/\\/[^\\s]+$"
+    },
+    "record": {
+      "type": "object",
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "endpoint"
+      ]
+    },
+    "layout": {
+      "default": "bar",
+      "type": "string",
+      "enum": [
+        "bar",
+        "box",
+        "modal"
+      ]
+    }
+  },
+  "required": [
+    "version",
+    "generatedFrom",
+    "hash",
+    "regimeSource",
+    "categories"
+  ]
+}

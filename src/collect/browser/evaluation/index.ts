@@ -4,6 +4,8 @@ import crypto from 'node:crypto';
 import type { Browser } from 'playwright';
 import {
   runDir,
+  ConsentToolRecord,
+  ComplykitToolSnapshot,
   type Artifact,
   type RunId,
   type LocationSpec,
@@ -13,11 +15,14 @@ import {
   type ScenarioSummary,
   type NotTestedItem,
   type Timeline,
+  type ContainerCapture,
 } from '../../../record/index.js';
 import { runScenario, writeTimelineEvidence, type Markers } from './scenarios.js';
 import { resolveJourney, type JourneyOptions } from './journey.js';
 import { lookupExit, DEFAULT_GEO_SOURCES, type GeoSource } from './location.js';
 import { autoconsentVersion } from './autoconsent.js';
+import { discoverContainers, fetchContainers } from './containers.js';
+import { transformResource, type LocalCopy } from './local-copy.js';
 
 // The consent evaluation collector (plans/consent-design.md §2): for each
 // location — verify where the exit really is; if verified, run that location's
@@ -76,10 +81,24 @@ export interface ConsentEvaluationOptions {
   bannerWaitMs?: number; // default 8000
   /** Per-scenario hard budget, ms (default 300000). */
   scenarioTimeoutMs?: number;
+  /**
+   * Throttled repeat runs (runs > 1) get the scenario budget times this factor
+   * (default 3): Slow 3G + 4x CPU makes a banner flow on a heavy page take
+   * several times the normal run, as the navigation timeout already allows.
+   */
+  throttledBudgetFactor?: number;
   /** Extra Chromium args (tests map fake hosts to a local server). */
   launchArgs?: string[];
   /** Scenarios run concurrently within a location. Default 1 (timing fidelity). */
   concurrency?: number;
+  /**
+   * Visits per scenario (default 1). Run 1 is normal; every further run repeats
+   * the scenario under Slow-3G + CPU throttling, to catch trackers that only
+   * fire when the consent tool loads slowly. A party active in any run is active.
+   */
+  runs?: number;
+  /** Local-copy mode: rewrite the site's documents and named resources in this browser (local-copy.ts). */
+  localCopy?: LocalCopy;
   policy: EvaluationPolicy;
   trace?: (line: string) => void;
   onEvent?: (e: EvaluationEvent) => void;
@@ -98,6 +117,9 @@ export interface ConsentEvaluationCollection {
   notTested: NotTestedItem[];
   site: { url: string; host: string; registrableDomain: string };
   autoconsentVersion?: string;
+  // Tag-manager containers the scenarios loaded, fetched through their
+  // location's context (A2). Parsed by rules/tracking/gtm.ts.
+  containers: ContainerCapture[];
   startedAt: string;
   finishedAt: string;
 }
@@ -138,7 +160,11 @@ async function resolveCnames(host: string): Promise<string[]> {
 
 async function launch(args: string[] = []): Promise<Browser> {
   const { chromium } = await import('playwright');
-  return chromium.launch({ headless: process.env.COMPLYKIT_HEADED !== '1', args });
+  // COMPLYKIT_BROWSER_CHANNEL=chrome|msedge|…: drive an installed browser when
+  // Playwright's own Chromium is not available (no download). The evidence then
+  // comes from that browser; the trace line names it.
+  const channel = process.env.COMPLYKIT_BROWSER_CHANNEL || undefined;
+  return chromium.launch({ headless: process.env.COMPLYKIT_HEADED !== '1', args, ...(channel ? { channel } : {}) });
 }
 
 async function pool<T>(items: T[], n: number, fn: (item: T) => Promise<void>): Promise<void> {
@@ -159,10 +185,18 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
   const notTested: NotTestedItem[] = [];
   const runs: LocationRun[] = [];
   const timelines: Timeline[] = [];
+  let containers: ContainerCapture[] = [];
   const raw = opts.rawEvidence === true;
+  const totalRuns = Math.max(1, Math.min(5, Math.floor(opts.runs ?? 1)));
   const dir = runDir(opts.runId, opts.cwd);
   const markers = makeMarkers(opts.runId);
+  if (opts.localCopy) {
+    const lc = opts.localCopy;
+    trace(`local copy: documents from ${lc.origin} are rewritten in this browser (${lc.file}) — nothing is installed on the site`);
+    notTested.push({ scope: 'flow', id: 'local-copy', reason: `LOCAL COPY: the site's documents were rewritten inside the scanner's browser (${lc.file}): what this run shows is the rewritten copy's behavior, not the live site's` });
+  }
   const browser = await launch(opts.launchArgs);
+  if (process.env.COMPLYKIT_BROWSER_CHANNEL) trace(`browser: ${process.env.COMPLYKIT_BROWSER_CHANNEL} channel ${browser.version()} (COMPLYKIT_BROWSER_CHANNEL)`);
 
   try {
     for (const spec of locations) {
@@ -195,25 +229,34 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
       await pool(scenarios, opts.concurrency ?? 1, async (scenario) => {
         emit({ type: 'scenario-start', location: spec.id, scenario });
         const evidenceRel = path.join('evidence', 'tracking', spec.id, scenario);
-        const out = await runScenario({
-          browser,
-          spec,
-          verification,
-          scenario,
-          targetUrl: site.url,
-          site,
-          journey,
-          runId: opts.runId,
-          cwd: opts.cwd,
-          evidenceDir: path.join(dir, evidenceRel),
-          evidenceRel,
-          har: opts.har !== false,
-          raw,
-          markers,
-          bannerWaitMs: opts.bannerWaitMs ?? 8000,
-          scenarioTimeoutMs: opts.scenarioTimeoutMs,
-          trace,
-        });
+        const visit = (runNo: number): ReturnType<typeof runScenario> => {
+          const rel = runNo > 1 ? `${evidenceRel}-run${runNo}` : evidenceRel;
+          return runScenario({
+            browser,
+            spec,
+            verification,
+            scenario,
+            targetUrl: site.url,
+            site,
+            // A throttled page needs room: the same journey, longer navigation budget.
+            journey: runNo > 1 ? { ...journey, navTimeoutMs: Math.max(journey.navTimeoutMs, 90000) } : journey,
+            runId: opts.runId,
+            cwd: opts.cwd,
+            evidenceDir: path.join(dir, rel),
+            evidenceRel: rel,
+            har: opts.har !== false,
+            raw,
+            markers,
+            bannerWaitMs: opts.bannerWaitMs ?? 8000,
+            // The throttled pass gets a scaled budget too (#50): the same journey takes several times as long.
+            scenarioTimeoutMs: runNo > 1 ? throttledBudget(opts) : opts.scenarioTimeoutMs,
+            run: totalRuns > 1 ? runNo : undefined,
+            throttle: runNo > 1,
+            localCopy: opts.localCopy,
+            trace,
+          });
+        };
+        const out = await visit(1);
         // Site-reported region feeds the location's verification record.
         for (const r of out.siteReported) {
           if (!verification.siteReported.some((x) => x.source === r.source)) verification.siteReported.push(r);
@@ -229,12 +272,18 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
         });
         const banner = tl.events.find((e) => e.type === 'banner' && (e.state === 'shown' || e.state === 'reappeared'));
         const choice = [...tl.events].reverse().find((e) => e.type === 'choice');
+        const toolRead = tl.events.find((e) => e.type === 'consent-readout' && e.label === 'default-consent-tool');
+        const consentTool = toolRead?.type === 'consent-readout' ? ConsentToolRecord.safeParse(toolRead.data) : undefined;
+        const ckRead = tl.events.find((e) => e.type === 'consent-readout' && e.label === 'complykit-tool');
+        const complykit = ckRead?.type === 'consent-readout' ? ComplykitToolSnapshot.safeParse(ckRead.data) : undefined;
         results.set(scenario, {
           scenario,
           status: out.status,
           reason: out.reason,
           durationMs: tl.snapshot.durationMs,
           banner: { found: Boolean(banner), cmp: banner?.type === 'banner' ? banner.cmp : undefined, shownAtMs: banner?.t },
+          consentTool: consentTool?.success ? consentTool.data : undefined,
+          complykit: complykit?.success ? complykit.data : undefined,
           choice: choice?.type === 'choice' ? { kind: choice.choice, ok: choice.ok, method: choice.note ? `${choice.method} — ${choice.note}` : choice.method } : undefined,
           counts: {
             requests: requests.length,
@@ -265,8 +314,41 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
         // a blocked visit recorded a challenge page, not the site — neither is evidence.
         if (out.status !== 'not-applicable' && !out.reason?.startsWith('bot protection')) timelines.push(tl);
         for (const n of tl.snapshot.notTested) notTested.push({ scope: 'flow', id: scenario, location: spec.id, reason: n });
+        // Repeat visits under throttling (A7). Only after a visit that tested: a
+        // scenario that could not run once will not run slower. A repeat that fails
+        // is a stated gap, never a quiet drop — the cell then reads "1 of 1 runs"
+        // next to a not-tested note.
+        if (out.status === 'tested' && totalRuns > 1) {
+          sum.runs = 1;
+          for (let runNo = 2; runNo <= totalRuns; runNo++) {
+            trace(`${spec.id}/${scenario}: run ${runNo} of ${totalRuns} (throttled: Slow 3G, CPU x4)`);
+            const again = await visit(runNo);
+            if (again.status !== 'tested') {
+              notTested.push({ scope: 'scenario', id: scenario, location: spec.id, reason: `throttled run ${runNo} of ${totalRuns} did not complete: ${again.reason ?? again.status}` });
+              continue;
+            }
+            sum.runs++;
+            timelines.push(again.timeline);
+            for (const n of again.timeline.snapshot.notTested) notTested.push({ scope: 'flow', id: scenario, location: spec.id, reason: n });
+          }
+        }
       });
       run.scenarios = scenarios.map((s) => results.get(s)).filter((x): x is ScenarioSummary => Boolean(x));
+    }
+    // Tag-manager containers: fetch every gtm.js / gtag.js the scenarios loaded,
+    // through the location that loaded it, while the browser is still up.
+    const discovered = discoverContainers(timelines);
+    if (discovered.length) {
+      trace(`containers: fetching ${discovered.map((d) => d.id).join(', ')}…`);
+      const specs = new Map(runs.map((r) => [r.spec.id, r.spec]));
+      const evidenceRel = path.join('evidence', 'tracking', 'containers');
+      try {
+        const lc = opts.localCopy;
+        containers = await fetchContainers(browser, specs, discovered, { evidenceDir: path.join(dir, evidenceRel), evidenceRel, ...(lc ? { transform: (url, source) => transformResource(lc, url, source) } : {}) });
+      } catch (err) {
+        containers = discovered.map((d) => ({ ...d, fetchedAt: new Date().toISOString(), status: 'error' as const, error: err instanceof Error ? err.message.slice(0, 160) : 'fetch failed' }));
+      }
+      for (const c of containers) trace(`container ${c.id}: ${c.status === 'ok' ? `${c.bytes} bytes` : `not fetched (${c.error})`}`);
     }
   } finally {
     await browser.close().catch(() => {});
@@ -298,10 +380,11 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
   const capturedAt = new Date().toISOString();
   for (const tl of timelines) {
     tl.snapshot.dns = dnsRecords;
-    writeTimelineEvidence(path.join(dir, 'evidence', 'tracking', tl.location.id, tl.snapshot.scenario), tl, raw);
+    const runSuffix = (tl.snapshot.run ?? 1) > 1 ? `-run${tl.snapshot.run}` : '';
+    writeTimelineEvidence(path.join(dir, 'evidence', 'tracking', tl.location.id, tl.snapshot.scenario + runSuffix), tl, raw);
     artifacts.push({
       kind: 'consent-timeline',
-      subject: { property: opts.property, routePattern: '*', instanceUrl: site.url, state: `${tl.location.id}/${tl.snapshot.scenario}` },
+      subject: { property: opts.property, routePattern: '*', instanceUrl: site.url, state: `${tl.location.id}/${tl.snapshot.scenario}${runSuffix}` },
       capturedAt,
       payloadPath: tl.snapshot.evidence.timeline,
       scenario: tl.snapshot.scenario,
@@ -319,7 +402,18 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
     notTested,
     site,
     autoconsentVersion: autoconsentVersion(),
+    containers,
     startedAt,
     finishedAt: new Date().toISOString(),
   };
+}
+
+/** Default per-scenario budget, ms, and the throttled runs' multiple of it. */
+export const SCENARIO_BUDGET_MS = 300000;
+export const THROTTLED_BUDGET_FACTOR = 3;
+
+/** The budget of a throttled repeat run (A7, #50): the scenario budget times throttledBudgetFactor. */
+export function throttledBudget(opts: Pick<ConsentEvaluationOptions, 'scenarioTimeoutMs' | 'throttledBudgetFactor'>): number {
+  const factor = opts.throttledBudgetFactor !== undefined && Number.isFinite(opts.throttledBudgetFactor) && opts.throttledBudgetFactor > 0 ? opts.throttledBudgetFactor : THROTTLED_BUDGET_FACTOR;
+  return Math.round((opts.scenarioTimeoutMs ?? SCENARIO_BUDGET_MS) * factor);
 }

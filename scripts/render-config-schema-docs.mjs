@@ -1,0 +1,160 @@
+#!/usr/bin/env node
+/**
+ * Render schema/consent-tool-config.schema.json to docs/reference/config-schema.md.
+ *
+ *   node scripts/render-config-schema-docs.mjs          write the page
+ *   node scripts/render-config-schema-docs.mjs --check  fail if the page is stale
+ *
+ * The JSON Schema is itself generated from the zod schema (npm run schema:consent),
+ * so the chain is zod -> JSON Schema -> this page. test/config-schema-docs.test.ts
+ * fails when the page is behind the schema; `npm run docs:config-schema` fixes it.
+ * No build needed: this reads the committed JSON file.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+export const SCHEMA_FILE = path.join(root, 'schema', 'consent-tool-config.schema.json');
+export const DOCS_FILE = path.join(root, 'docs', 'reference', 'config-schema.md');
+
+const cell = (s) => String(s).replace(/\|/g, '\\|').replace(/\n/g, ' ');
+const prose = (s) => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\.$/, '');
+const code = (s) => '`' + String(s).replace(/`/g, "'") + '`';
+
+/** A short type label for a (sub)schema. */
+function typeOf(s) {
+  if (s.const !== undefined) return code(JSON.stringify(s.const));
+  if (s.enum) return s.enum.map((v) => code(JSON.stringify(v))).join(' / ');
+  if (s.anyOf) return 'one of';
+  if (s.type === 'array') return `${typeOf(s.items ?? {})}[]`.replace(/^`object`\[\]$/, 'object[]');
+  if (s.type === 'object' && !s.properties && s.additionalProperties) return 'map';
+  return s.type ? code(s.type) : 'any';
+}
+
+function constraints(s) {
+  const out = [];
+  if (s.pattern) out.push(`pattern ${code(s.pattern)}`);
+  if (s.minLength != null) out.push(`min length ${s.minLength}`);
+  if (s.minItems != null) out.push(`at least ${s.minItems} item${s.minItems === 1 ? '' : 's'}`);
+  if (s.minimum != null) out.push(`min ${s.minimum}`);
+  if (s.maximum != null) out.push(`max ${s.maximum}`);
+  return out;
+}
+
+/** Flatten a schema into rows { path, type, required, def, notes }. */
+function walk(schema, prefix, requiredHere, rows) {
+  const ctx = {};
+  for (const [key, sub] of Object.entries(schema.properties ?? {})) {
+    visit(sub, prefix ? `${prefix}.${key}` : key, requiredHere.includes(key), rows, ctx);
+  }
+}
+
+const isStringLeaf = (x) => x && x.type === 'string' && !x.properties;
+
+function visit(s, p, required, rows, ctx = {}) {
+  const notes = [];
+  if (s.description) notes.push(prose(s.description));
+  notes.push(...constraints(s));
+  const def = s.default !== undefined ? code(JSON.stringify(s.default)) : '';
+  const row = { path: p, type: typeOf(s), required, def, notes, variant: ctx.variant };
+  rows.push(row);
+
+  if (s.anyOf) {
+    for (const [i, variant] of s.anyOf.entries()) {
+      const kind = variant.properties?.kind?.const;
+      const label = kind ? `kind ${code(JSON.stringify(kind))}` : `variant ${i + 1}`;
+      for (const [key, sub] of Object.entries(variant.properties ?? {})) {
+        if (key === 'kind') continue;
+        visit(sub, `${p}.${key}`, (variant.required ?? []).includes(key), rows, { ...ctx, variant: label });
+      }
+    }
+  }
+  if (s.type === 'object' && s.properties) members(s, p, rows, ctx, row);
+  if (s.type === 'array' && s.items?.type === 'object') members(s.items, `${p}[]`, rows, ctx);
+  if (s.type === 'object' && !s.properties && s.additionalProperties && typeof s.additionalProperties === 'object') {
+    const ap = s.additionalProperties;
+    if (s.propertyNames?.pattern) row.notes.push(`Keys match ${code(s.propertyNames.pattern)}`);
+    if (ap.properties) {
+      row.path = `${p}.<key>`;
+      row.type = 'map';
+      if (ap.description) row.notes.push(prose(ap.description));
+      members(ap, `${p}.<key>`, rows, ctx);
+    }
+  }
+}
+
+/** Child rows of an object schema. A run of plain string members (the banner copy) is one row. */
+function members(obj, p, rows, ctx, owner) {
+  const props = Object.entries(obj.properties ?? {});
+  const req = obj.required ?? [];
+  const leaves = props.filter(([, v]) => isStringLeaf(v) && !v.pattern && !v.enum);
+  const table = leaves.length >= 6;
+  if (table) {
+    const sig = leaves.map(([k]) => k).join(',');
+    const tables = (ctx.tables ??= new Map());
+    const first = tables.get(sig);
+    const notes = first
+      ? [`Same keys as ${code(first)}`]
+      : [`Keys: ${leaves.map(([k]) => code(k)).join(', ')}. Each value is a non-empty string`];
+    if (!first) tables.set(sig, `${p}.<string key>`);
+    rows.push({ path: `${p}.<string key>`, type: code('string'), required: false, def: '', notes, variant: ctx.variant });
+  }
+  for (const [key, sub] of props) {
+    if (table && leaves.some(([k]) => k === key)) continue;
+    visit(sub, `${p}.${key}`, req.includes(key), rows, ctx);
+  }
+}
+
+export function renderSchemaMarkdown(schema) {
+  const rows = [];
+  walk(schema, '', schema.required ?? [], rows);
+  const lines = [];
+  lines.push('<!-- GENERATED by scripts/render-config-schema-docs.mjs from schema/consent-tool-config.schema.json. Do not edit; run `npm run docs:config-schema`. -->');
+  lines.push('');
+  lines.push('# Consent tool config reference');
+  lines.push('');
+  lines.push(`Every field of the consent tool config, generated from the JSON Schema (${code(schema.title)}).`);
+  lines.push('What the fields mean, how the generator fills them and the rules the tool applies are in');
+  lines.push('[Consent tool config](/guide/config); the install steps are in');
+  lines.push('[Installing the consent tool](/guide/consent-tool).');
+  lines.push('');
+  lines.push(`The schema is published at ${code(schema.$id)}. Point an editor at it with a`);
+  lines.push('`$schema` key to get completion and validation while reading a config.');
+  lines.push('');
+  lines.push('A config is a single JSON object. Hand edits invalidate `hash`, and the rescan reports them.');
+  lines.push('Some rules are not expressible in JSON Schema and are enforced by the generator and by the');
+  lines.push('tool itself (a `necessary` category must exist and be granted everywhere; no other category');
+  lines.push('may default to granted under `opt-in`; string overrides are checked against the banner copy');
+  lines.push('rules). Those are described in [Consent tool config](/guide/config).');
+  lines.push('');
+  lines.push('"Required" means required in the written form, inside its parent object (`gtm.containers` is required only when `gtm` is present). A field with a default may be omitted.');
+  lines.push('');
+  lines.push('| Field | Type | Required | Default | Notes |');
+  lines.push('|---|---|---|---|---|');
+  for (const r of rows) {
+    const notes = [...r.notes, ...(r.variant ? [`only when ${r.variant}`] : [])].join('. ');
+    lines.push(`| ${code(r.path)} | ${cell(r.type)} | ${r.required ? 'yes' : ''} | ${cell(r.def)} | ${cell(notes)} |`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
+export function build() {
+  return renderSchemaMarkdown(JSON.parse(fs.readFileSync(SCHEMA_FILE, 'utf8')));
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const want = build();
+  if (process.argv.includes('--check')) {
+    const have = fs.existsSync(DOCS_FILE) ? fs.readFileSync(DOCS_FILE, 'utf8') : '';
+    if (have !== want) {
+      console.error('render-config-schema-docs: docs/reference/config-schema.md is stale (run npm run docs:config-schema).');
+      process.exit(1);
+    }
+    console.log('render-config-schema-docs: up to date');
+  } else {
+    fs.writeFileSync(DOCS_FILE, want);
+    console.log(`render-config-schema-docs: wrote ${path.relative(root, DOCS_FILE)}`);
+  }
+}

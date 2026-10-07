@@ -371,6 +371,10 @@ into an ignored cache, or make the repository private.
 
 ## 5. Consent tool (in-house) — after §§1–4
 
+> Superseded in detail by [client-consent-design.md](client-consent-design.md) (2026-10-06):
+> implementation taxonomy, scan limits, the compatibility finding, and milestones M14–M18.
+> The four jobs below still hold.
+
 Building one is ordinary engineering; open-source examples to learn from include Klaro! and
 orestbida/cookieconsent (both gate scripts via markup) and Complianz on WordPress (rewrites
 the page on the server before it's sent).

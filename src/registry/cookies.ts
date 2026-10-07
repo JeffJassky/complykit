@@ -4,7 +4,7 @@
 // unknown keys are reported so the DB can grow. Pure data — registry imports
 // nothing.
 
-export type CookieCategory = 'necessary' | 'functional' | 'analytics' | 'advertising' | 'unknown';
+export type CookieCategory = 'necessary' | 'functional' | 'analytics' | 'performance' | 'advertising' | 'other' | 'unknown';
 
 interface CookiePattern {
   test: RegExp;
@@ -54,8 +54,8 @@ export function classifyCookie(name: string): CookieClassification {
   return { category: 'unknown' };
 }
 
-/** A tracker cookie is analytics or advertising — the categories that need
- *  consent before being set (not strictly necessary / functional). */
+/** The default opt-in comparison covers analytics, performance and advertising.
+ *  A purpose label alone does not establish a legal exemption or requirement. */
 export function requiresConsent(category: CookieCategory): boolean {
-  return category === 'analytics' || category === 'advertising';
+  return category === 'analytics' || category === 'performance' || category === 'advertising';
 }

@@ -1,3 +1,11 @@
+import { renderScopeHtml, SCOPE_CSS } from './consent-scope.js';
+import { buildMatrixWorkspace } from './consent-workbench.js';
+import { renderSinceHtml, carriedTasks } from './consent-diff.js';
+import { buildBehaviorMatrix, renderBehaviorMatrix, MATRIX_CSS, MATRIX_JS } from './consent-matrix.js';
+import { renderCompatibilityHtml, COMPATIBILITY_CSS, CHANGE_LIST_FILE } from './consent-compatibility.js';
+import { renderConsentToolProofHtml, PROOF_CSS } from './consent-tool-proof.js';
+import { renderRemediationHtml, REMEDIATION_CSS, REMEDIATION_JS } from './consent-remediation.js';
+import { renderRerenderPanel, RERENDER_CSS, RERENDER_JS, KEEP_SCROLL_JS, type ReportRenderInfo } from './consent-rerender.js';
 import { workspaceId, tone, actionControls, workspacePanel, workspaceScript, WORKSPACE_CSS } from './workspace.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,7 +25,7 @@ function esc(s: unknown): string {
 }
 
 import { HUMAN_CSS, workBrief, safeHref } from './human.js';
-import { VISITOR_ACTION, KIND_HUMAN, KIND_NOTE, details, groupConsentActions, actionTitle, groupObservation, implementationHint, occurrences, toolInventory, cookieInventory, consentLimitations, purposeNeedsReview, type ActionGroup } from './consent-view.js';
+import { VISITOR_ACTION, KIND_HUMAN, KIND_NOTE, details, groupConsentActions, actionTitle, groupObservation, implementationHint, occurrences, toolInventory, storageReviewCards, consentLimitations, type ActionGroup } from './consent-view.js';
 
 function inlineImage(runDir: string | undefined, rel: string): string | null {
   if (!runDir) return null;
@@ -84,7 +92,7 @@ function actionCard(g: ActionGroup, m: ConsentReportModel, runDir: string | unde
   const hint = implementationHint(g);
   const notes = [...new Set(g.findings.flatMap((f) => details(f).notes ?? []))];
   const raw = [...new Map(g.findings.map((f) => [JSON.stringify(f), f])).values()];
-  return `<article class="human-card" id="${g.id}" data-action-kind="${g.kind}" data-action-key="${workspaceId('action', [g.kind, g.findings.map((f) => [f.fingerprint, f.ruleId, f.scope, details(f).pattern, details(f).source, details(f).fix]).sort()])}" data-scan-tone="${g.kind === 'violation' ? 'red' : 'amber'}" data-tone="${g.kind === 'violation' ? 'red' : 'amber'}">
+  return `<article class="human-card" id="${g.id}" data-matrix-managed data-action-kind="${g.kind}" data-action-key="${workspaceId('action', [g.kind, g.findings.map((f) => [f.fingerprint, f.ruleId, f.scope, details(f).pattern, details(f).source, details(f).fix]).sort()])}" data-scan-tone="${g.kind === 'violation' ? 'red' : 'amber'}" data-tone="${g.kind === 'violation' ? 'red' : 'amber'}">
 <span class="human-status" data-tone="${tone(KIND_HUMAN[g.kind])}">${esc(KIND_HUMAN[g.kind])}</span>
 <h3>${esc(actionTitle(g))}</h3>
 <p><strong>What happened:</strong> ${esc(groupObservation(g))}</p>
@@ -93,7 +101,7 @@ ${os.some((o) => o.markers.length) ? '<p class="human-muted">Some data-sharing o
 ${contexts.length ? `<p><strong>Where / when:</strong> ${[...new Set(contexts)].map(esc).join('; ')}.</p>` : ''}
 ${workBrief(g.profile)}
 ${g.party && m.inventory.some((p) => p.label === g.party) ? `<p><a class="human-link" href="#tool-${m.inventory.findIndex((p) => p.label === g.party) + 1}">Research ${esc(g.party)}: owner, purpose, information used and consent / controls</a>. Its tool review and individual storage reviews are saved separately from this action.</p>` : ''}
-${actionControls(g.findings[0].ruleId, g.findings[0].requirementId)}
+${actionControls(g.findings[0].ruleId, g.findings[0].requirementId, true)}
 ${hint ? `<p class="human-callout"><strong>Where to start:</strong> ${esc(hint)}</p>` : ''}
 ${notes.length ? `<details class="human-details"><summary>Important context (${notes.length})</summary><div><ul>${notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div></details>` : ''}
 <details class="human-details"><summary>Technical evidence and legal references (${g.findings.length} finding${g.findings.length === 1 ? '' : 's'})</summary><div>
@@ -105,21 +113,23 @@ ${raw.map((f) => `<section><h4>${esc(f.requirementTitle)}</h4><p>${f.sourceUrl ?
 export interface ConsentHtmlOptions {
   /** The run directory: screenshots are inlined from here; links are relative to it. */
   runDir?: string;
+  /** Link to the downloadable change list, relative to the report (default: change-list.md, which the CLI writes beside it); false = no link. */
+  changeList?: string | false;
+  /** Which classifications this rendering applied (R2): the page offers an update when the workspace's differ. */
+  render?: ReportRenderInfo;
 }
 
 export function renderConsentHtml(m: ConsentReportModel, opts: ConsentHtmlOptions = {}): string {
   const groups = groupConsentActions(m);
-  const counts = (kind: ActionGroup['kind']): number => groups.filter((g) => g.kind === kind).length;
-  const classify = m.inventory.filter((p) => purposeNeedsReview(p, m)).length;
   const head = `<tr><th>Location</th>${m.scenarios.map((s) => `<th>${esc(VISITOR_ACTION[s] ?? SCENARIO_LABEL[s])}</th>`).join('')}</tr>`;
   const body = m.locations.map((l) => `<tr><th>${esc(l.label)}<br><span class="human-muted">${esc(l.verdict)} · ${esc(l.observed)}</span></th>${m.scenarios.map((s) => cell(m.grid[l.id]?.[s])).join('')}</tr>`).join('');
   const tested = m.locations.flatMap((l) => Object.entries(m.grid[l.id] ?? {}).filter(([, c]) => c?.status === 'tested').map(([scenario, c]) => ({ location: l, scenario, cell: c! })));
-  const quiet = tested.filter(({ cell: c }) => Object.values(c.counts).every((n) => n === 0));
   const failedChoices = tested.filter(({ cell: c }) => c.choice?.includes('(failed)'));
   const nt = consentLimitations(m);
-  const unverified = m.locations.filter((l) => l.verdict !== 'verified');
-  const evidence = m.evidenceIndex.map((e) => `<tr><td>${esc(m.locations.find((l) => l.id === e.location)?.label ?? e.location)}</td><td>${esc(VISITOR_ACTION[e.scenario] ?? e.scenario)}</td><td>${e.har ? `<a href="${esc(safeHref(e.har))}">Network log (HAR)</a>` : 'Not available'}</td><td>${e.timeline ? `<a href="${esc(safeHref(e.timeline))}">Browser timeline</a>` : 'Not available'}</td><td>${e.screenshots.map((s) => `<a href="${esc(safeHref(s))}">Screenshot</a>`).join('<br>') || 'None'}</td></tr>`).join('');
-  const first = groups.slice(0, 3);
+  const evidence = m.evidenceIndex.map((e) => `<tr data-evidence-location="${esc(e.location)}" data-evidence-scenario="${esc(e.scenario)}"><td>${esc(m.locations.find((l) => l.id === e.location)?.label ?? e.location)}</td><td>${esc(VISITOR_ACTION[e.scenario] ?? e.scenario)}</td><td>${e.har ? `<a href="${esc(safeHref(e.har))}">Network log (HAR)</a>` : 'Not available'}</td><td>${e.timeline ? `<a href="${esc(safeHref(e.timeline))}">Browser timeline</a>` : 'Not available'}</td><td>${e.screenshots.map((s) => `<a href="${esc(safeHref(s))}">Screenshot</a>`).join('<br>') || 'None'}</td></tr>`).join('');
+  const matrix = buildBehaviorMatrix(m);
+  const workbench = buildMatrixWorkspace(m, matrix, groups);
+  const library = `${workbench.tasksHtml}${groups.map(g => actionCard(g, m, opts.runDir)).join('')}${storageReviewCards(m, groups)}${toolInventory(m, groups)}`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Website privacy report — ${esc(m.site.host)}</title><style>
 :root{--bg:#f6f7f9;--fg:#1b1e24;--card:#fff;--line:#dde1e7;--muted:#5f6875;--dim:#5f6875;--accent:#2456d6;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--v:#b42318;--r:#b54708;--x:#6941c6;--p:#175cd3}
@@ -127,57 +137,35 @@ export function renderConsentHtml(m: ConsentReportModel, opts: ConsentHtmlOption
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,Segoe UI,sans-serif}main{max-width:1080px;margin:0 auto;padding:30px 22px 70px}h1{font-size:34px;line-height:1.2;letter-spacing:-.02em;margin:8px 0}h4{font-size:16px}code,.mono{font:12px/1.6 var(--mono)}a{color:var(--accent)}.dim{color:var(--dim)}.eyebrow{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}select,button{font:inherit;padding:7px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}[hidden]{display:none!important}.pill{display:inline-block;padding:2px 6px;margin:2px;border:1px solid var(--line);border-radius:4px;font-size:12px}.pill.v{color:var(--v)}.pill.r{color:var(--r)}.pill.x{color:var(--x)}.pill.p{color:var(--p)}.grid{min-width:1200px}.grid td{min-width:120px}figure img{max-width:100%;max-height:420px;object-fit:contain}figure{margin:14px 0}.req code{overflow-wrap:anywhere}section{margin:20px 0}.na,.nt{color:var(--muted)}
 ${HUMAN_CSS}
 ${WORKSPACE_CSS}
+${MATRIX_CSS}
+${COMPATIBILITY_CSS}
+${PROOF_CSS}
+${REMEDIATION_CSS}
+${RERENDER_CSS}
+${SCOPE_CSS}
 </style></head><body><main>
 <header id="overview"><div class="eyebrow">ComplyKit · Website privacy report</div><h1>${esc(m.site.host)}</h1><p class="human-muted">${esc(m.site.url)} · Scanned ${esc(m.startedAt.slice(0, 16).replace('T', ' '))} UTC</p>
-<p class="human-intro">${groups.length ? `We found ${groups.length} action item${groups.length === 1 ? '' : 's'} involving cookies, tracking or visitor privacy.` : 'The checks that ran produced no action items.'} ${classify ? `${classify} outside tool${classify === 1 ? ' also needs' : 's also need'} a purpose or classification review.` : 'Review the tool inventory and scan coverage to understand what was observed.'} ${tested.length ? `The report includes ${tested.length} tested visitor-action/location combination${tested.length === 1 ? '' : 's'}.` : 'No completed visitor-action tests were recorded.'}</p>
-<div class="human-stats"><div class="human-stat" data-tone="red"><strong>${counts('violation')}</strong><span>Problems observed</span></div><div class="human-stat" data-tone="amber"><strong>${counts('needs-review') + counts('practice')}</strong><span>Actions needing confirmation or research</span></div><div class="human-stat" data-tone="amber"><strong>${counts('exposure')}</strong><span>Actions for legal review</span></div><div class="human-stat" data-tone="amber"><strong>${classify}</strong><span>Tools needing purpose verification</span></div></div>
-<p class="human-muted">Action counts group repeated findings. Tool counts are a separate inventory and can overlap with actions.</p>
-${m.notTested.length || unverified.length || failedChoices.length ? `<p class="human-callout"><strong>Some results are incomplete.</strong> ${m.notTested.length} recorded limitation(s), ${unverified.length} unverified location(s), and ${failedChoices.length} unsuccessful choice attempt(s). <a href="#coverage">See what could not be checked.</a></p>` : ''}
-<div class="status-legend"><span class="human-status" data-tone="red">Red: problem observed</span><span class="human-status" data-tone="amber">Amber: review or answer needed</span><span class="human-status" data-tone="green">Green: your completed work</span></div><nav class="human-nav" aria-label="Report sections"><a href="#overview">Overview</a><a href="#report-workspace">Your checklist</a><a href="#actions">Action plan</a><a href="#storage">Cookies &amp; storage</a><a href="#tools">Tracking tools</a><a href="#visitor-tests">Visitor experience</a><a href="#coverage">Scan coverage</a></nav>
-</header>
-${workspacePanel()}
-<section aria-labelledby="start-title"><h2 id="start-title" class="human-section-title">Start here</h2>
-${first.length ? `<ol class="human-next">${first.map((g) => `<li><a href="#${g.id}">${esc(actionTitle(g))}</a><br><span class="human-muted">${esc(g.profile.owner)} · ${esc(KIND_HUMAN[g.kind])}</span></li>`).join('')}</ol>` : `<p>${classify ? 'Begin by verifying the purposes of the tools below.' : 'Review the completed tests and arrange manual checks for any missing coverage.'}</p>`}
-<p class="human-muted">Suggested order: observed problems first, then confirmation and research, then legal-review items. Your team can adjust the order based on context.</p></section>
-<section id="actions"><h2 class="human-section-title">Your action plan</h2><p>Each item explains what happened, why it matters and how to check a fix. Open the technical evidence when your developer or adviser needs more detail.</p>
-<label>Show actions <select id="action-filter"><option value="all">All actions</option>${Object.entries(KIND_HUMAN).map(([k, label]) => `<option value="${k}">${esc(label)}</option>`).join('')}</select></label>
-<button type="button" id="copy-actions">Copy shown action briefs</button><span id="copy-status" role="status" aria-live="polite"></span>
-<div id="action-list">${groups.map((g) => actionCard(g, m, opts.runDir)).join('') || '<p class="human-empty">No findings were produced by the checks that ran. This is not an overall assurance about the site.</p>'}</div><p id="action-filter-empty" class="human-empty" hidden>No actions match this view.</p></section>
-<section id="storage"><h2 class="human-section-title">Cookies and browser storage</h2><p>Cookies are small pieces of information saved in a visitor’s browser. Other browser storage can remember information too. Check the purpose of each item and whether the visitor’s choices control its use.</p>${cookieInventory(m, groups)}</section>
-<section id="tools"><h2 class="human-section-title">Tracking tools and outside services</h2><p>These are the outside services observed during the scan. Some provide ordinary site features; others measure visits or advertising. A recognized vendor name does not establish that its use on your site is appropriate.</p>
-<label>Show tools <select id="tool-filter"><option value="all">All tools</option><option value="problem">Problems observed</option><option value="classify">Purpose needs verification</option><option value="review">Other review items</option><option value="none">No finding linked</option></select></label>${toolInventory(m, groups)}<p id="tool-filter-empty" class="human-empty" hidden>No tools match this view.</p>
-${m.researchQueue.length ? `<details class="human-details"><summary>Additional research requests (${m.researchQueue.length})</summary><div><ul>${m.researchQueue.map((q) => `<li><code>${esc(q.domain)}</code>: ${esc(q.reason)}. Confirm its owner, purpose and actual use.</li>`).join('')}</ul></div></details>` : ''}</section>
-<section id="visitor-tests"><h2 class="human-section-title">What visitors experience</h2><p>We tested different visitor choices. These summaries describe the findings recorded for each choice; they do not certify that the choice worked correctly.</p>
-${m.scenarios.map((s) => {
-  const cells = m.locations.map((l) => ({ l, c: m.grid[l.id]?.[s] }));
-  const ran = cells.filter(({ c }) => c?.status === 'tested');
-  const issues = ran.filter(({ c }) => Object.values(c!.counts).some((n) => n > 0));
-  const related = groups.filter((g) => occurrences(g).some((o) => o.scenario === s) || g.findings.some((f) => details(f).scenario === s));
-  return `<details class="human-details"><summary>${esc(VISITOR_ACTION[s] ?? s)} — ${ran.length ? issues.length ? 'findings recorded' : 'no findings recorded' : 'not tested'}</summary><div><ul>${cells.map(({ l, c }) => `<li><strong>${esc(l.label)}:</strong> ${c?.status === 'tested' ? `Test ran. ${Object.entries(c.counts).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${KIND_HUMAN[k as keyof typeof KIND_HUMAN].toLowerCase()} finding(s)`).join(', ') || 'No findings recorded.'}${c.choice?.includes('(failed)') ? ' The attempted visitor choice did not succeed; this does not show behavior after a successful choice.' : ''}` : `Not tested${c?.reason ? `: ${esc(c.reason)}` : ' in this location'}.`}</li>`).join('')}</ul>${related.map((g) => `<p><a href="#${g.id}">${esc(actionTitle(g))}</a></p>`).join('')}</div></details>`;
-}).join('')}
-<details class="human-details"><summary>Tests with no findings recorded (${quiet.length})</summary><div><p>These checks produced no findings. They are not verified passes, and a failed choice or missing check can still limit the result.</p><ul>${quiet.map(({ location, scenario, cell: c }) => `<li>${esc(location.label)}: ${esc(VISITOR_ACTION[scenario] ?? scenario)}${c.choice?.includes('(failed)') ? ' — choice attempt failed' : ''}.</li>`).join('') || '<li>No such tests were recorded.</li>'}</ul></div></details></section>
+<p class="human-intro">See how cookies and tracking tools behaved, decide what needs attention, and keep track of your work.</p>
+<nav class="human-nav" aria-label="Report sections"><a href="#remediation">Make these changes</a><a href="#behavior-matrix">Cookie &amp; tool checks</a><a href="#compatibility">Consent tool compatibility</a>${m.consentToolProof?.detected ? '<a href="#consent-tool-proof">Your consent tool</a>' : ''}<a href="#report-workspace">Your checklist</a><a href="#coverage">Scan coverage</a></nav></header>
+${renderScopeHtml(m)}
+${renderRemediationHtml(m.remediation, m)}
+${renderSinceHtml(m.since, carriedTasks(m.siteWorkspace?.doneTasks, library))}
+${renderRerenderPanel(opts.render, m.runId)}
+${renderBehaviorMatrix(matrix, workbench)}
+${renderCompatibilityHtml(m.compatibility, { changeListHref: opts.changeList === false ? undefined : (opts.changeList ?? CHANGE_LIST_FILE) })}
+${renderConsentToolProofHtml(m.consentToolProof)}
+<details class="human-details" id="rule-actions"><summary>Rule findings and other review actions (${groups.length})</summary><div><p>These are the original rule findings, grouped into actions. Some are legal or research questions rather than behavior mismatches. Select an action to open it in the workspace.</p><ul>${groups.map(g => `<li><button type="button" data-select-action="${g.id}">${esc(actionTitle(g))}</button> <span class="human-muted">${esc(KIND_HUMAN[g.kind])}</span></li>`).join('') || '<li>No rule findings were recorded. The grid above still shows any behavior mismatches or missing checks.</li>'}</ul></div></details>
+<details class="human-details" id="checklist-panel"><summary>Checklist and saved progress</summary><div>${workspacePanel()}</div></details>
+<div id="matrix-detail-library" hidden>${library}</div>
+<noscript><p>Enable JavaScript to select grid results and save progress. All research and action details are shown below when scripting is disabled.</p><style>#matrix-detail-library[hidden]{display:block!important}</style></noscript>
+<details class="human-details" id="coverage-panel"><summary>Scan coverage, limitations and evidence</summary><div>
 <section id="coverage"><h2 class="human-section-title">What we checked and what is missing</h2><p>This report covers the recorded locations, pages and visitor actions only. A result from one location may not describe how your site behaves elsewhere.</p>
 <ul>${m.locations.map((l) => `<li><strong>${esc(l.label)}:</strong> ${l.verdict === 'verified' ? `location verified (${esc(l.observed)})` : `location could not be verified as requested (${esc(l.observed)}); do not use it as evidence for the intended location`}.${l.note ? ` ${esc(l.note)}` : ''}</li>`).join('')}</ul>
 <h3>Not tested</h3>${nt ? `<ul>${nt}</ul>` : '<p>No additional limitations were recorded. This does not establish complete coverage of the site.</p>'}
 ${failedChoices.length ? `<h3>Choices that did not succeed</h3><ul>${failedChoices.map(({ location, scenario }) => `<li>${esc(location.label)}: ${esc(VISITOR_ACTION[scenario] ?? scenario)}. Retest with a working control or manual interaction.</li>`).join('')}</ul>` : ''}
 <details class="human-details"><summary>Detailed test matrix and original finding counts</summary><div><p>Counts are original findings, not grouped actions. The same finding may occur in several cells. Exposure items are for legal review, not violations.</p><div class="human-table-wrap"><table class="human-table grid"><thead>${head}</thead><tbody>${body}</tbody></table></div></div></details>
-<details class="human-details"><summary>Scan metadata and evidence files</summary><div><p>Run <code>${esc(m.runId)}</code> · package ${esc(m.versions.package)} · knowledge base ${esc(m.versions.kb)} · registry ${esc(m.versions.registry)}${m.versions.autoconsent ? ` · autoconsent ${esc(m.versions.autoconsent)}` : ''}.</p><p>${m.redacted ? 'Cookie values, authentication headers and request bodies were redacted.' : 'Raw evidence can contain cookies, tokens and visitor information. Handle it carefully.'} Evidence links require the accompanying run files.</p><div class="human-table-wrap"><table class="human-table"><thead><tr><th>Location</th><th>Visitor action</th><th>Network evidence</th><th>Timeline</th><th>Screenshots</th></tr></thead><tbody>${evidence}</tbody></table></div></div></details></section>
+<details class="human-details"><summary>Scan metadata and evidence files</summary><div><p>Run <code>${esc(m.runId)}</code> · package ${esc(m.versions.package)} · knowledge base ${esc(m.versions.kb)} · registry ${esc(m.versions.registry)}${m.versions.autoconsent ? ` · autoconsent ${esc(m.versions.autoconsent)}` : ''}.</p><p>${m.redacted ? 'Cookie values, authentication headers and request bodies were redacted.' : 'Raw evidence can contain cookies, tokens and visitor information. Handle it carefully.'} Evidence links require the accompanying run files.</p><div class="human-table-wrap"><table class="human-table"><thead><tr><th>Location</th><th>Visitor action</th><th>Network evidence</th><th>Timeline</th><th>Screenshots</th></tr></thead><tbody>${evidence}</tbody></table></div></div></details></section></div></details>
 <footer class="human-callout"><strong>About this report</strong><p>This is an automated review of observed website behavior, not legal advice or a legal conclusion. It does not assert conformance or guarantee that every issue was found. Requirements can depend on location, your organization and how a tool is used. Classifications may need confirmation, and some checks require a person. Review the evidence with your team and seek qualified advice for legal decisions.</p></footer>
-</main><script>
-(function(){
-function filter(selectId, selector, attr, emptyId){var select=document.getElementById(selectId);if(!select)return;select.addEventListener('change',function(){var shown=0;document.querySelectorAll(selector).forEach(function(el){el.hidden=(select.value!=='all'&&!el.getAttribute(attr).split(' ').includes(select.value))||(el.hasAttribute('data-action-key')&&window.ComplyKitWorkspace&&!window.ComplyKitWorkspace.shouldShow(el.dataset.actionKey));if(!el.hidden)shown++;});document.getElementById(emptyId).hidden=shown!==0;});}
-filter('action-filter','[data-action-kind]','data-action-kind','action-filter-empty');
-filter('tool-filter','[data-tool-state]','data-tool-state','tool-filter-empty');
-filter('cookie-filter','[data-cookie-state]','data-cookie-state','cookie-filter-empty');
-window.addEventListener('complykit-workflow-changed',function(){['action-filter','tool-filter','cookie-filter'].forEach(function(id){var el=document.getElementById(id);if(el)el.dispatchEvent(new Event('change'));});});
-document.getElementById('copy-actions').addEventListener('click',async function(){
-var cards=Array.from(document.querySelectorAll('[data-action-kind]')).filter(function(el){return !el.hidden;});
-var text=cards.map(function(el){return [el.querySelector('.human-status').innerText,el.querySelector('h3').innerText].concat(Array.from(el.querySelectorAll(':scope > p')).map(function(p){return p.innerText;}),[el.querySelector('.work-brief').innerText]).join('\\n');}).join('\\n\\n---\\n\\n');
-var status=document.getElementById('copy-status');if(!cards.length){status.textContent=' No actions shown to copy.';return;}
-try{if(navigator.clipboard&&navigator.clipboard.writeText){await navigator.clipboard.writeText(text);}else{var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();var ok=document.execCommand('copy');ta.remove();if(!ok)throw Error('clipboard blocked');}status.textContent=' Copied '+cards.length+' action brief(s).';}catch(e){status.textContent=' Copy unavailable. Select the action text to copy it manually.';}
-});
-function reveal(){var id=location.hash.slice(1);var el=document.getElementById(id);if(!el)return;if(el.hasAttribute('data-action-kind')&&el.hidden){document.getElementById('action-filter').value='all';var wf=document.getElementById('work-filter');if(wf){wf.value='all';wf.dispatchEvent(new Event('change'));}document.querySelectorAll('[data-action-kind]').forEach(function(x){x.hidden=false;});document.getElementById('action-filter-empty').hidden=true;}el.scrollIntoView();}
-window.addEventListener('hashchange',reveal);document.querySelectorAll('a[href^="#action-"]').forEach(function(a){a.addEventListener('click',function(){setTimeout(reveal,0);});});reveal();
-})();
-</script>${workspaceScript('consent', m.property + ':' + m.site.url, m.runId, m.findings.map((f) => f.fingerprint))}</body></html>`;
+</main><script>${KEEP_SCROLL_JS}</script><script>${MATRIX_JS}</script><script>${REMEDIATION_JS}</script>
+${workspaceScript('consent', m.property + ':' + m.site.url, m.runId, m.findings.map((f) => f.fingerprint))}<script>${RERENDER_JS}</script></body></html>`;
 }

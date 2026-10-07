@@ -6,6 +6,11 @@ import type { CaptureHandle } from './capture.js';
 // (never checkout, never submit forms), then one more same-origin navigation so
 // page-exit beacons get flushed (see shim.ts). Some trackers only fire after a
 // delay, a scroll or a second page — that's why the journey exists.
+//
+// The one form the journey does submit is the site's search box (a GET form),
+// with the evaluation's text marker: page titles and search terms are what
+// analytics tags carry to third parties on a results page. When there is no
+// usable search the step records itself as not tested — never as a pass.
 
 export interface JourneyOptions {
   /** Dwell on the landing page, ms. Default 10000. */
@@ -98,12 +103,102 @@ export async function scrollSteps(page: Page, cap: CaptureHandle, steps: number)
   }
 }
 
+/** Per-scenario state for the journey's site-search step (it runs at most once). */
+export interface SearchStep {
+  /** The marker text to search for (the one the `search-term` field kind detects). */
+  term: string;
+  /** Receives the not-tested note when the step cannot run. */
+  note: (reason: string) => void;
+  done?: boolean;
+}
+
+const SEARCH_NOT_FOUND = 'site search: no usable search input was found on the landing page — search terms and page titles sent from a results page were not tested';
+
+/** Tag the most likely visible, non-email search input and say whether its form is safe (GET) to submit. */
+async function findSearchInput(page: Page): Promise<'found' | 'none' | 'post'> {
+  return page
+    .evaluate(() => {
+      const visible = (el: Element): boolean => {
+        const b = (el as HTMLElement).getBoundingClientRect();
+        const cs = getComputedStyle(el as HTMLElement);
+        return b.width > 0 && b.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none';
+      };
+      const text = (i: HTMLInputElement): string => `${i.id} ${i.placeholder} ${i.getAttribute('aria-label') ?? ''}`;
+      const usable = (i: HTMLInputElement): boolean => (i.type === 'text' || i.type === 'search' || i.type === '') && !i.disabled && !i.readOnly && visible(i);
+      const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('input')).filter(usable);
+      const tiers: Array<(i: HTMLInputElement) => boolean> = [
+        (i) => Boolean(i.closest('[role="search"]')),
+        (i) => i.type === 'search',
+        (i) => Boolean(i.closest('form[action*="/search" i]')),
+        (i) => /^(q|s|query|search|keyword)s?$/i.test(i.name),
+        (i) => /search/i.test(text(i)),
+      ];
+      let hit: HTMLInputElement | undefined;
+      for (const t of tiers) {
+        hit = inputs.find(t);
+        if (hit) break;
+      }
+      if (!hit) return 'none';
+      const form = hit.form;
+      if (form && (form.method || 'get').toLowerCase() !== 'get') return 'post';
+      hit.setAttribute('data-complykit-marker', 'journey-search');
+      return 'found';
+    })
+    .catch(() => 'none' as const);
+}
+
+/**
+ * Type the marker into the site's search box, submit it and wait for the
+ * results page. Returns false (after noting why) when it could not be done.
+ */
+export async function searchStep(page: Page, cap: CaptureHandle, step: SearchStep, j: ResolvedJourney): Promise<boolean> {
+  if (step.done) return false;
+  step.done = true;
+  let found = await findSearchInput(page);
+  if (found === 'none') {
+    // Many themes hide the box behind a search icon: open it (or follow it to a search page) once and look again.
+    const toggle = page
+      .locator('a[href="/search"], a[href^="/search?"], button[aria-label*="search" i], summary[aria-label*="search" i], [role="button"][aria-label*="search" i]')
+      .first();
+    if (await toggle.isVisible({ timeout: 500 }).catch(() => false)) {
+      cap.push({ type: 'action', t: cap.now(), action: 'click', detail: 'open site search', pageIndex: cap.pageIndex() });
+      await toggle.click({ timeout: 3000 }).catch(() => {});
+      await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(800);
+      found = await findSearchInput(page);
+    }
+  }
+  if (found === 'post') {
+    step.note('site search: the search form submits by POST, which the journey does not do — search terms and page titles sent from a results page were not tested');
+    return false;
+  }
+  if (found !== 'found') {
+    step.note(SEARCH_NOT_FOUND);
+    return false;
+  }
+  const sel = '[data-complykit-marker="journey-search"]';
+  const before = page.url();
+  await page.click(sel, { timeout: 3000 }).catch(() => {});
+  cap.push({ type: 'action', t: cap.now(), action: 'type', detail: 'search marker', pageIndex: cap.pageIndex() });
+  await page.type(sel, step.term, { delay: 40 }).catch(() => {});
+  cap.push({ type: 'action', t: cap.now(), action: 'key', detail: 'Enter (submit search)', pageIndex: cap.pageIndex() });
+  await Promise.all([
+    page.waitForURL((u) => u.href !== before, { timeout: 8000, waitUntil: 'domcontentloaded' }).catch(() => {}),
+    page.keyboard.press('Enter').catch(() => {}),
+  ]);
+  await page.waitForLoadState('load', { timeout: Math.min(15000, j.navTimeoutMs) }).catch(() => {});
+  await dwell(page, cap, j.pageDwellMs);
+  await scrollSteps(page, cap, 1);
+  return true;
+}
+
 /** Visit the rest of the journey from the current (landing) page. */
-export async function browse(page: Page, cap: CaptureHandle, j: ResolvedJourney, landingUrl: string): Promise<void> {
+export async function browse(page: Page, cap: CaptureHandle, j: ResolvedJourney, landingUrl: string, search?: SearchStep): Promise<void> {
   await scrollSteps(page, cap, j.scrollSteps);
   const targets = j.paths?.length
     ? j.paths.map((p) => new URL(p, landingUrl).toString())
     : await discoverJourneyPages(page, j.maxPages);
+  if (search && !search.done) await searchStep(page, cap, search, j);
   for (const url of targets) {
     await navigate(page, cap, url, j);
     await dwell(page, cap, j.pageDwellMs);

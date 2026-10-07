@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Gate basic fixture</title>
+<script src="/test-store.js"></script>
+</head>
+<body>
+<div id="host">
+<!-- external via data-src, with attributes to carry over -->
+<script type="text/plain" data-category="analytics" data-src="/vendor/analytics.js" id="ana" class="tag" crossorigin="anonymous" referrerpolicy="no-referrer" data-vendor="example"></script>
+<!-- external via plain src (the browser does not fetch a text/plain src) -->
+<script type="text/plain" data-ck-category="analytics" src="/slow/order.js?n=src&ms=5"></script>
+<!-- inline -->
+<script type="text/plain" data-category="analytics">window.__inlineRan = (window.__inlineRan || 0) + 1;</script>
+<!-- never granted in these tests -->
+<script type="text/plain" data-category="marketing" data-src="/slow/order.js?n=mk&ms=5"></script>
+<script type="text/plain" data-category="marketing">window.__marketingRan = true;</script>
+<!-- unlisted category: never released, whatever the store says -->
+<script type="text/plain" data-category="bogus">window.__bogusRan = true;</script>
+<!-- no category and no matching rule: not ours (a template) -->
+<script type="text/plain" id="tpl">window.__templateRan = true;</script>
+<!-- config.gate rules: src regex and selector, no data-category -->
+<script type="text/plain" data-src="/slow/order.js?n=rule-src&ms=5"></script>
+<script type="text/plain" data-ck-inline="example">window.__ruleSelectorRan = true;</script>
+<!-- embeds -->
+<iframe data-category="analytics" data-src="/embed.html" title="gated frame"></iframe>
+<img data-category="marketing" data-src="/pixel.gif" alt="">
+<img data-category="analytics" data-src="/pixel.gif?a=1" alt="">
+</div>
+</body>
+</html>

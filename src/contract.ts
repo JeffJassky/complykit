@@ -24,7 +24,22 @@ import type {
   LocationSpec,
   LocationVerification,
   TrackingEvaluation,
+  ConsentToolConfig,
+  ConsentToolConfigSchema,
+  ConsentCategory,
+  ConsentVendor,
+  GateRule,
+  GtmConfig,
+  RegimeSource,
+  Regime,
+  ConsentModeSignal,
+  ConsentPlatform,
+  ConsentTheme,
+  ConsentLayout,
+  ConsentConfigGuardResult,
+  ParseConsentToolConfigResult,
 } from './record/index.js';
+import type { z } from 'zod/v4';
 import type {
   Config,
   Property,
@@ -94,3 +109,21 @@ export type _check_VerifiedUrl = Expect<Mutual<VerifiedUrl, Public.VerifiedUrl>>
 export type _check_RuleMeta = Expect<Mutual<RuleMeta, Public.RuleMeta>>;
 export type _check_Rule = Expect<Mutual<Rule, Public.Rule>>;
 export type _check_LlmRule = Expect<Mutual<LlmRule, Public.LlmRule>>;
+
+// Consent tool config: three copies of one shape (the guard's interfaces, the
+// zod/v4 schema, the published .d.ts). The guard is what the client bundles,
+// so the schema is checked against it AND against the public contract.
+export type _check_ConsentToolConfig_schema = Expect<Mutual<z.infer<typeof ConsentToolConfigSchema>, ConsentToolConfig>>;
+export type _check_ConsentToolConfig = Expect<Mutual<ConsentToolConfig, Public.ConsentToolConfig>>;
+export type _check_ConsentCategory = Expect<Mutual<ConsentCategory, Public.ConsentCategory>>;
+export type _check_ConsentVendor = Expect<Mutual<ConsentVendor, Public.ConsentVendor>>;
+export type _check_GateRule = Expect<Mutual<GateRule, Public.GateRule>>;
+export type _check_GtmConfig = Expect<Mutual<GtmConfig, Public.GtmConfig>>;
+export type _check_RegimeSource = Expect<Mutual<RegimeSource, Public.RegimeSource>>;
+export type _check_Regime = Expect<Mutual<Regime, Public.Regime>>;
+export type _check_ConsentModeSignal = Expect<Mutual<ConsentModeSignal, Public.ConsentModeSignal>>;
+export type _check_ConsentPlatform = Expect<Mutual<ConsentPlatform, Public.ConsentPlatform>>;
+export type _check_ConsentTheme = Expect<Mutual<ConsentTheme, Public.ConsentTheme>>;
+export type _check_ConsentLayout = Expect<Mutual<ConsentLayout, Public.ConsentLayout>>;
+export type _check_ConsentConfigGuardResult = Expect<Mutual<ConsentConfigGuardResult, Public.ConsentConfigGuardResult>>;
+export type _check_ParseConsentToolConfigResult = Expect<Mutual<ParseConsentToolConfigResult, Public.ParseConsentToolConfigResult>>;

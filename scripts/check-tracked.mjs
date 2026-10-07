@@ -19,13 +19,14 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const ROOTS = ['src', 'test', 'types', 'docs', 'examples', 'scripts', 'skills', '.github'];
+const ROOTS = ['src', 'test', 'types', 'docs', 'examples', 'scripts', 'skills', '.github', 'client'];
 
 // Genuinely-not-source things that live under those roots.
 const ALLOWED = [
   /(^|\/)\.DS_Store$/,
   /(^|\/)node_modules(\/|$)/,
   /^docs\/\.vitepress\/(dist|cache)(\/|$)/,
+  /^client\/dist(\/|$)/, // build output, gitignored
 ];
 
 const tracked = new Set(

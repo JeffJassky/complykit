@@ -10,6 +10,7 @@ import { contrastText } from './contrast/contrast.js';
 import { contrastAdjudicated } from './contrast/adjudicated.js';
 import { preConsentTracker } from './consent/pre-consent-tracker.js';
 import { consentAsymmetry } from './consent/consent-asymmetry.js';
+import { equalProminence, noPreTicked, noCookieWall, requiredStrings, withdrawalControl } from './consent/banner-design.js';
 import { keyboardTrap, focusVisible } from './keyboard/keyboard.js';
 import {
   priorConsent,
@@ -48,6 +49,12 @@ export const ALL_RULES: AnyRule[] = [
   optOutLink,
   wiretapExposure,
   unrecognizedParty,
+  // Consent-banner design (F6; docs/guide/banner-rules.md).
+  equalProminence,
+  noPreTicked,
+  noCookieWall,
+  requiredStrings,
+  withdrawalControl,
 ];
 
 const RULE_BY_ID = new Map<string, AnyRule>(ALL_RULES.map((r) => [String(r.id), r]));

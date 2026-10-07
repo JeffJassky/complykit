@@ -4,10 +4,11 @@ import { ActiveJobs } from './components/ActiveJobs';
 import { CompletedList } from './components/CompletedList';
 import { Header } from './components/Header';
 import { KnowledgeBase } from './components/KnowledgeBase';
+import { SitePage, SitesList } from './components/Sites';
 import { SubmitPanel } from './components/SubmitPanel';
 import { Toasts, type Toast } from './components/Toasts';
 import { isActive, plural, totalFindings } from './lib/format';
-import { useHashView } from './lib/useHashView';
+import { useHashRoute } from './lib/useHashView';
 import { useJobs } from './lib/useJobs';
 
 export function App() {
@@ -40,7 +41,7 @@ export function App() {
     [pushToast],
   );
 
-  const view = useHashView();
+  const { view, domain: siteDomain } = useHashRoute();
   // Bumped by the stream's `kb` event; the KB view refetches on each bump.
   const [kbVersion, setKbVersion] = useState(0);
   const onKb = useCallback(() => setKbVersion((v) => v + 1), []);
@@ -57,7 +58,7 @@ export function App() {
     }
     mainRef.current?.focus({ preventScroll: true });
     window.scrollTo({ top: 0 });
-  }, [view]);
+  }, [view, siteDomain]);
 
   const list = useMemo(() => Object.values(jobs), [jobs]);
   const active = useMemo(() => list.filter(isActive), [list]);
@@ -77,7 +78,11 @@ export function App() {
         Skip to content
       </a>
       <Header view={view} server={server} running={running} queued={queued} connection={connection} />
-      {view === 'kb' ? (
+      {view === 'sites' ? (
+        <main id="main" ref={mainRef} tabIndex={-1} className="kb-layout" aria-label="Sites">
+          {siteDomain ? <SitePage domain={siteDomain} jobs={loaded ? jobs : null} /> : <SitesList />}
+        </main>
+      ) : view === 'kb' ? (
         <main id="main" ref={mainRef} tabIndex={-1} className="kb-layout" aria-label="Knowledge base">
           <KnowledgeBase version={kbVersion} pushToast={pushToast} />
         </main>

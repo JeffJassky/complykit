@@ -13,6 +13,7 @@ const CONNECTION_LABEL: Record<Connection, string> = {
 
 const VIEWS: Array<{ id: View; href: string; label: string; icon: IconName }> = [
   { id: 'checks', href: '#', label: 'Website scans', icon: 'shield' },
+  { id: 'sites', href: '#sites', label: 'Sites', icon: 'book' },
   { id: 'kb', href: '#kb', label: 'Tool research', icon: 'book' },
 ];
 

@@ -2,6 +2,7 @@ import { workspaceId, classificationControls, tone } from './workspace.js';
 import type { PartyInventoryItem } from '../record/index.js';
 import type { ConsentReportModel, ReportFinding } from './consent-model.js';
 import { escapeHtml as esc, explain, type Explanation } from './human.js';
+import { DEFAULT_KB, lookupStore } from '../registry/index.js';
 
 export const VISITOR_ACTION: Record<string, string> = {
   'do-nothing': 'Before a visitor makes a choice', browse: 'When a visitor ignores the banner and browses',
@@ -91,7 +92,7 @@ export function relatedActions(p: PartyInventoryItem, groups: ActionGroup[]): Ac
   }));
 }
 export function purposeNeedsReview(p: PartyInventoryItem, m: ConsentReportModel): boolean {
-  return !p.recognized || p.kbStatus !== 'confirmed' || !p.categories.length || p.categories.includes('unknown') || m.researchQueue.some((q) => q.partyId === p.partyId);
+  return !p.recognized || !p.categories.length || p.categories.includes('unknown') || m.researchQueue.some((q) => q.partyId === p.partyId);
 }
 const PURPOSE: Record<string, string> = {
   analytics: 'Measuring visits and site use', advertising: 'Advertising and campaign measurement', necessary: 'Supporting an essential site function',
@@ -105,7 +106,7 @@ export function purpose(p: PartyInventoryItem): string {
 export function toolStatus(p: PartyInventoryItem, groups: ActionGroup[], m: ConsentReportModel): string {
   const linked = relatedActions(p, groups);
   const states = [...new Set(linked.map((g) => KIND_HUMAN[g.kind]))];
-  if (purposeNeedsReview(p, m)) states.push('Purpose needs verification');
+  if (purposeNeedsReview(p, m)) states.push(p.recognized ? 'Observed behavior needs review' : 'Purpose needs identification');
   return states.join(' · ') || 'No finding linked to this tool';
 }
 export function toolInventory(m: ConsentReportModel, groups: ActionGroup[]): string {
@@ -116,12 +117,12 @@ export function toolInventory(m: ConsentReportModel, groups: ActionGroup[]): str
     const state = [linked.some((g) => g.kind === 'violation') ? 'problem' : '', review ? 'classify' : '', linked.some((g) => g.kind !== 'violation') ? 'review' : '', !linked.length ? 'none' : ''].filter(Boolean).join(' ');
     return `<article class="human-card tool-card" id="tool-${i + 1}" data-tool-state="${state}" data-original-tool-state="${state}" data-class-key="${classKey}" data-class-required="${review}" data-scan-tone="${linked.some((g) => g.kind === 'violation') ? 'red' : review || linked.length ? 'amber' : 'neutral'}" data-tone="${linked.some((g) => g.kind === 'violation') ? 'red' : review || linked.length ? 'amber' : 'neutral'}">
       <span class="human-status" data-tone="${tone(toolStatus(p, groups, m))}">${esc(toolStatus(p, groups, m))}</span> <span class="classification-badge" data-class-badge></span><h3>${esc(p.label)}</h3>
-      <p>${esc(purpose(p))}${review ? ' — this description needs confirmation.' : '.'}</p>
+      <p>${esc(purpose(p))}${review ? p.recognized ? ' — category known; unexpected behavior needs research.' : ' — purpose not yet identified.' : p.kbStatus === 'proposed' ? ' — known category from the built-in library (seed entry, not independently confirmed).' : '.'}</p>
       <p><strong>Information observed:</strong> ${p.sends.length ? esc(p.sends.map((k) => DATA_LABEL[k] ?? k).join(', ')) : 'No recognized information fields recorded. This does not mean no information was sent.'}</p>
       <p><strong>Cookies and other browser storage:</strong> ${p.stores.length ? p.stores.map((s) => `<code>${esc(s.name)}</code> (${s.kind === 'cookie' ? 'cookie' : 'other browser storage'})`).join(', ') : 'None recorded for this tool.'}</p>
-      <p><strong>Next step:</strong> ${review ? 'Confirm the owner, purpose and category with the vendor or site owner. Check whether your privacy notice and consent settings describe this use.' : linked.length ? 'Review the linked actions below.' : 'Keep this tool in your inventory. No issue was linked by these checks; other uses and locations may still need review.'}</p>
+      <p><strong>Next step:</strong> ${review ? p.recognized ? 'The platform and category are known. Investigate the behavior that differed from its library entry, and confirm your site’s actual use and controls.' : 'Identify the provider and purpose, then record its category and controls.' : linked.length ? 'Review the linked actions below.' : 'The tool and category are already identified. Optionally record your site’s specific use and controls; no finding was linked by these checks.'}</p>
       ${linked.length ? `<p>${linked.map((g) => `<a class="human-link" href="#${g.id}">${esc(actionTitle(g))}</a>`).join('<br>')}</p>` : ''}
-${classificationControls(classKey, p.label)}
+${classificationControls(classKey, p.label, {owner:p.owner,categories:p.categories})}
       <details class="human-details"><summary>Technical details and observed visitor actions</summary><div>
       <p>Associated domain: <code>${esc(p.domain)}</code>. ${p.owner ? `Owner: ${esc(p.owner)}.` : 'Owner not identified.'} Recognition: ${esc(p.kbStatus)}.</p>
       <p>Hosts: ${p.hosts.map((h) => `<code>${esc(h)}</code>`).join(', ')}</p>
@@ -147,6 +148,26 @@ export function cookieInventory(m: ConsentReportModel, groups: ActionGroup[]): s
     });
   });
   return rows.length ? `<label>Show storage items <select id="cookie-filter"><option value="all">All items</option><option value="classify">Needs classification or verification</option><option value="problem">Cookie problem observed</option><option value="none">No cookie-specific problem recorded</option></select></label><div class="human-table-wrap"><table class="human-table"><caption>Tool-level tracking findings do not automatically make every cookie from that tool a violation.</caption><thead><tr><th>Name and type</th><th>Associated tool</th><th>Purpose to verify</th><th>How long it stays</th><th>What needs attention</th></tr></thead><tbody>${rows.join('')}</tbody></table></div><p id="cookie-filter-empty" class="human-empty" hidden>No storage items match this view.</p>` : '<p class="human-empty">No cookies or other browser storage were recorded in the tool inventory. Tracking can still happen without cookies.</p>';
+}
+
+/** One reusable review per storage item, shown only when selected in the matrix. */
+export function storageReviewCards(m: ConsentReportModel, groups: ActionGroup[]): string {
+  return m.inventory.flatMap(p => [...new Map(p.stores.map(s => [JSON.stringify([s.kind, s.name]), s])).values()].map(s => {
+    const key = workspaceId('storage', [p.partyId, p.domain, s.kind, s.name]);
+    const entry = lookupStore(DEFAULT_KB, s.name);
+    const linked = relatedActions(p, groups);
+    const exact = linked.some(g => s.kind === 'cookie' && g.kind === 'violation' && g.findings.some(f => f.evidence.some(e => e.kind === 'cookie' && e.name === s.name && (e.domain.replace(/^\./, '') === p.domain || p.hosts.includes(e.domain.replace(/^\./, ''))))));
+    // Classified for this site in its workspace (C3): no longer asked.
+    const site = m.siteWorkspace?.classifications.find(c => c.kind === 'storage' && c.partyId === p.partyId && c.storageKind === s.kind && c.name === s.name);
+    const required = !site && (!entry || !entry.categories.length || entry.categories.some(c => String(c) === 'unknown'));
+    const state = [exact ? 'problem' : 'none', required ? 'classify' : ''].filter(Boolean).join(' ');
+    return `<article id="${key}" class="human-card" data-cookie-state="${state}" data-original-cookie-state="${state}" data-class-key="${key}" data-class-required="${required}" data-matrix-managed>
+    <h3>Classify ${esc(s.name)}</h3><span class="classification-badge" data-class-badge></span>
+    <p>${site ? `Classified for this site by ${esc(site.by ?? 'your team')}${site.at ? ` (${esc(site.at.slice(0, 10))})` : ''}: ${esc(site.categories.join(', '))}. Applied to this scan’s checks; the scan did not verify the purpose.` : entry ? `Known storage-name category: ${esc(entry.categories.join(', '))}. Verify its actual use on this site.` : 'Its individual purpose is unknown. Identify what it stores and why it is used.'}</p>
+    <p>Associated tool: ${esc(p.label)}. ${s.lifetimeDays === null ? 'No expiry recorded.' : s.lifetimeDays === 0 ? 'Lasts for this browser session.' : `Recorded lifetime: ${s.lifetimeDays} days.`}</p>
+    <details class="human-details"><summary>Original rule-check context</summary><div><p class="human-muted">Tool-level tracking findings do not automatically make every cookie a violation.${exact ? ' Cookie problem observed' : ' No cookie-specific problem recorded by the legal rule checks.'}</p></div></details>
+    ${classificationControls(key, s.name, {owner:p.owner, categories:entry?.categories})}</article>`;
+  })).join('');
 }
 
 export function consentLimitations(m: ConsentReportModel): string {

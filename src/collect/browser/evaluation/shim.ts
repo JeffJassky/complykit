@@ -1,7 +1,7 @@
 // The attribution shim — installed with addInitScript into EVERY frame before
 // any page script runs (plans/consent-design.md §2.4 capture fixes). It changes
 // no behavior: every wrapper calls straight through to the original. It reports
-// three things the browser's own network events can't:
+// four things the browser's own network events can't:
 //
 //   1. WHO caused a request. CDP gives a call stack for script-initiated fetches,
 //      but `new Image().src = pixel` and script insertions are often attributed
@@ -16,6 +16,11 @@
 //      missed it). The shim writes exit-time sends to sessionStorage and the NEXT
 //      same-origin document flushes them — which is why every journey ends with
 //      one more same-origin navigation.
+//   4. Consent / tag API CALLS (gtag, dataLayer.push, fbq, ttq, clarity,
+//      uetq.push, __tcfapi, __gpp, Shopify.customerPrivacy.*) — what the page
+//      told each vendor and when, relative to the banner and the choice
+//      (plans/client-consent-design.md §3). Hooked through accessors so globals
+//      defined later, and stubs swapped for the real library, are still seen.
 //
 // Records go out through `window.__ckRecord` (a Playwright binding). Limits
 // recorded honestly by the collector: workers don't run init scripts (their
@@ -159,6 +164,220 @@ export const SHIM_SOURCE = String.raw`(() => {
       return os.apply(this, arguments);
     };
   } catch (e) {}
+
+  // --- consent / tag API calls (plans/client-consent-design.md §3) ---
+  // Every vendor global is hooked with an accessor BEFORE the page defines it,
+  // so a stub assigned later, and the real library that replaces the stub, are
+  // both wrapped as they arrive. Functions are wrapped in a Proxy: properties
+  // read and written on the global (fbq.queue, fbq.callMethod, clarity.q,
+  // __gpp.queue) reach the vendor's own function untouched, and calls go
+  // straight through with the original 'this'. Methods on objects (dataLayer.push,
+  // uetq.push, ttq.grantConsent, Shopify.customerPrivacy.*) get an instance
+  // accessor, so a vendor assigning its own implementation is wrapped too and
+  // that assignment is the "library ready" moment. Arguments are reduced to
+  // their shape here, in the page: raw values never reach the recorder.
+  // Limits: a global FUNCTION DECLARATION (function gtag(){…}) replaces the
+  // accessor — gtag calls are still seen through dataLayer.push(arguments);
+  // a renamed dataLayer / ttq global, and calls made before this frame's
+  // document started, are not seen. Known side effect: a hooked name is an own
+  // property of window from the start, so ('Shopify' in window) is true on a
+  // page that never defines it (the value reads undefined; typeof checks and
+  // the vendors' own (x = x || stub) snippets are unaffected).
+  try {
+    let budget = 400;
+    const perCall = {};
+    const busy = {};
+    const PROXIES = new WeakSet();
+    const PROXY_OF = new WeakMap();
+    const HOOKED = new WeakSet();
+    const TOKEN = /^[A-Za-z_][\w.:-]{0,63}$/;
+    const CONSENT_STR = /^(granted|denied|true|false|yes|no|accepted|declined|rejected|opt[_-]?in|opt[_-]?out|[01])$/i;
+    const REGION = /^[A-Z]{2}(-[A-Z0-9]{1,3})?$/;
+    const isArgs = (v) => Object.prototype.toString.call(v) === '[object Arguments]';
+    const shape = (v, depth, key) => {
+      if (v === null) return null;
+      const ty = typeof v;
+      if (ty === 'boolean') return v;
+      if (ty === 'string') {
+        if (CONSENT_STR.test(v)) return v;
+        if (key === 'event' && TOKEN.test(v)) return v;
+        if (key === 'region' && REGION.test(v)) return v;
+        return '<string>';
+      }
+      if (ty === 'number') return key === 'wait_for_update' ? v : '<number>';
+      if (ty !== 'object') return '<' + ty + '>';
+      if (depth >= 3) return Array.isArray(v) || isArgs(v) ? '<array>' : '<object>';
+      if (Array.isArray(v) || isArgs(v)) {
+        const a = [];
+        for (let i = 0; i < Math.min(v.length, 20); i++) a.push(shape(v[i], depth + 1, key));
+        return a;
+      }
+      if ((typeof Node === 'function' && v instanceof Node) || v === window) return '<object>';
+      const o = {};
+      let n = 0;
+      for (const k in v) {
+        if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
+        if (++n > 30) break;
+        try { o[k] = shape(v[k], depth + 1, k); } catch (e) { o[k] = '<unreadable>'; }
+      }
+      return o;
+    };
+    const argsShape = (list) => {
+      const a = [];
+      for (let i = 0; i < Math.min(list.length, 10); i++) {
+        const x = list[i];
+        a.push(i < 2 && typeof x === 'string' && TOKEN.test(x) ? x : shape(x, 0, undefined));
+      }
+      return a;
+    };
+    // Calls made BY THE SCANNER (page.evaluate readouts, an 'api:' choice) are
+    // not the page's behavior: skipped when the frame right under the wrapper is
+    // a Playwright evaluation. The page's own reaction inside such a call (a CMP
+    // calling gtag from its __tcfapi handler) is still recorded.
+    const fromDriver = () => {
+      const st = (new Error().stack || '').split('\n');
+      for (let i = 0; i < st.length - 1; i++) if (st[i].indexOf('__ckApply') >= 0) return /UtilityScript|eval at evaluate/.test(st[i + 1]);
+      return false;
+    };
+    const rec = (api, call, args, readyKind) => {
+      try {
+        if (!readyKind && fromDriver()) return;
+        const a0 = args && args.length && typeof args[0] === 'string' ? args[0] : '';
+        // Consent commands are never dropped; chatty calls are capped per document.
+        if (!(readyKind || /consent/i.test(a0) || /consent/i.test(call))) {
+          const k = api + '|' + call;
+          perCall[k] = (perCall[k] || 0) + 1;
+          if (perCall[k] > 100 || budget <= 0) return;
+          budget--;
+        }
+        out({ kind: 'consent-api', api, call, apiKind: readyKind ? 'ready' : 'call', args: readyKind ? [] : argsShape(args || []), chain: chain() });
+      } catch (e) {}
+    };
+    const ready = {};
+    const markReady = (api, call) => { if (!ready[api]) { ready[api] = true; rec(api, call, null, true); } };
+    // describe(args) -> [callName, argsList] lets dataLayer.push(arguments) read as a gtag call.
+    const wrapFn = (api, call, fn, opts) => {
+      if (typeof fn !== 'function' || PROXIES.has(fn)) return fn;
+      // One wrapper per (function, api+call): Array.prototype.push backs both dataLayer and uetq.
+      const slot = api + '|' + call;
+      let byKey = PROXY_OF.get(fn);
+      if (!byKey) { byKey = {}; PROXY_OF.set(fn, byKey); }
+      if (byKey[slot]) return byKey[slot];
+      const describe = opts && opts.describe;
+      const onSet = opts && opts.onSet;
+      let p;
+      // Named: fromDriver() finds this frame in the stack.
+      const __ckApply = function __ckApply(target, self, args) {
+        if (busy[api]) return Reflect.apply(target, self, args);
+        busy[api] = true;
+        try {
+          try { if (describe) { const d = describe(args); rec(api, d[0], d[1]); } else rec(api, call, args); } catch (e) {}
+          return Reflect.apply(target, self, args);
+        } finally { busy[api] = false; }
+      };
+      const handler = { apply: __ckApply };
+      // A self-reference (fbq's stub does n.push = n) reads back as the wrapper,
+      // so fbq.push === fbq still holds and calls through it are seen.
+      handler.get = (target, k) => {
+        const v = Reflect.get(target, k);
+        if (v !== target) return v;
+        const d = Object.getOwnPropertyDescriptor(target, k);
+        return d && !d.configurable && !d.writable ? v : p;
+      };
+      if (onSet) handler.set = (target, k, v) => {
+        try { onSet(k, v); } catch (e) {}
+        return Reflect.set(target, k, v);
+      };
+      p = new Proxy(fn, handler);
+      PROXIES.add(p);
+      byKey[slot] = p;
+      return p;
+    };
+    // An accessor on obj[name]: wrap(value, previous) runs on every new value.
+    const hookProp = (obj, name, wrap) => {
+      try {
+        if (!obj || (typeof obj !== 'object' && typeof obj !== 'function')) return;
+        const d = Object.getOwnPropertyDescriptor(obj, name);
+        let raw, cur;
+        if (d) {
+          if (d.get || d.set) return; // someone's accessor (or ours already)
+          if (!d.configurable) {
+            if (d.writable) { try { obj[name] = wrap(d.value, undefined); } catch (e) {} }
+            return;
+          }
+          raw = d.value;
+        } else {
+          raw = obj[name]; // inherited (Array.prototype.push) or absent
+        }
+        cur = raw === undefined ? undefined : wrap(raw, undefined);
+        const proto = Object.getPrototypeOf(obj);
+        Object.defineProperty(obj, name, {
+          configurable: true,
+          enumerable: d ? d.enumerable : !(proto && name in proto),
+          get() { return cur; },
+          set(v) {
+            if (v === cur || v === raw) return;
+            const prev = raw;
+            raw = v;
+            cur = v === undefined ? v : wrap(v, prev);
+          },
+        });
+      } catch (e) {}
+    };
+    const hookMethod = (obj, name, api, call, opts) => hookProp(obj, name, (fn, prev) => {
+      if (prev !== undefined && opts && opts.readyOnReplace) markReady(api, call);
+      return wrapFn(api, call, fn, opts);
+    });
+    const onceHooked = (o) => { if (!o || (typeof o !== 'object' && typeof o !== 'function') || HOOKED.has(o)) return false; HOOKED.add(o); return true; };
+
+    // Google: gtag() and dataLayer.push(). gtag pushes its 'arguments' object.
+    const gDescribe = (args) => (args.length === 1 && isArgs(args[0]) ? ['gtag', Array.from(args[0])] : ['dataLayer.push', Array.from(args)]);
+    hookProp(window, 'dataLayer', (v) => {
+      if (onceHooked(v) && typeof v.push === 'function') {
+        if (Array.isArray(v)) for (let i = 0; i < Math.min(v.length, 50); i++) { const d = gDescribe([v[i]]); rec('google', d[0], d[1]); }
+        hookMethod(v, 'push', 'google', 'dataLayer.push', { describe: gDescribe, readyOnReplace: true });
+      }
+      return v;
+    });
+    hookProp(window, 'gtag', (v, prev) => wrapFn('google', 'gtag', v));
+
+    // Meta: fbq stub (and _fbq alias); fbevents.js setting fbq.callMethod = ready.
+    const fbOpts = { onSet: (k) => { if (k === 'callMethod') markReady('meta', 'fbq'); } };
+    hookProp(window, 'fbq', (v, prev) => { if (prev !== undefined) markReady('meta', 'fbq'); return wrapFn('meta', 'fbq', v, fbOpts); });
+    hookProp(window, '_fbq', (v) => wrapFn('meta', 'fbq', v, fbOpts));
+
+    // TikTok: ttq is a queue array with methods attached; consent methods wrapped.
+    hookProp(window, 'ttq', (v, prev) => {
+      if (prev !== undefined) markReady('tiktok', 'ttq');
+      if (onceHooked(v)) for (const m of ['grantConsent', 'revokeConsent', 'holdConsent']) hookMethod(v, m, 'tiktok', 'ttq.' + m);
+      return v;
+    });
+
+    // Microsoft Clarity: clarity('consentv2', {...}) / clarity('consent', bool).
+    hookProp(window, 'clarity', (v, prev) => { if (prev !== undefined) markReady('clarity', 'clarity'); return wrapFn('clarity', 'clarity', v); });
+
+    // Microsoft UET: uetq.push('consent', 'default'|'update', {...}); bat.js replaces uetq.
+    hookProp(window, 'uetq', (v, prev) => {
+      if (prev !== undefined) markReady('microsoft-uet', 'uetq');
+      if (onceHooked(v)) hookMethod(v, 'push', 'microsoft-uet', 'uetq.push');
+      return v;
+    });
+
+    // IAB TCF / GPP: the CMP's stub, then the CMP itself.
+    hookProp(window, '__tcfapi', (v, prev) => { if (prev !== undefined) markReady('tcf', '__tcfapi'); return wrapFn('tcf', '__tcfapi', v); });
+    hookProp(window, '__gpp', (v, prev) => { if (prev !== undefined) markReady('gpp', '__gpp'); return wrapFn('gpp', '__gpp', v); });
+
+    // Shopify Customer Privacy API (loaded by the platform; no stub).
+    const SHOPIFY = ['setTrackingConsent', 'getTrackingConsent', 'currentVisitorConsent', 'userCanBeTracked', 'analyticsProcessingAllowed', 'marketingAllowed', 'preferencesProcessingAllowed', 'saleOfDataAllowed', 'shouldShowBanner'];
+    hookProp(window, 'Shopify', (v) => {
+      if (onceHooked(v)) hookProp(v, 'customerPrivacy', (cp) => {
+        markReady('shopify', 'Shopify.customerPrivacy');
+        if (onceHooked(cp)) for (const m of SHOPIFY) hookMethod(cp, m, 'shopify', 'Shopify.customerPrivacy.' + m);
+        return cp;
+      });
+      return v;
+    });
+  } catch (e) {}
 })();`;
 
 /** Makes the browser announce Global Privacy Control to page scripts (the
@@ -171,7 +390,7 @@ export const GPC_SOURCE = `(() => {
 
 /** A record as the shim sends it. */
 export interface ShimRecord {
-  kind: 'beacon' | 'fetch' | 'xhr' | 'insert' | 'img-src' | 'cookie' | 'storage';
+  kind: 'beacon' | 'fetch' | 'xhr' | 'insert' | 'img-src' | 'cookie' | 'storage' | 'consent-api';
   t: number; // epoch ms (page clock = machine clock)
   frame: string; // location.href of the frame
   top: boolean;
@@ -186,6 +405,11 @@ export interface ShimRecord {
   key?: string;
   value?: string;
   chain: string[];
+  // kind 'consent-api' (see ConsentApiEvent in record/tracking.ts):
+  api?: 'google' | 'meta' | 'tiktok' | 'clarity' | 'microsoft-uet' | 'tcf' | 'gpp' | 'shopify';
+  call?: string;
+  apiKind?: 'call' | 'ready';
+  args?: unknown[];
   exiting?: boolean;
   flushed?: boolean;
 }

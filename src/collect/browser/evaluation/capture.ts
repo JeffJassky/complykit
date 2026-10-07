@@ -17,7 +17,7 @@ import { SHIM_BINDING, SHIM_SOURCE, type ShimRecord } from './shim.js';
 //     so worker-originated requests are labelled as such (Playwright reports
 //     them against the page's main frame).
 //   - The attribution shim (shim.ts): insertion chains, script-written cookies
-//     and storage, page-exit beacons.
+//     and storage, page-exit beacons, consent / tag API calls.
 //   - Response headers: Set-Cookie (which response set which cookie) and
 //     server-timing (some platforms report the visitor region there).
 //   - context.cookies() at the end: every cookie including HttpOnly.
@@ -195,6 +195,11 @@ export async function startCapture(context: BrowserContext, opts: CaptureOptions
       postData,
       setCookies: [],
     };
+    // A redirect hop: the browser reports it with no initiator of its own, so
+    // record which request it continues (rules follow it back to the origin).
+    const from = req.redirectedFrom();
+    const fromEvent = from ? byRequest.get(from) : undefined;
+    if (fromEvent) event.redirectedFrom = fromEvent.id;
     events.push(event);
     pending.push({ event, req });
     byRequest.set(req, event);
@@ -414,6 +419,20 @@ export async function startCapture(context: BrowserContext, opts: CaptureOptions
         if (c) events.push({ type: 'cookie-write', t: r.t - startEpoch, name: c.name, value: c.value, attributes: c.attributes, frameUrl: r.frame, chain: extend(r.chain ?? []), pageIndex: pageIdxAt(r.t - startEpoch) });
       } else if (r.kind === 'storage' && r.key !== undefined && r.area) {
         events.push({ type: 'storage-write', t: r.t - startEpoch, area: r.area, key: r.key, value: r.value ?? '', frameUrl: r.frame, chain: extend(r.chain ?? []), pageIndex: pageIdxAt(r.t - startEpoch) });
+      } else if (r.kind === 'consent-api' && r.api && r.call) {
+        // Consent / tag API calls (args already reduced to shape in the page).
+        events.push({
+          type: 'consent-api',
+          t: r.t - startEpoch,
+          api: r.api,
+          kind: r.apiKind === 'ready' ? 'ready' : 'call',
+          call: r.call,
+          args: Array.isArray(r.args) ? r.args : [],
+          frameUrl: r.frame,
+          top: !!r.top,
+          chain: extend(r.chain ?? []),
+          pageIndex: pageIdxAt(r.t - startEpoch),
+        });
       }
     }
 

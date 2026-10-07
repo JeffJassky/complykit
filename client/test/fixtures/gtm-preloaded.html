@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>GTM bridge: container already loaded</title>
+<script src="/gtm/gtm.js?id=GTM-XXXX01"></script>
+<script>
+// Stand-in for the state store (D3): isGranted + subscribe.
+(function () {
+  var state = {}, subs = [];
+  window.__store = {
+    isGranted: function (id) { return id === "necessary" || state[id] === true; },
+    subscribe: function (fn) { subs.push(fn); return function () { subs = subs.filter(function (f) { return f !== fn; }); }; },
+    set: function (next) { state = next; subs.forEach(function (f) { f(); }); }
+  };
+})();
+</script>
+<script src="/complykit-consent.js"></script>
+<script>window.__bridge = ComplyKit.installGtmBridge(window.__ckConfig, window.__ckRegime, window.__store);</script>
+</head>
+<body><h1>GTM bridge, container ran first</h1></body>
+</html>

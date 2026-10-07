@@ -33,6 +33,8 @@ export type ConsentEvent =
       runId: string;
       runDir: string;
       report: string;
+      /** The owner's change list beside the report (B2); absent from older CLIs. */
+      changeList?: string;
       findings: number;
       totals: NonNullable<JobResult['consent']>['totals'];
       parties: number;
@@ -201,6 +203,8 @@ export class ConsentProgress {
             // The run's real location under the job dir; /reports serves it as-is
             // so the report's run-relative evidence links keep working.
             reportUrl: `/reports/${job.id}/consent/.comply/runs/${encodeURIComponent(ev.runId)}/consent-report.html`,
+            // Written beside the report by the CLI (it is not passed --out, so both sit in the run dir).
+            ...(ev.changeList ? { changeListUrl: `/reports/${job.id}/consent/.comply/runs/${encodeURIComponent(ev.runId)}/change-list.md` } : {}),
           },
         };
         break;

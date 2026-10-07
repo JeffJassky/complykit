@@ -198,6 +198,14 @@ import {
   SALE_SHARE_CATEGORIES,
   buildKnowledgeBase,
   lookupEntry,
+  matchVendorSignatures,
+  hostsInText,
+  entriesForText,
+  inlineRegExp,
+  parseContainers,
+  parseGtmContainer,
+  extractContainerData,
+  type TagContainer,
   lookupStore,
   entryStatus,
   registrableDomain,
@@ -207,10 +215,19 @@ import {
   jurisdictionsFor,
   requirementScopeFor,
   normalizeRegion,
+  regimeFor,
+  parseRegimeLocation,
+  isOptOutSignalState,
   decideVerification,
   defaultScenarios,
   locationPreset,
   buildTrackingEvaluation,
+  summarizeConsentApi,
+  evaluateCompatibility,
+  compatibilityFor,
+  behaviorCellsFrom,
+  consentToolDefaultFinding,
+  verdictRank,
   findingKind,
   citationLabel,
   buildConsentReportModel,
@@ -219,6 +236,10 @@ import {
   getRequirement as _getReq,
   type Timeline,
   type TrackingEvaluation,
+  type CompatibilitySection,
+  type PartyCompatibility,
+  type ConsentApiObservation,
+  type BehaviorCell,
   type ConsentReportModel,
   type LocationVerification,
   type KnowledgeBase,
@@ -232,15 +253,28 @@ declare const tl: Timeline;
 const _red: Timeline = redactTimeline(tl);
 declare const ev2: TrackingEvaluation;
 _use(() => writeTrackingEvaluation('.', ev2));
+// B1: the compatibility verdict and its inputs, exercised as values.
+declare const tl2: Timeline;
+const _cao: ConsentApiObservation = summarizeConsentApi(tl2);
+const _cs: CompatibilitySection = evaluateCompatibility(ev2);
+const _pc: PartyCompatibility = compatibilityFor(ev2.inventory[0], { markup: ev2.markup, behavior: behaviorCellsFrom(ev2), partyIndex: 0 });
+const _bc: BehaviorCell[] = behaviorCellsFrom(ev2);
+_use(_cao.calls + _cs.parties.length + _bc.length + verdictRank(_pc.verdict) + consentToolDefaultFinding(ev2.locations).grants.length);
 const _readEv: TrackingEvaluation | undefined = readTrackingEvaluation('.');
 const kb2: KnowledgeBase = buildKnowledgeBase({ overrides: [{ id: 'intercom', categories: ['functional'] }] });
 _use(lookupEntry(kb2, 'www.facebook.com', '/tr'));
 _use(lookupStore(DEFAULT_KB, '_ga'));
+const _sig: string[] = matchVendorSignatures('fbq("init")').concat(hostsInText('https://a.b.test/x'), entriesForText(DEFAULT_KB, '').map((e) => e.id));
+_use(inlineRegExp('fbq'));
+const _gtm: TagContainer[] = parseContainers([], {}).concat(parseGtmContainer({ id: 'GTM-XXXX01', kind: 'gtm', url: '', locationId: 'local', seenOn: [], fetchedAt: '', status: 'error' }));
+_use(extractContainerData('').reason);
 _use(KB_ENTRIES[0] ? entryStatus(KB_ENTRIES[0]) : 'proposed');
 const _rd: string = registrableDomain('a.b.co.uk') + hostOf('https://x.y/') + String(hostMatches('a.b', 'b')) + String(isEuEea('DE'));
 const _j: string[] = jurisdictionsFor({ country: 'US', region: 'CA' });
 _use(requirementScopeFor(_getReq('eprivacy.art5.3')!, _j, '2026-10-02'));
 _use(normalizeRegion('US', 'California'));
+const _rg: string = regimeFor(parseRegimeLocation('US-CA'), '2026-10-06');
+_use(isOptOutSignalState('CA') && _rg);
 const _lv: LocationVerification = decideVerification({ id: 'local' }, []);
 const _sc: ScenarioId[] = defaultScenarios(['eu']);
 _use(locationPreset('us-ca'));
@@ -254,3 +288,109 @@ _use(DEFAULT_GEO_SOURCES.length + LOCAL_LOCATION.id.length);
 _use(resolveJourney({ dwellMs: 1 }).dwellMs);
 _use(contextOptionsFor(LOCAL_LOCATION));
 _use(() => redactHar({ log: { entries: [] } }));
+
+// --- consent tool config (D2): every value export exercised AS a value ------------
+import {
+  CONSENT_CONFIG_MAJOR,
+  CONSENT_CONFIG_VERSION,
+  CONSENT_CONFIG_ELEMENT_ID,
+  NECESSARY_CATEGORY,
+  REGIMES,
+  FALLBACK_REGIME,
+  CONSENT_MODE_SIGNALS,
+  CONSENT_STRING_KEYS,
+  CONSENT_CONFIG_JSON_SCHEMA_ID,
+  parseConsentConfigVersion,
+  consentConfigVersionStatus,
+  readConsentConfigHeader,
+  guardConsentToolConfig,
+  isNecessaryCategory,
+  consentCategoryDefault,
+  canonicalJson,
+  hashConsentToolConfig,
+  withConsentConfigHash,
+  parseConsentToolConfig,
+  consentToolConfigJsonSchema,
+  validateConsentStrings,
+  DO_NOT_SELL_OR_SHARE,
+  type ConsentStringIssue,
+  type ConsentToolConfig,
+  type Regime,
+} from './index.js';
+const _ccv: number = CONSENT_CONFIG_ELEMENT_ID.length + CONSENT_CONFIG_MAJOR + CONSENT_CONFIG_VERSION.length + NECESSARY_CATEGORY.length + REGIMES.length + FALLBACK_REGIME.length + CONSENT_MODE_SIGNALS.length + CONSENT_STRING_KEYS.length + CONSENT_CONFIG_JSON_SCHEMA_ID.length;
+_use(parseConsentConfigVersion('1.0')?.major);
+_use(consentConfigVersionStatus('1.0') === 'current');
+const _ctc: ConsentToolConfig = withConsentConfigHash({
+  version: CONSENT_CONFIG_VERSION,
+  generatedFrom: { runId: 'r', at: '2026-10-06T00:00:00.000Z', site: 'example-shop.test', complykit: '0.0.0' },
+  regimeSource: { kind: 'fixed', regime: 'opt-in' },
+  categories: [{ id: 'necessary', label: 'Necessary', description: '', defaultByRegime: { 'opt-in': true, 'opt-out-signal': true, 'opt-out': true } }],
+  strings: { en: { 'banner.title': 'Privacy', byRegime: { 'opt-out-signal': { 'optOut.link': 'Do Not Sell or Share My Personal Information' } } } },
+  consent: { lifetimeDays: 180 },
+});
+_use(readConsentConfigHeader(_ctc).generatedFrom?.site);
+const _csi: ConsentStringIssue[] = validateConsentStrings(_ctc.strings);
+_use(_csi[0]?.rule ?? DO_NOT_SELL_OR_SHARE.length);
+const _g = guardConsentToolConfig(_ctc);
+_use(_g.ok ? _g.config.layout : _g.reason);
+const _r: Regime = 'opt-out';
+_use(isNecessaryCategory('necessary') && consentCategoryDefault(_ctc, 'analytics', _r));
+const _hash: string = hashConsentToolConfig(_ctc) + canonicalJson({ b: 1, a: 2 });
+const _p = parseConsentToolConfig(_ctc);
+_use(_p.ok ? _p.hashMatches : _p.issues.length);
+_use(consentToolConfigJsonSchema().$schema);
+
+// --- consent config generator (D8) ------------------------------------------------
+import { generateConsentConfig, DEFAULT_SCRIPT_SRC, type GeneratedConsentConfig, type TrackingEvaluation as _TE } from './index.js';
+declare const _te: _TE;
+const _gen: () => GeneratedConsentConfig = () => generateConsentConfig(_te, { complykitVersion: '0.0.0', scriptSrc: DEFAULT_SCRIPT_SRC, workspace: { entries: {} } });
+_use(_gen);
+
+// --- guided remediation flow ---------------------------------------------------------
+import {
+  changeId,
+  changeSignature,
+  elementSignatureOf,
+  remediationTaskKey,
+  readRemediationTaskValue,
+  isRemediationDone,
+  REMEDIATION_TASK_KEY_PREFIX,
+  INSTALL_TASK_ID,
+  buildRemediationTasks,
+  installTask,
+  removeExistingToolTasks,
+  remediationTotals,
+  renderHeadSnippet,
+  scriptJson,
+  verifyInstall,
+  verifyRewriteTag,
+  verifyRemoveLeak,
+  verifyGtmTagConsent,
+  verifyConsentDefault,
+  verifyRemoveExistingTool,
+  judgeSpotCheck,
+  runVerify,
+  elementMatches,
+  consentPluginPathPattern,
+  renderRemediationHtml,
+  remediationFromWorkspace,
+  parseRemediationTasks,
+  type RemediationSection,
+  type RemediationTask,
+  type ElementSignature,
+  type MarkupFinding as _MF,
+} from './index.js';
+declare const _mf: _MF;
+const _esig: ElementSignature = elementSignatureOf(_mf);
+const _cid: string = changeId({ kind: 'rewrite-tag', signature: _esig }) + remediationTaskKey(INSTALL_TASK_ID) + REMEDIATION_TASK_KEY_PREFIX;
+_use([_cid, changeSignature({ kind: 'install' }), readRemediationTaskValue({ status: 'todo' })?.status, isRemediationDone('verified')]);
+const _tasks: RemediationTask[] = buildRemediationTasks(_gen(), _te, { workspace: { entries: {} } });
+_use([_tasks[0]?.verify.method, remediationTotals(_tasks).verified, installTask(_ctc, DEFAULT_SCRIPT_SRC, 'https://example.test/').id, removeExistingToolTasks(_te, [], 'https://example.test/').length]);
+_use(renderHeadSnippet(_ctc, DEFAULT_SCRIPT_SRC) + scriptJson({}));
+const _remSec: RemediationSection | undefined = remediationFromWorkspace({ entries: {}, config: { value: { tasks: _tasks } } });
+_use([renderRemediationHtml(_remSec), parseRemediationTasks([]).length]);
+_use(verifyInstall('<html></html>', { page: 'https://example.test/', configHash: _hash, scriptSrc: DEFAULT_SCRIPT_SRC }).result);
+_use([verifyRewriteTag('', { page: '', element: _esig, category: 'analytics' }).message, verifyRemoveLeak('', { page: '', element: _esig }).evidence.length]);
+_use([verifyGtmTagConsent('', { containerId: 'GTM-X', tagId: 1, consentTypes: [] }).result, verifyConsentDefault('', { page: '', consentTypes: [] }).result]);
+_use([verifyRemoveExistingTool('', { page: '', label: 'x' }).result, judgeSpotCheck({ page: '', partyId: 'x', hosts: [] }, { page: '', phases: [] }).result]);
+_use([runVerify(_tasks[0].verify, { html: '' }).result, elementMatches({ kind: 'script', line: 1, context: 'document', loads: 'executes', attributes: {}, hosts: [], ids: [] }, _esig), consentPluginPathPattern('complianz')]);

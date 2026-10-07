@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>WordPress Consent API bridge</title>
+<!-- Our tool first; the test supplies window.__ckConfig / __ckRegime and drives window.__store. -->
+<script src="/complykit-consent.js" data-complykit-reload="none"></script>
+<script>window.__store = ComplyKit.init(window.__ckConfig, window.__ckRegime);</script>
+<script>
+// Fake WP Consent API plugin, loaded AFTER the tool as it is on a real site.
+// Mirrors wp-consent-api.js (github.com/rlankhorst/wp-consent-level-api):
+// wp_set_consent ignores values other than allow/deny, stores the category
+// (the real one writes cookie wp_consent_<category>), and only when the value
+// changed synchronously dispatches wp_listen_for_consent_change whose detail is
+// an Array with one named property, as in the real source.
+window.__wpCalls = [];
+window.__wpStore = { functional: 'allow' };
+window.wp_set_consent = function (category, value) {
+  if (value !== 'allow' && value !== 'deny') return;
+  window.__wpCalls.push([category, value]);
+  if (window.__wpStore[category] === value) return;
+  window.__wpStore[category] = value;
+  var d = []; d[category] = value;
+  document.dispatchEvent(new CustomEvent('wp_listen_for_consent_change', { detail: d }));
+};
+window.wp_has_consent = function (c) {
+  var t = window.wp_consent_type;
+  if (!t) return true;
+  if (t.indexOf('optout') !== -1 && window.__wpStore[c] === undefined) return true;
+  return window.__wpStore[c] === 'allow';
+};
+</script>
+</head>
+<body><h1>WP Consent API bridge</h1></body>
+</html>

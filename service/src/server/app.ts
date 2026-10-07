@@ -7,6 +7,7 @@ import express, { type ErrorRequestHandler, type Express, type RequestHandler } 
 import {
   parseUrlList,
   type CheckKind,
+  type ConsentConfigRequest,
   type CreateBatchRequest,
   type CreateBatchResponse,
   type JobDetail,
@@ -15,14 +16,25 @@ import {
   type KbDismissRequest,
   type KbRejectRequest,
   type KbResearchRequest,
+  type RerenderRequest,
+  type RescanRequest,
+  type SitesResponse,
 } from '../shared/api.js';
 import { basicAuth } from './auth.js';
 import type { ServiceConfig } from './config.js';
+import { ConsentRecordStore, MAX_BODY_BYTES, RateLimiter, normalizeRecord, originDomain, type ExportFormat } from './consent-records.js';
 import { KbError, KnowledgeBase, RESEARCH_MAX, categoryList, isDomain, isProposalId, optionalText, requiredText, reviewer } from './kb.js';
 import { recoverJobs, sweepRetention } from './lifecycle.js';
 import { Runner } from './runner.js';
 import { isJobId, JobStore, newId, toSummary } from './store.js';
 import { StreamHub } from './stream.js';
+import { sendInstallZip } from './install-zip.js';
+import { WorkspaceError, WorkspaceStore } from './workspace.js';
+import { serveReportWithConfig } from './report-config.js';
+import { generateConsentConfigForJob } from './consent-config.js';
+import { checklistProgress, RemediationVerifier, remediationView } from './remediation.js';
+import { rescanSite } from './rescan.js';
+import { rerenderJob } from './rerender.js';
 import { sendJobZip } from './zip.js';
 
 export interface Service {
@@ -32,6 +44,10 @@ export interface Service {
   runner: Runner;
   hub: StreamHub;
   kb: KnowledgeBase;
+  /** Per-site workspaces under DATA_DIR/sites (never swept by retention). */
+  workspaces: WorkspaceStore;
+  /** Consent records under DATA_DIR/sites/<domain>/consent-records.jsonl (pruned by CONSENT_RECORD_RETENTION_DAYS, not by retentionDays). */
+  consentRecords: ConsentRecordStore;
   /** Epoch ms of the last request that counts as activity (see lifecycle.idleReason). */
   lastActivity(): number;
   /** Kill running checks (marked "server stopped"), close streams, flush to disk. */
@@ -46,11 +62,22 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
   const touch = () => (lastActivity = Date.now());
   const hub = new StreamHub(store);
   // A job finishing counts as activity, and a consent check feeds the KB queue.
-  const runner = new Runner(store, config, () => {
-    touch();
-    hub.notifyKb();
-  });
+  const workspaces = new WorkspaceStore(path.join(config.dataDir, 'sites'), checklistProgress);
+  // A consent job applies its site's workspace and records itself as a run (C3).
+  const runner = new Runner(
+    store,
+    config,
+    () => {
+      touch();
+      hub.notifyKb();
+    },
+    workspaces,
+  );
   const kb = new KnowledgeBase(config, () => hub.notifyKb());
+  const consentRecords = new ConsentRecordStore(path.join(config.dataDir, 'sites'), config.consentRecordRetentionDays);
+  void consentRecords.prune();
+  const consentSweep = setInterval(() => void consentRecords.prune(), RETENTION_SWEEP_MS);
+  consentSweep.unref();
 
   // Restart recovery, then retention, then resume the queue.
   const loaded = await store.load();
@@ -74,6 +101,76 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true });
   });
+
+  /** A WorkspaceError answers with its own status and message. */
+  const siteRoute =
+    (fn: RequestHandler): RequestHandler =>
+    async (req, res, next) => {
+      try {
+        await fn(req, res, next);
+      } catch (err) {
+        if (!(err instanceof WorkspaceError)) throw err;
+        if (err.status >= 500) console.error(`[workspace] ${req.method} ${req.originalUrl}: ${err.message}`);
+        res.status(err.status).json({ ...err.extra, error: err.message });
+      }
+    };
+
+  // --- Consent records (public by design) -------------------------------------------
+  // Mounted before basicAuth: a visitor's browser on a client's site posts here
+  // and has no password. Only this route is cross-origin; it accepts one
+  // strictly validated record shape and answers nothing but 204. The export
+  // (below, behind auth) is how a team reads them back.
+
+  const consentLimitIp = new RateLimiter(60);
+  const consentLimitSite = new RateLimiter(1200);
+  const allowed = config.consentRecordDomains ? new Set(config.consentRecordDomains) : undefined;
+
+  const consentCors = (req: Parameters<RequestHandler>[0], res: Parameters<RequestHandler>[1]): string | undefined => {
+    const origin = req.get('origin');
+    const domain = originDomain(origin);
+    if (domain && origin) {
+      res.set('Access-Control-Allow-Origin', origin);
+      res.set('Vary', 'Origin');
+    }
+    return domain;
+  };
+
+  app.options('/api/consent-records', (req, res) => {
+    if (consentCors(req, res)) {
+      res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.set('Access-Control-Allow-Headers', 'Content-Type');
+      res.set('Access-Control-Max-Age', '86400');
+    }
+    res.status(204).end();
+  });
+
+  app.post(
+    '/api/consent-records',
+    // type: any content type, so navigator.sendBeacon's text/plain (no preflight) parses too.
+    (req, res, next) => {
+      consentCors(req, res);
+      express.json({ limit: MAX_BODY_BYTES, type: () => true })(req, res, next);
+    },
+    siteRoute(async (req, res) => {
+      const domain = consentCors(req, res);
+      if (!domain) {
+        res.status(400).json({ error: 'a consent record must be posted from a web page: the Origin header is missing or is not a site' });
+        return;
+      }
+      if (allowed && !allowed.has(domain)) {
+        res.status(403).json({ error: 'this service does not accept consent records for that site' });
+        return;
+      }
+      const wait = Math.max(consentLimitIp.hit(req.ip ?? ''), consentLimitSite.hit(domain));
+      if (wait) {
+        res.set('Retry-After', String(wait)).status(429).json({ error: 'too many consent records; slow down' });
+        return;
+      }
+      const record = normalizeRecord(req.body, domain);
+      await consentRecords.append(domain, record);
+      res.status(204).end();
+    }),
+  );
 
   app.use(basicAuth(config.password));
   app.use(express.json({ limit: '256kb' }));
@@ -156,6 +253,40 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
     const job = res.locals.job as JobDetail;
     await sendJobZip(res, job, store.jobDir(job.id));
   });
+
+  // The consent tool config from a finished consent job (D8), stored as the
+  // site workspace's `config`. Mounted after siteRoute exists: a
+  // WorkspaceError answers with its own status.
+  app.post(
+    '/api/jobs/:id/consent-config',
+    withJob,
+    siteRoute(async (req, res) => {
+      const job = res.locals.job as JobDetail;
+      const out = await generateConsentConfigForJob(job, (req.body ?? {}) as ConsentConfigRequest, {
+        config,
+        workspaces,
+        jobDir: store.jobDir(job.id),
+        origin: `${req.protocol}://${req.get('host') ?? 'localhost'}`,
+      });
+      res.json(out);
+    }),
+  );
+
+  // R2: re-render the job's consent report with the site's current workspace (no rescan).
+  app.post(
+    '/api/jobs/:id/rerender',
+    withJob,
+    siteRoute(async (req, res) => {
+      const job = res.locals.job as JobDetail;
+      const out = await rerenderJob(job, (req.body ?? {}) as RerenderRequest, {
+        config,
+        workspaces,
+        jobDir: (id) => store.jobDir(id),
+        origin: `${req.protocol}://${req.get('host') ?? 'localhost'}`,
+      });
+      res.json(out);
+    }),
+  );
 
   app.get('/api/stream', hub.handle);
 
@@ -257,6 +388,79 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
     }),
   );
 
+  // --- Site workspaces --------------------------------------------------------------
+
+  app.get(
+    '/api/sites',
+    siteRoute(async (_req, res) => {
+      const body: SitesResponse = { sites: await workspaces.list() };
+      res.json(body);
+    }),
+  );
+
+  app.get(
+    '/api/sites/:domain/workspace',
+    siteRoute(async (req, res) => {
+      res.json(await workspaces.get(req.params.domain));
+    }),
+  );
+
+  app.patch(
+    '/api/sites/:domain/workspace',
+    siteRoute(async (req, res) => {
+      res.json(await workspaces.patch(req.params.domain, req.body));
+    }),
+  );
+
+  // The guided remediation checklist (R4): the stored tasks with their status, and Verify.
+  const verifier = new RemediationVerifier({ config, workspaces });
+  app.get(
+    '/api/sites/:domain/remediation',
+    siteRoute(async (req, res) => {
+      res.json(remediationView(await workspaces.get(req.params.domain)));
+    }),
+  );
+
+  app.post(
+    '/api/sites/:domain/remediation/:id/verify',
+    siteRoute(async (req, res) => {
+      res.json(await verifier.verify(req.params.domain, req.params.id));
+    }),
+  );
+
+  // The last checklist step: rescan the site with the options of its latest job.
+  app.post(
+    '/api/sites/:domain/rescan',
+    siteRoute(async (req, res) => {
+      res.status(201).json(await rescanSite(req.params.domain, { store, workspaces, enqueue: (id) => runner.enqueue(id) }, (req.body ?? {}) as RescanRequest));
+    }),
+  );
+
+  // The install bundle (R5): the two client files, the snippet and the change list.
+  app.get(
+    '/api/sites/:domain/install.zip',
+    siteRoute(async (req, res) => {
+      const domain = workspaces.domain(req.params.domain);
+      await sendInstallZip(res, domain, (await workspaces.get(domain)).config?.value, config.consentClientDist);
+    }),
+  );
+
+  app.get(
+    '/api/sites/:domain/consent-records',
+    siteRoute(async (req, res) => {
+      const domain = workspaces.domain(req.params.domain);
+      const format = req.query.format === undefined ? 'jsonl' : req.query.format;
+      if (format !== 'csv' && format !== 'jsonl') throw new WorkspaceError(400, '`format` must be csv or jsonl');
+      if (!(await consentRecords.exists(domain))) throw new WorkspaceError(404, 'no consent records for this site');
+      res.type(format === 'csv' ? 'text/csv; charset=utf-8' : 'application/x-ndjson; charset=utf-8');
+      res.set('Content-Disposition', `attachment; filename="consent-records-${domain}.${format}"`);
+      for await (const chunk of consentRecords.export(domain, format as ExportFormat)) {
+        if (!res.write(chunk)) await new Promise((r) => res.once('drain', r));
+      }
+      res.end();
+    }),
+  );
+
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'not found' });
   });
@@ -278,7 +482,8 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
       serve = express.static(store.jobDir(id), { dotfiles: 'allow', index: false, redirect: false, fallthrough: false });
       statics.set(id, serve);
     }
-    serve(req, res, next);
+    // A report with a workbench gets the site's workspace config injected (report-config.ts).
+    void serveReportWithConfig(store.jobDir(id), store.get(id)!)(req, res, (err?: unknown) => (err ? next(err) : serve(req, res, next)));
   });
 
   // --- Client SPA ------------------------------------------------------------------
@@ -313,12 +518,15 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
     runner,
     hub,
     kb,
+    workspaces,
+    consentRecords,
     lastActivity: () => lastActivity,
     async stop(killGraceMs?: number) {
       clearInterval(sweep);
+      clearInterval(consentSweep);
       await Promise.all([runner.shutdown(killGraceMs), kb.stop(killGraceMs)]);
       hub.closeAll();
-      await store.flush();
+      await Promise.all([store.flush(), workspaces.flush(), consentRecords.flush()]);
     },
   };
 }
