@@ -1,0 +1,185 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`rendered wording > the change list markdown (snapshot) 1`] = `
+"# Change list — www.example-shop.test
+
+From complykit run \`b2-fixture\` of https://www.example-shop.test/, scanned 2026-10-06 10:00 UTC.
+
+> 3 tools are loaded outside your consent tool's reach: Meta Pixel, tracker.test, TikTok Pixel.
+
+On what this scan saw: 1 page with its HTML inspected, 1 verified location (Germany), logged out, desktop Chromium, 1 run per visitor action. Pages not visited can load other tools.
+
+- Meta Pixel: an element in the HTML the browser fetches before any script runs
+- tracker.test: its loader was not identified
+- TikTok Pixel: loaded by a tag manager without a proven consent setting
+
+**Consent tool default:** No consent tool’s stored default was read: what runs by default is not established.
+
+**Missing evidence** (each weakens the list, none strengthens it): consent-API calls (gtag consent, fbq consent …) were not recorded: no consent default is known to exist; the consent tool’s stored default was not read.
+
+## 1. Fix first: tools observed running where they should be off (1)
+
+Behavior is the ground truth. These tools sent data or stored something where the location’s rules expect them off, whatever the implementation says. Make the changes listed for them below, then rescan.
+
+<a id="change-behavior-mismatch:9b8839f60b6e"></a>
+
+### Meta Pixel
+
+- Change id: \`behavior-mismatch:9b8839f60b6e\`
+- Ran where it should be off (Germany · After rejection). Whatever the implementation says, the current setup does not hold Meta Pixel back. Make the changes listed for it below, then rescan — behavior is the ground truth.
+
+## 2. Tags to rewrite (2)
+
+Each tag is a <script> in your HTML. Change it as shown: the browser does not run a type="text/plain" script, and the consent tool inserts a working copy once the visitor agrees to its category. The data-category must be a category id in your consent tool config. Guide: [Consent tool config: categories](https://jeffjassky.github.io/complykit/guide/config).
+
+<a id="change-rewrite-tag:84162593eac5"></a>
+
+### /:38 · Meta Pixel · inline <script>
+
+- Change id: \`rewrite-tag:84162593eac5\`
+- File: the template that renders \`https://www.example-shop.test/\`, line 38 of the served HTML
+
+Before:
+
+\`\`\`html
+<script>…your existing code (contains “fbq('init'”)…</script>
+\`\`\`
+
+After:
+
+\`\`\`html
+<script type="text/plain" data-category="advertising">…the same code, unchanged (contains “fbq('init'”)…</script>
+\`\`\`
+
+<a id="change-rewrite-tag:863bf2b9c0d7"></a>
+
+### /:12 · Google Analytics 4 · <script>
+
+- Change id: \`rewrite-tag:863bf2b9c0d7\`
+- File: the template that renders \`https://www.example-shop.test/\`, line 12 of the served HTML
+- The same tag is also on 1 other page: /cart — usually one theme template.
+
+Before:
+
+\`\`\`html
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXX01"></script>
+\`\`\`
+
+After:
+
+\`\`\`html
+<script type="text/plain" data-category="analytics" data-src="https://www.googletagmanager.com/gtag/js?id=G-XXXX01" async></script>
+\`\`\`
+
+## 3. GTM tags to gate (1)
+
+In Google Tag Manager open each tag, then Advanced Settings → Consent Settings → “Require additional consent for tag to fire”, and add the listed consent types. Publish the container. A requirement only holds a tag when a denied default is set first (next group). Guide: [Setting up Google Tag Manager](https://jeffjassky.github.io/complykit/guide/gtm-setup).
+
+<a id="change-gate-gtm-tag:5eaf0ccbb7eb"></a>
+
+### GTM-XXXX01 · tag 7 · TikTok Pixel
+
+- Change id: \`gate-gtm-tag:5eaf0ccbb7eb\`
+- Consent setting to choose: **Require additional consent for tag to fire** → \`ad_storage, ad_user_data, ad_personalization\`
+- Now: (Custom template) has no consent requirement: it fires whenever its trigger does; fires on page load.
+- Guide: [Setting up Google Tag Manager](https://jeffjassky.github.io/complykit/guide/gtm-setup)
+
+## 4. Consent defaults to set before tags load (1)
+
+Google treats a consent type that was never set as granted. A denied default must run before the container or tag loads. The complykit consent tool sets it for you when installed above the container snippet; otherwise add the snippet below.
+
+<a id="change-set-consent-default:94f64113ed9e"></a>
+
+### TikTok Pixel
+
+- Change id: \`set-consent-default:94f64113ed9e\`
+- Before the Google Tag Manager or gtag.js snippet, set ad_storage, ad_user_data, ad_personalization to denied (consent-API calls were not recorded, so no default is known to exist).
+- Guide: [Setting up Google Tag Manager](https://jeffjassky.github.io/complykit/guide/gtm-setup)
+
+Add:
+
+\`\`\`html
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('consent', 'default', { ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied' });
+</script>
+<!-- the Google Tag Manager / gtag.js snippet goes AFTER this -->
+\`\`\`
+
+## 5. Platform settings (1)
+
+The platform injects these tools itself, so a rewrite of your HTML does not reach them. Turn on the platform’s consent setting; the consent tool’s platform bridge passes the visitor’s choice to it. The setting covers only what the platform injects into the browser: events the platform or a vendor’s app forwards server-side (server pixels, conversions APIs) are not covered and cannot be verified from the browser.
+
+<a id="change-use-platform-api:10caba2c0e06"></a>
+
+### Shopify · Google Ads
+
+- Change id: \`use-platform-api:10caba2c0e06\`
+- use Shopify.customerPrivacy.setTrackingConsent (loadFeatures consent-tracking-api first); dashboard: Settings → Customer privacy (cookie banner, regions)
+- Guide: [Installing on Shopify](https://jeffjassky.github.io/complykit/guide/platform-shopify)
+
+## 6. Vendor consent calls (alongside the block, never instead) (2)
+
+These vendors also take a consent signal. The consent tool’s adapters make these calls; a hand-made setup must make them too. Guide: [Vendor consent APIs](https://jeffjassky.github.io/complykit/guide/vendor-control).
+
+<a id="change-call-consent-api:42a24a677378"></a>
+
+### TikTok Pixel
+
+- Change id: \`call-consent-api:42a24a677378\`
+- alongside gating: ttq.holdConsent() before the tag loads; ttq.revokeConsent() on refusal (after revoke the tag stops)
+- Guide: [Vendor consent APIs](https://jeffjassky.github.io/complykit/guide/vendor-control)
+
+<a id="change-call-consent-api:064289e11df8"></a>
+
+### Google Analytics 4
+
+- Change id: \`call-consent-api:064289e11df8\`
+- alongside gating: gtag('consent', 'default', {analytics_storage: 'denied'}) before the tag loads; gtag('consent', 'update', {analytics_storage: 'denied'}) on refusal (after revoke the tag keeps sending cookieless pings — still requests)
+- Guide: [Vendor consent APIs](https://jeffjassky.github.io/complykit/guide/vendor-control)
+
+## 7. Leaks to remove (1)
+
+The browser fetches these elements itself, before any script runs (and <noscript> content fires exactly for visitors without JavaScript, when no consent tool can run). No consent tool can hold them back: remove them from the HTML.
+
+<a id="change-remove-leak:3ca7a7c8ad9a"></a>
+
+### /:40 · Meta Pixel · <img> in <noscript>
+
+- Change id: \`remove-leak:3ca7a7c8ad9a\`
+- <img> in <noscript> at https://www.example-shop.test/:40 fires for visitors without JavaScript: remove it from the HTML (no consent tool can hold it)
+- URL: \`https://www.facebook.com/tr?id=000000&ev=PageView&noscript=1\`
+
+## 8. Accepted exposures (1)
+
+Nothing on the page controls these. Remove the integration, or record in writing that the exposure is accepted — a decision for the owner, not a developer task.
+
+<a id="change-accepted-exposure:c7b6bdb350b5"></a>
+
+### Meta Pixel
+
+- Change id: \`accepted-exposure:c7b6bdb350b5\`
+- Meta Pixel: no consent tool controls it (an element in the HTML the browser fetches before any script runs). Make the changes above — or, where they are not made, remove the integration or record in writing that the exposure is accepted.
+
+## 9. Needs a look (1)
+
+The scan could not establish how these tools get onto the page, so it cannot say what to change. A developer has to find the code that loads them.
+
+<a id="change-needs-a-look:6c0f3aab7bb9"></a>
+
+### tracker.test
+
+- Change id: \`needs-a-look:6c0f3aab7bb9\`
+- **Classify first:** its purpose is not classified — this applies only if it tracks visitors.
+- how tracker.test gets onto the page could not be traced
+
+Not counted: necessary / CDN / captcha / payments / consent tool — Cloudflare. Their purpose needs no consent, so nothing is listed for them; how they load is recorded in the evidence. Not counted in the line above.
+
+## What this list cannot tell you
+
+- Pages the scan did not visit, logged-in areas, other regions, devices and A/B variants can load other tools.
+- Server-side forwarding is invisible from the browser; what a vendor does with data it received is out of scope.
+- A change is confirmed only by a rescan: behavior is the ground truth, this list is the explanation.
+"
+`;

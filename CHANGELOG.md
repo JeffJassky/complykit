@@ -9,6 +9,38 @@ real if CI runs the matrix. See standards/traps.md #10.
 
 ## [Unreleased]
 
+### Added: client consent tool and consent-compatibility epic
+- `client/` (`@jeffjassky/complykit-consent`, private, not published): a
+  zero-dependency consent tool that asks and remembers, holds scripts back,
+  tells loaded scripts the state, and supports withdrawal. Split build: a
+  blocking core (<= 15 KB gzipped) and a lazy UI (<= 12 KB gzipped); size
+  budgets enforced in CI. Gate by `type="text/plain"` + `data-category`,
+  vendor adapters, Google Tag Manager consent bridge, location-based regimes
+  (opt-in / opt-out-signal / opt-out), per-regime banner strings with a
+  validator, themes and layouts, consent-record endpoint on the service.
+  Tested in Chromium, Firefox and WebKit.
+- Config contract: a JSON config element, `schema/consent-tool-config.schema.json`
+  (shipped in the package), generated docs, and `complykit consent-config <run-dir>`
+  which writes a config, snippet and change list from a scan.
+- Scanner: markup analysis (gateable / leak / hint / held), GTM container
+  parsing and consent-setting rewrite for local copies, consent-API recording,
+  consent-tool and platform detection, implementation class, repeated runs
+  (`--runs N`), site-search journey step.
+- Consent compatibility verdict and change list per tracker (gateable,
+  tag manager, platform, uncontrollable, unknown; fails closed), scope and
+  blind-spot lines, consent-tool proof section (controlled only when held in
+  every denied visit, run when granted, and journey parity).
+- `complykit consent --local-copy <spec.json>` proves an install loop against a
+  route-intercepted copy of a page without touching the live site.
+- Service: shared per-site workspace (config, snippet, change list, notes),
+  Sites page, snapshot export, rescans that apply the workspace and show what
+  changed since the last scan.
+- Guides: platform bridges for Shopify, WordPress and Wix; GTM setup; location;
+  banner copy and banner design rules; consent records; limits.
+- Release gate: `.github/ISSUE_TEMPLATE/release-checklist.md` and
+  `scripts/check-pack.mjs` (pack-contents guard wired into `prepublishOnly`;
+  the client package refuses to publish while private).
+
 ### Added
 - Initial extraction.
 - `complykit consent` — consent & tracking evaluation by visitor location
@@ -28,3 +60,4 @@ real if CI runs the matrix. See standards/traps.md #10.
 
 ### Changed
 - `consent.pre-consent-tracker` cites ePrivacy Art. 5(3) (was GDPR Art. 7(4)).
+- Root `prepublishOnly` now also runs `check-pack`.

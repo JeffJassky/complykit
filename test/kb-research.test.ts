@@ -88,6 +88,10 @@ describe('research queue', () => {
       'stores ga_secret not in the entry',
       'sends hashed-email not in the entry',
     ]);
+    // A cookie another product of the same company declares is not drift.
+    const clarity = KB_ENTRIES.find((e) => e.id === 'microsoft.clarity')!;
+    expect(driftFrom(clarity, { stores: [{ name: 'MUID', kind: 'cookie', lifetimeDays: 390 }], sends: [] }, buildKnowledgeBase())).toEqual([]);
+    expect(driftFrom(clarity, { stores: [{ name: 'MUID', kind: 'cookie', lifetimeDays: 390 }], sends: [] })).toEqual(['stores MUID not in the entry']);
     const noClaims = { ...ga, stores: [], sends: [] };
     expect(driftFrom(noClaims, { stores: [{ name: 'x', kind: 'cookie', lifetimeDays: 1 }], sends: ['hashed-email'] })).toEqual([]);
   });

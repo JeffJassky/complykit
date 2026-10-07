@@ -1,0 +1,217 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the snippet > snapshot: config + snippet for the fixture > complykit-config.json 1`] = `
+"{
+  "version": "1.0",
+  "generatedFrom": {
+    "runId": "b2-fixture",
+    "at": "2026-10-06T12:00:00.000Z",
+    "site": "example-shop.test",
+    "complykit": "0.0.0-test",
+    "kb": "0"
+  },
+  "hash": "6b23ddfdb5105f98b73c2e8511c2d1b9122e9b4d55bee02c14e7a613aed34537",
+  "regimeSource": {
+    "kind": "platform"
+  },
+  "categories": [
+    {
+      "id": "necessary",
+      "label": "Necessary",
+      "description": "Needed for the site to work. Always on.",
+      "defaultByRegime": {
+        "opt-in": true,
+        "opt-out-signal": true,
+        "opt-out": true
+      }
+    },
+    {
+      "id": "analytics",
+      "label": "Analytics",
+      "description": "Measures visits and how people use the site.",
+      "defaultByRegime": {
+        "opt-in": false,
+        "opt-out-signal": true,
+        "opt-out": true
+      }
+    },
+    {
+      "id": "advertising",
+      "label": "Advertising",
+      "description": "Ads, audiences, targeting and campaign measurement.",
+      "defaultByRegime": {
+        "opt-in": false,
+        "opt-out-signal": true,
+        "opt-out": true
+      }
+    }
+  ],
+  "vendors": [
+    {
+      "id": "cloudflare",
+      "label": "Cloudflare",
+      "category": "necessary",
+      "control": "none",
+      "stores": [],
+      "note": "necessary: not held back"
+    },
+    {
+      "id": "google.analytics",
+      "label": "Google Analytics 4",
+      "category": "analytics",
+      "control": "api",
+      "adapter": "google-consent-mode",
+      "stores": [
+        {
+          "name": "^_ga(_.+)?$",
+          "kind": "cookie"
+        }
+      ],
+      "note": "gated once its tag is rewritten, and told through its consent API"
+    },
+    {
+      "id": "google.ads.ccm",
+      "label": "Google Ads",
+      "category": "advertising",
+      "control": "platform",
+      "stores": [],
+      "note": "injected by the platform: reached through its consent API (shopify bridge)"
+    },
+    {
+      "id": "meta.pixel",
+      "label": "Meta Pixel",
+      "category": "advertising",
+      "control": "api",
+      "adapter": "meta",
+      "stores": [
+        {
+          "name": "^_fb[pc]$",
+          "kind": "cookie"
+        }
+      ],
+      "note": "told through its consent API, but nothing holds its load until the change list’s items for it are done (markup leak)"
+    },
+    {
+      "id": "tiktok.pixel",
+      "label": "TikTok Pixel",
+      "category": "advertising",
+      "control": "api",
+      "adapter": "tiktok",
+      "stores": [
+        {
+          "name": "^_ttp$",
+          "kind": "cookie"
+        },
+        {
+          "name": "^ttcsid",
+          "kind": "cookie"
+        }
+      ],
+      "note": "held by the tag manager’s consent settings (gtm.tags), and told through its consent API"
+    },
+    {
+      "id": "unknown:tracker.test",
+      "label": "tracker.test",
+      "category": "advertising",
+      "control": "none",
+      "stores": [],
+      "note": "not classified: strictest category; loader not identified: not controlled"
+    }
+  ],
+  "gate": [
+    {
+      "category": "analytics",
+      "src": "^(?:https?:)?//www\\\\.googletagmanager\\\\.com/gtag/js",
+      "vendor": "google.analytics"
+    }
+  ],
+  "gtm": {
+    "containers": [
+      "GTM-XXXX01"
+    ],
+    "dataLayer": "dataLayer",
+    "consentMode": {
+      "ad_storage": "advertising",
+      "ad_user_data": "advertising",
+      "ad_personalization": "advertising",
+      "analytics_storage": "analytics",
+      "security_storage": "necessary"
+    },
+    "tags": [
+      {
+        "name": "GTM-XXXX01 tag 7 (Custom template)",
+        "category": "advertising",
+        "vendor": "tiktok.pixel"
+      }
+    ]
+  },
+  "platform": "shopify",
+  "theme": {},
+  "strings": {},
+  "consent": {
+    "lifetimeDays": 365
+  },
+  "layout": "bar"
+}
+"
+`;
+
+exports[`the snippet > snapshot: config + snippet for the fixture > generator-notes.md 1`] = `
+"# Consent tool config — example-shop.test
+
+Generated 2026-10-06T12:00:00.000Z from run b2-fixture (complykit 0.0.0-test, knowledge base 0).
+
+On what this scan saw: 1 page with its HTML inspected, 1 verified location (Germany), logged out, desktop Chromium, 1 run per visitor action. Pages not visited can load other tools.
+
+## What the config contains
+
+- **Necessary** (\`necessary\`): Cloudflare [none]
+- **Analytics** (\`analytics\`): Google Analytics 4 [api: google-consent-mode]
+- **Advertising** (\`advertising\`): Google Ads [platform], Meta Pixel [api: meta], TikTok Pixel [api: tiktok], tracker.test [none]
+- Gate rules: 1
+- GTM: GTM-XXXX01 — 1 tag that must carry a consent requirement
+- Platform bridge: shopify
+- Visitor location: platform
+
+## Check before deploying
+
+- tracker.test is not classified yet: held under the strictest category (advertising). Classify it in the site workspace and regenerate.
+- tracker.test: how it gets onto the page was not established, so the config cannot hold it back. See “Needs a look” in the change list.
+- Cloudflare is listed as necessary (cdn, per its knowledge-base entry) but behaved like a tracker in this scan (). Necessary tools are never held back: confirm its use is strictly necessary, or classify it in the workspace and regenerate.
+
+## How it was decided
+
+- Meta Pixel: an inline script — edit the existing tag in place (add type="text/plain" data-category="advertising"); the scan does not carry its code.
+- Visitor location: from Shopify (customerPrivacy.getRegion()). Where Shopify does not report a region, the visitor is treated as opt-in.
+- The snippet loads the tool from /complykit/v1/complykit-consent.js — a placeholder. Self-host complykit-consent.js and complykit-consent-ui.js in one folder and adjust the path; a third-party CDN URL means a request before consent.
+
+This config describes what the scan saw — not a verdict on the site. The rescan after deployment is what shows whether tools are held back.
+"
+`;
+
+exports[`the snippet > snapshot: config + snippet for the fixture > snippet.html 1`] = `
+"<!-- complykit consent tool — generated 2026-10-06T12:00:00.000Z for example-shop.test from run b2-fixture (complykit 0.0.0-test).
+     Part 1: paste once, as high in <head> as possible — above the Google Tag Manager snippet and above every tag in Part 2.
+     /complykit/v1/complykit-consent.js is a PLACEHOLDER: self-host complykit-consent.js and complykit-consent-ui.js in one folder and change the path.
+     Editing the config by hand invalidates its hash; the rescan reports it. Regenerate instead. -->
+<script type="application/json" id="complykit-config">{"version":"1.0","generatedFrom":{"runId":"b2-fixture","at":"2026-10-06T12:00:00.000Z","site":"example-shop.test","complykit":"0.0.0-test","kb":"0"},"hash":"6b23ddfdb5105f98b73c2e8511c2d1b9122e9b4d55bee02c14e7a613aed34537","regimeSource":{"kind":"platform"},"categories":[{"id":"necessary","label":"Necessary","description":"Needed for the site to work. Always on.","defaultByRegime":{"opt-in":true,"opt-out-signal":true,"opt-out":true}},{"id":"analytics","label":"Analytics","description":"Measures visits and how people use the site.","defaultByRegime":{"opt-in":false,"opt-out-signal":true,"opt-out":true}},{"id":"advertising","label":"Advertising","description":"Ads, audiences, targeting and campaign measurement.","defaultByRegime":{"opt-in":false,"opt-out-signal":true,"opt-out":true}}],"vendors":[{"id":"cloudflare","label":"Cloudflare","category":"necessary","control":"none","stores":[],"note":"necessary: not held back"},{"id":"google.analytics","label":"Google Analytics 4","category":"analytics","control":"api","adapter":"google-consent-mode","stores":[{"name":"^_ga(_.+)?$","kind":"cookie"}],"note":"gated once its tag is rewritten, and told through its consent API"},{"id":"google.ads.ccm","label":"Google Ads","category":"advertising","control":"platform","stores":[],"note":"injected by the platform: reached through its consent API (shopify bridge)"},{"id":"meta.pixel","label":"Meta Pixel","category":"advertising","control":"api","adapter":"meta","stores":[{"name":"^_fb[pc]$","kind":"cookie"}],"note":"told through its consent API, but nothing holds its load until the change list’s items for it are done (markup leak)"},{"id":"tiktok.pixel","label":"TikTok Pixel","category":"advertising","control":"api","adapter":"tiktok","stores":[{"name":"^_ttp$","kind":"cookie"},{"name":"^ttcsid","kind":"cookie"}],"note":"held by the tag manager’s consent settings (gtm.tags), and told through its consent API"},{"id":"unknown:tracker.test","label":"tracker.test","category":"advertising","control":"none","stores":[],"note":"not classified: strictest category; loader not identified: not controlled"}],"gate":[{"category":"analytics","src":"^(?:https?:)?//www\\\\.googletagmanager\\\\.com/gtag/js","vendor":"google.analytics"}],"gtm":{"containers":["GTM-XXXX01"],"dataLayer":"dataLayer","consentMode":{"ad_storage":"advertising","ad_user_data":"advertising","ad_personalization":"advertising","analytics_storage":"analytics","security_storage":"necessary"},"tags":[{"name":"GTM-XXXX01 tag 7 (Custom template)","category":"advertising","vendor":"tiktok.pixel"}]},"platform":"shopify","theme":{},"strings":{},"consent":{"lifetimeDays":365},"layout":"bar"}</script>
+<script src="/complykit/v1/complykit-consent.js"></script>
+
+<!-- Part 2: tag rewrites. Do NOT paste this part as a block: replace each tag where it is now (the "Now" markup) with the "Becomes" markup.
+     A type="text/plain" script is not run by the browser; the tool inserts a working copy once the visitor agrees to its category.
+     Leaving the original in place AND adding the rewrite loads the tag twice after consent. -->
+
+<!-- 1. Meta Pixel — /:38 — category "advertising"
+     Now:
+       <script>…your existing code (contains “fbq('init'”)…</script>
+     Edit that inline <script> in place: add type="text/plain" data-category="advertising" and keep its code unchanged:
+       <script type="text/plain" data-category="advertising">…the same code, unchanged (contains “fbq('init'”)…</script>
+-->
+
+<!-- 2. Google Analytics 4 — /:12 — category "analytics"
+     Now:
+       <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXX01"></script>
+     Becomes: -->
+<script type="text/plain" data-category="analytics" data-src="https://www.googletagmanager.com/gtag/js?id=G-XXXX01" async></script>
+"
+`;

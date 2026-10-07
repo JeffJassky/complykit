@@ -95,13 +95,37 @@ export type {
   CookieSnapshot,
   StorageSnapshot,
   TimelineSnapshot,
+  PlatformSignals,
+  PlatformFingerprint,
   Timeline,
   PartySource,
+  ImplementationClass,
+  ImplementationEvidence,
+  PartyImplementation,
   PartyInventoryItem,
   ScenarioSummary,
   LocationSummary,
   NotTestedItem,
   TrackingEvaluation,
+  MarkupElement,
+  MarkupPage,
+  MarkupLoads,
+  MarkupVerdict,
+  MarkupFinding,
+  MarkupSection,
+  ContainerCapture,
+  ContainerTag,
+  TagContainer,
+  TagConsentStatus,
+  ConsentApiObservedCall,
+  ConsentApiObservation,
+  CompatibilityVerdict,
+  CompatibilityChangeKind,
+  CompatibilityChange,
+  CompatibilityReason,
+  PartyCompatibility,
+  ConsentToolDefaultFinding,
+  CompatibilitySection,
 } from './record/index.js';
 
 // --- registry: runtime -------------------------------------------------------
@@ -139,10 +163,20 @@ export {
   lookupEntry,
   lookupStore,
   entryStatus,
+  matchVendorSignatures,
+  hostsInText,
+  entriesForText,
+  inlineRegExp,
   registrableDomain,
   jurisdictionsFor,
   requirementScopeFor,
   normalizeRegion,
+  regimeFor,
+  parseRegimeLocation,
+  isOptOutSignalState,
+  classifyPlatform,
+  platformLoaderOf,
+  consentPluginPathPattern,
 } from './registry/index.js';
 
 // --- registry: types ---------------------------------------------------------
@@ -167,6 +201,8 @@ export type {
   KnowledgeEntryInput,
   PartyCategory,
   ConsentDecoder,
+  ControlApi,
+  TagControl,
   SiteOverride,
   MeasuredPlace,
 } from './registry/index.js';
@@ -182,6 +218,11 @@ export { buildCoverageIndex } from './coverage-index.js';
 export { ALL_RULES, getRule, resolveCapsFor, evaluate, isLlmRule } from './rules/index.js';
 export { decideVerification, defaultScenarios, locationPreset, buildTrackingEvaluation } from './rules/tracking/index.js';
 export type { EvaluationInput } from './rules/tracking/index.js';
+export { parseGtmContainer, parseContainers, extractContainerData } from './rules/tracking/gtm.js';
+export type { ContainerData, ParseContainerOptions } from './rules/tracking/gtm.js';
+export { summarizeConsentApi } from './rules/tracking/consent-api.js';
+export { evaluateCompatibility, compatibilityFor, behaviorCellsFrom, consentToolDefaultFinding, verdictRank } from './rules/tracking/compatibility.js';
+export type { BehaviorCell, CompatibilityInput, CompatibilityEvaluationInput } from './rules/tracking/compatibility.js';
 export type {
   RuleMeta,
   Rule,
@@ -211,7 +252,44 @@ export {
   buildConsentReportModel,
   renderConsentHtml,
   renderConsentMarkdown,
+  diffConsentModels,
+  buildCompatibilityReport,
+  renderChangeListMarkdown,
+  CHANGE_LIST_FILE,
 } from './report/index.js';
+export type { CompatibilityReport, CompatibilityRow, ChangeItem, ChangeGroup } from './report/index.js';
+export { reconcileCompatibility } from './consent-compatibility.js';
+// D10: complykit's own tool — deployed config vs reality.
+export { evaluateConsentToolProof, configBehaviorCells } from './rules/tracking/consent-tool-proof.js';
+export type { ConsentToolProofInput } from './rules/tracking/consent-tool-proof.js';
+export { buildConsentToolProofReport, renderConsentToolProofHtml, renderConsentToolProofMarkdown } from './report/consent-tool-proof.js';
+export type { ConsentToolProofReport, ProofVendorRow } from './report/consent-tool-proof.js';
+export { generateConsentConfig, DEFAULT_SCRIPT_SRC } from './consent-generator.js';
+export type { GenerateConsentConfigOptions, GeneratedConsentConfig, GeneratorNote, SnippetRewrite } from './consent-generator.js';
+// The guided remediation flow (plans/remediation-flow.md): stable change ids,
+// the task model, the task builder and the pure verify checkers.
+export { changeId, changeSignature, elementSignatureOf, remediationTaskKey, readRemediationTaskValue, resolveRemediationTaskValue, isRemediationDone, REMEDIATION_TASK_KEY_PREFIX, INSTALL_TASK_ID } from './record/index.js';
+export type {
+  RemediationTask,
+  RemediationTaskKind,
+  RemediationVerifySpec,
+  RemediationVerifyMethod,
+  RemediationStatus,
+  RemediationTaskValue,
+  RemediationLastVerify,
+  VerifyOutcome,
+  VerifyResult,
+  ElementSignature,
+  SpotCheckObservation,
+  ChangeIdInput,
+} from './record/index.js';
+export { buildRemediationTasks, installTask, removeExistingToolTasks, remediationTotals, renderHeadSnippet, scriptJson } from './remediation.js';
+export type { RemediationSource, RemediationSourceNote, BuildRemediationTasksOptions } from './remediation.js';
+// R3: the report's "Make these changes" checklist.
+export { renderRemediationHtml, remediationFromWorkspace, parseRemediationTasks } from './report/consent-remediation.js';
+export type { RemediationSection, RemediationWorkspaceLike } from './report/consent-remediation.js';
+export { verifyInstall, verifyRewriteTag, verifyRemoveLeak, verifyGtmTagConsent, verifyConsentDefault, verifyRemoveExistingTool, judgeSpotCheck, runVerify, elementMatches } from './rules/remediation/verify.js';
+export type { VerifyOptions, StaticVerifyInput, InstallExpectation, SpotCheckSpec, RemoveExistingToolExpectation } from './rules/remediation/verify.js';
 export type {
   ReportFormat,
   HtmlOptions,
@@ -228,9 +306,68 @@ export type {
   GridCell,
   ReportFinding,
   ConsentReportModel,
+  ConsentRunDiff,
+  SiteWorkspaceRecord,
   ConsentHtmlOptions,
 } from './report/index.js';
+
+// --- consent tool config (shared by scanner, generator, client) ---------------
+// The client imports consent-config-guard.ts by relative path (zero deps);
+// this surface is for the generator, the proof scanner and the service.
+export {
+  CONSENT_CONFIG_MAJOR,
+  CONSENT_CONFIG_VERSION,
+  CONSENT_CONFIG_ELEMENT_ID,
+  NECESSARY_CATEGORY,
+  REGIMES,
+  FALLBACK_REGIME,
+  CONSENT_MODE_SIGNALS,
+  CONSENT_STRING_KEYS,
+  parseConsentConfigVersion,
+  consentConfigVersionStatus,
+  readConsentConfigHeader,
+  guardConsentToolConfig,
+  isNecessaryCategory,
+  consentCategoryDefault,
+  canonicalJson,
+  hashConsentToolConfig,
+  withConsentConfigHash,
+  parseConsentToolConfig,
+  consentToolConfigJsonSchema,
+  CONSENT_CONFIG_JSON_SCHEMA_ID,
+  validateConsentStrings,
+  DO_NOT_SELL_OR_SHARE,
+} from './record/index.js';
+export type {
+  Regime,
+  RegimeSource,
+  ConsentCategory,
+  VendorControl,
+  ConsentVendor,
+  GateRule,
+  ConsentModeSignal,
+  GtmConfig,
+  ConsentPlatform,
+  ConsentTheme,
+  ConsentLayout,
+  ConsentStringKey,
+  ConsentStringTable,
+  ConsentStateConfig,
+  ConsentRecordEndpoint,
+  ConsentToolConfig,
+  ConsentToolConfigInput,
+  ConsentConfigHeader,
+  ConsentConfigVersionStatus,
+  ConsentConfigGuardResult,
+  ConsentConfigIssue,
+  ParseConsentToolConfigResult,
+  ConsentStringIssue,
+  ConsentStringIssueSeverity,
+  ConsentStringRule,
+} from './record/index.js';
 
 // --- orchestration ----------------------------------------------------------
 export { addFinding } from './finding.js';
 export type { AddFindingOptions } from './finding.js';
+
+export type { BehaviorObservation, BehaviorMatrix, BehaviorMatrixCell } from '../types/index.js';

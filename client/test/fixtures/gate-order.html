@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Gate ordering fixture</title>
+<script src="/test-store.js"></script>
+</head>
+<body>
+<!-- analytics: a slow external, an inline that depends on it, a faster external, an async one, a module -->
+<script type="text/plain" data-category="analytics" data-src="/slow/order.js?n=a&ms=400"></script>
+<script type="text/plain" data-category="analytics">(window.__order || (window.__order = [])).push('inline-after-a');</script>
+<script type="text/plain" data-category="analytics" data-src="/slow/order.js?n=b&ms=50"></script>
+<script type="text/plain" data-category="analytics" async data-src="/slow/order.js?n=async&ms=10"></script>
+<script type="text/plain" data-category="analytics" data-src="/slow/order.js?n=c&ms=10"></script>
+<script type="text/plain" data-category="analytics" data-type="module">(window.__order || (window.__order = [])).push('module');</script>
+<!-- marketing: its own chain, must not wait on analytics -->
+<script type="text/plain" data-category="marketing" data-src="/slow/order.js?n=m1&ms=10"></script>
+<script type="text/plain" data-category="marketing">(window.__order || (window.__order = [])).push('m-inline');</script>
+</body>
+</html>

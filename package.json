@@ -60,6 +60,7 @@
   },
   "files": [
     "dist",
+    "schema",
     "types/index.d.ts",
     "types/registry.d.ts",
     "types/collect-static.d.ts",
@@ -81,8 +82,12 @@
     "boundaries": "depcruise src --config .dependency-cruiser.cjs",
     "check-tracked": "node scripts/check-tracked.mjs",
     "check-exports": "node scripts/check-exports.mjs",
+    "schema:consent": "node scripts/emit-consent-config-schema.mjs",
+    "docs:config-schema": "node scripts/render-config-schema-docs.mjs",
+    "demo:remediation": "service/node_modules/.bin/tsx scripts/remediation-demo.ts",
     "clean": "rm -rf dist coverage",
-    "prepublishOnly": "npm run clean && npm run typecheck && npm run boundaries && npm run build && npm run check-exports && npm test",
+    "check-pack": "node scripts/check-pack.mjs",
+    "prepublishOnly": "npm run clean && npm run typecheck && npm run boundaries && npm run build && npm run check-exports && npm test && npm run check-pack",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs"
@@ -109,7 +114,7 @@
     "pngjs": "^7.0.0",
     "vue-eslint-parser": "9.4.3",
     "yaml": "^2.5.0",
-    "zod": "^3.23.0"
+    "zod": "^3.25.0"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.60.0",

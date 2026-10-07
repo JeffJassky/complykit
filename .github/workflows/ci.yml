@@ -47,6 +47,10 @@ jobs:
       # type-only). See standards/traps.md #9.
       - run: npm run check-exports
 
+      # Root tests that load the consent tool (client-banner-a11y) read
+      # client/dist; without it they self-skip, which hides a regression.
+      - run: npm --prefix client ci && npm --prefix client run build
+
       - run: npm test
 
       # A host compiled to CommonJS can only `require()`, and an ESM-only
@@ -58,6 +62,57 @@ jobs:
       # traps #7 does not apply here.
       - name: CJS entry actually loads
         run: node -e "const p=require('./dist/index.cjs'); if (typeof p.defineConfig !== 'function') process.exit(1)"
+
+  # The consent client (client/): own package, own lockfile. Build, enforce the
+  # gzipped budgets (core 15 KB, UI 12 KB), then drive a real browser over the
+  # fixture pages — once per engine (F5): the banner ships to every browser, and
+  # <dialog>, focus order, sendBeacon and CSP reporting differ between them.
+  client:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    name: client (${{ matrix.browser }})
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run size
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - run: npm test
+        env:
+          CK_BROWSER: ${{ matrix.browser }}
+
+  # F5: complykit's own checks on the BUILT banner, in all three engines —
+  # accessibility (test/client-banner-a11y: the full Chromium browser pass, plus
+  # axe-core directly in Firefox and WebKit) and the F6 banner-design rules
+  # (test/banner-design: our banner read and judged in each engine).
+  # COMPLYKIT_ENGINES makes every engine required: a missing browser fails the
+  # job instead of skipping its suite.
+  client-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm --prefix client ci && npm --prefix client run build
+      - run: npx vitest run test/client-banner-a11y.test.ts test/banner-design.test.ts
+        env:
+          COMPLYKIT_ENGINES: chromium,firefox,webkit
 
   # Peer matrix (traps #10). playwright and @anthropic-ai/sdk are declared with
   # version ranges; a range is a claim and an untested claim is a lie. These

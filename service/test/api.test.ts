@@ -239,6 +239,9 @@ describe('reports and downloads', () => {
     // The report's run-relative evidence link resolves.
     const ev = await request(s.app).get(url.replace('consent-report.html', 'evidence/note.txt')).expect(200);
     expect(ev.headers['content-type']).toMatch(/text\/plain/);
+    // The developer's change list sits beside the report and is downloadable (B2).
+    const cl = await request(s.app).get(job.result!.consent!.changeListUrl!).expect(200);
+    expect(cl.text).toContain('# Change list');
     await request(s.app).get(`/reports/${job.id}/nope.html`).expect(404);
     await request(s.app).get('/reports/zzzzzzzzzzzz/job.json').expect(404);
   });

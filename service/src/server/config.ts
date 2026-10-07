@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { siteDomain } from './domains.js';
 
 export interface ServiceConfig {
   port: number;
@@ -18,6 +19,10 @@ export interface ServiceConfig {
   researchAvailable: boolean;
   concurrency: number;
   retentionDays: number;
+  /** Consent records older than this many days are pruned (CONSENT_RECORD_RETENTION_DAYS, default 1825 = 5 years). Separate from retentionDays: jobs are scan output, these are proof. */
+  consentRecordRetentionDays: number;
+  /** CONSENT_RECORD_DOMAINS (comma list of registrable domains): when set, the consent-record endpoint only accepts these sites. Unset = any site. */
+  consentRecordDomains?: string[];
   /** 0 = never shut down on idle. */
   idleShutdownMinutes: number;
   region?: string;
@@ -25,8 +30,12 @@ export interface ServiceConfig {
   cliPath: string;
   /** Built client (vite output). May not exist. */
   clientDir: string;
+  /** The built consent client (client/dist): the install zip copies complykit-consent.js and complykit-consent-ui.js from it. COMPLYKIT_CLIENT_DIST. */
+  consentClientDist: string;
   version: string;
   production: boolean;
+  /** Visits per consent scenario (CONSENT_RUNS, default 2): runs after the first repeat under network + CPU throttling to catch timing races. 1 = single run. */
+  consentRuns?: number;
   /** Hard cap per job, all checks included. */
   jobTimeoutMs: number;
   /** SIGTERM → SIGKILL grace when stopping a check process. */
@@ -45,6 +54,12 @@ function int(env: NodeJS.ProcessEnv, key: string, fallback: number, min = 0): nu
   const n = Number(raw);
   if (!Number.isFinite(n) || n < min) throw new Error(`${key} must be a number >= ${min} (got ${JSON.stringify(raw)})`);
   return Math.floor(n);
+}
+
+function domainList(raw: string | undefined): string[] | undefined {
+  const list = (raw ?? '').split(/[,\s]+/).filter(Boolean).map((d) => siteDomain(d));
+  if (list.some((d) => !d)) throw new Error(`CONSENT_RECORD_DOMAINS must be a comma-separated list of domains (got ${JSON.stringify(raw)})`);
+  return list.length ? [...new Set(list as string[])] : undefined;
 }
 
 function readVersion(): string {
@@ -76,12 +91,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     researchAvailable: Boolean(env.ANTHROPIC_API_KEY),
     concurrency: int(env, 'CONCURRENCY', 2, 1),
     retentionDays: int(env, 'RETENTION_DAYS', 14, 1),
+    consentRecordRetentionDays: int(env, 'CONSENT_RECORD_RETENTION_DAYS', 1825, 1),
+    consentRecordDomains: domainList(env.CONSENT_RECORD_DOMAINS),
     idleShutdownMinutes: int(env, 'IDLE_SHUTDOWN_MINUTES', 0),
     region: env.FLY_REGION || undefined,
     cliPath: path.resolve(env.COMPLYKIT_CLI || path.join(SERVICE_DIR, '..', 'dist', 'cli.js')),
     clientDir: path.join(SERVICE_DIR, 'dist', 'client'),
+    consentClientDist: path.resolve(env.COMPLYKIT_CLIENT_DIST || path.join(SERVICE_DIR, '..', 'client', 'dist')),
     version: readVersion(),
     production,
+    consentRuns: Math.min(5, int(env, 'CONSENT_RUNS', 2, 1)),
     jobTimeoutMs: 45 * 60_000,
     killGraceMs: 10_000,
     pollMs: 500,

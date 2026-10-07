@@ -109,6 +109,7 @@ import type {
   ScenarioSummary,
   NotTestedItem,
   Timeline,
+  ContainerCapture,
 } from './index.js';
 
 export interface GeoSource {
@@ -180,6 +181,8 @@ export interface ConsentEvaluationCollection {
   notTested: NotTestedItem[];
   site: { url: string; host: string; registrableDomain: string };
   autoconsentVersion?: string;
+  /** Tag-manager containers the scenarios loaded, fetched through their location's context. */
+  containers: ContainerCapture[];
   startedAt: string;
   finishedAt: string;
 }

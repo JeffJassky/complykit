@@ -67,10 +67,11 @@ async function consent() {
   fs.writeFileSync(path.join(runDir, 'tracking.json'), JSON.stringify({ url: opts.url }));
   fs.writeFileSync(path.join(runDir, 'findings.jsonl'), '{"ruleId":"fake"}\n');
   fs.writeFileSync(path.join(runDir, 'consent-report.html'), `<!doctype html><title>consent report</title><h1>Consent report for ${opts.url}</h1><a href="evidence/note.txt">evidence</a>\n`);
+  fs.writeFileSync(path.join(runDir, 'change-list.md'), `# Change list — ${opts.url}\n`);
   fs.mkdirSync(path.join(cwd, '.comply', 'cache'), { recursive: true });
   fs.writeFileSync(path.join(cwd, '.comply', 'cache', 'verdicts.json'), '{}');
   await sleep(delay);
-  emit({ type: 'done', runId, runDir, report: path.join(runDir, 'consent-report.html'), findings: 2, totals: { violation: 1, 'needs-review': 0, exposure: 1, practice: 0 }, parties: 4, unrecognized: 1 });
+  emit({ type: 'done', runId, runDir, report: path.join(runDir, 'consent-report.html'), changeList: path.join(runDir, 'change-list.md'), findings: 2, totals: { violation: 1, 'needs-review': 0, exposure: 1, practice: 0 }, parties: 4, unrecognized: 1 });
   process.stdout.write(`wrote ${runDir}\n`);
 }
 
@@ -84,10 +85,42 @@ async function scan() {
 }
 
 async function report() {
+  if (String(opts.format ?? '').startsWith('consent-')) return consentReport();
   const runs = fs.readdirSync(path.join(cwd, '.comply', 'runs')).sort();
   const id = runs.at(-1);
   fs.writeFileSync(opts.out, `<!doctype html><title>a11y</title><h1>Accessibility ${id}</h1>\n`);
   fs.writeFileSync(opts.out.replace(/\.html?$/i, '') + '.json', JSON.stringify({ run: { id }, counts: { defects: 3 } }));
+  process.stdout.write(`wrote ${opts.out}\n`);
+}
+
+// `report --run <id> --cwd <dir> --format consent-html --workspace f --out file
+// [--previous dir]` (R2 re-render): writes the report, change-list.md and the
+// .json beside --out. The report names the workspace's class: entries with a
+// value, so a test can see the CURRENT workspace was applied; every call's argv
+// is appended to <cwd>/report-calls.ndjson.
+async function consentReport() {
+  fs.appendFileSync(path.join(cwd, 'report-calls.ndjson'), JSON.stringify(process.argv.slice(2)) + '\n');
+  const dir = path.join(cwd, '.comply', 'runs', String(opts.run ?? ''));
+  if (!opts.run || !fs.existsSync(path.join(dir, 'tracking.json'))) {
+    process.stderr.write(`run ${opts.run} has no consent evaluation (tracking.json).\n`);
+    process.exit(2);
+  }
+  if (process.env.FAKE_REPORT_FAIL) {
+    process.stderr.write('complykit: report crashed\n');
+    process.exit(1);
+  }
+  const ws = opts.workspace ? JSON.parse(fs.readFileSync(opts.workspace, 'utf8')) : { entries: {} };
+  const classes = Object.keys(ws.entries ?? {}).filter((k) => k.startsWith('class:') && ws.entries[k].value !== null).sort();
+  // A browser test can leave a real report as <run>/rerender-template.html: its
+  // ck-render block then gets the workspace's class: stamps, as the real CLI writes them.
+  const template = path.join(dir, 'rerender-template.html');
+  const stamps = Object.fromEntries(classes.map((k) => [k.slice('class:'.length), ws.entries[k].at ?? '']));
+  const html = fs.existsSync(template)
+    ? fs.readFileSync(template, 'utf8').replace(/("workspace":)false(,"classifications":)\{\}/, (_m, a, b) => `${a}true${b}${JSON.stringify(stamps).replace(/</g, '\\u003c')}`).replace('<main>', '<main><p id="rerendered">Re-rendered</p>').replace(/data-rem-config-at="[^"]*"/, () => `data-rem-config-at="${Array.isArray(ws.config?.value?.tasks) && ws.config.value.tasks.length ? ws.config.at ?? '' : ''}"`)
+    : `<!doctype html><title>consent report</title><h1>Re-rendered ${opts.run}</h1><p id="classes">${classes.join(',')}</p><p id="previous">${opts.previous ?? ''}</p>\n`;
+  fs.writeFileSync(opts.out, html);
+  fs.writeFileSync(path.join(path.dirname(opts.out), 'change-list.md'), `# Change list — re-rendered with ${classes.length} classification(s)\n`);
+  fs.writeFileSync(opts.out.replace(/\.html?$/i, '') + '.json', JSON.stringify({ runId: opts.run, classes }));
   process.stdout.write(`wrote ${opts.out}\n`);
 }
 
@@ -213,7 +246,56 @@ async function kb() {
   }
 }
 
-const commands = { consent, scan, report, kb };
+// `consent-config <run-dir> --workspace f --out d --json`: writes the four files
+// and prints the JSON the service stores. The fake config counts the workspace's
+// class: entries so a test can see the CURRENT workspace was passed.
+async function consentConfig() {
+  const runDir = rest[0];
+  if (!runDir || !fs.existsSync(path.join(runDir, 'tracking.json'))) {
+    process.stderr.write(`complykit: ${runDir}: no consent evaluation (tracking.json) there.\n`);
+    process.exit(2);
+  }
+  if (opts['privacy-policy'] && !String(opts['privacy-policy']).startsWith('https://')) {
+    process.stderr.write('could not generate a config: privacyPolicyUrl: https URL\n');
+    process.exit(2);
+  }
+  const ws = opts.workspace ? JSON.parse(fs.readFileSync(opts.workspace, 'utf8')) : { entries: {} };
+  const classified = Object.keys(ws.entries ?? {}).filter((k) => k.startsWith('class:')).length;
+  const config = { version: '1.0', generatedFrom: { runId: path.basename(runDir), site: ws.domain ?? 'example.com' }, classified, ...(opts['record-endpoint'] ? { record: { endpoint: opts['record-endpoint'] } } : {}), scriptSrc: opts['script-src'] ?? '/complykit/v1/complykit-consent.js' };
+  const snippet = `<script type="application/json" id="complykit-config">${JSON.stringify(config)}</script>\n`;
+  const changeList = `# Change list — ${path.basename(runDir)}\n`;
+  const notes = [{ code: 'regime-source', level: 'flag', message: 'meta tag needed' }];
+  fs.mkdirSync(opts.out, { recursive: true });
+  fs.writeFileSync(path.join(opts.out, 'complykit-config.json'), JSON.stringify(config, null, 2));
+  fs.writeFileSync(path.join(opts.out, 'snippet.html'), snippet);
+  fs.writeFileSync(path.join(opts.out, 'change-list.md'), changeList);
+  fs.writeFileSync(path.join(opts.out, 'generator-notes.md'), '# notes\n');
+  // The checklist: ids are content hashes in the real CLI, so a regeneration that changes nothing keeps them.
+  const page = `https://${ws.domain ?? 'example.com'}/`;
+  const task = (id, kind, order, verify) => ({ id, kind, group: kind === 'install' ? 'install' : 'markup', title: `${kind} task`, summary: 'fake', tools: [], partyIds: [], steps: ['do it'], pages: [page], verify, status: 'todo', optional: false, notes: [], order });
+  const tasks = [task('install', 'install', 0, { check: 'install', method: 'static', page, configHash: 'sha256:fake', scriptSrc: config.scriptSrc, elementId: 'complykit-config' }), task('rewrite-tag:0123456789ab', 'rewrite-tag', 1, { check: 'rewrite-tag', method: 'static', page })];
+  process.stdout.write(JSON.stringify({ config, snippet, changeList, notes, tasks, env: process.env.COMPLYKIT_KB_DIR ?? null }) + '\n');
+}
+
+// `verify-change --task <file> --site <domain> --json` (R4): the outcome is
+// chosen by the task's verify.page (or containerUrl): a path containing
+// /fail → fail, /unknown → cannot-verify, /crash → exit 1, /slow → 300ms first;
+// anything else passes. Prints the argv it got so a test can see --site.
+async function verifyChange() {
+  const task = JSON.parse(fs.readFileSync(opts.task, 'utf8'));
+  const spec = task.verify ?? task;
+  const where = String(spec.page ?? spec.containerUrl ?? '');
+  if (where.includes('/slow')) await sleep(300);
+  if (where.includes('/crash')) {
+    process.stderr.write('complykit: browserType.launch: boom\n');
+    process.exit(1);
+  }
+  const result = where.includes('/fail') ? 'fail' : where.includes('/unknown') ? 'cannot-verify' : 'pass';
+  const message = { pass: 'the served HTML carries the change', fail: 'the tag still executes', 'cannot-verify': 'nothing matching on this page' }[result];
+  process.stdout.write(JSON.stringify({ result, message, evidence: [`served HTML of ${where} (HTTP 200)`], at: new Date().toISOString(), check: spec.check, id: task.id, fetched: { url: where, status: 200, via: 'navigation' }, argv: rest }) + '\n');
+}
+
+const commands = { consent, scan, report, kb, 'consent-config': consentConfig, 'verify-change': verifyChange };
 if (!commands[cmd]) {
   process.stderr.write(`fake-cli: unknown command ${cmd}\n`);
   process.exit(2);

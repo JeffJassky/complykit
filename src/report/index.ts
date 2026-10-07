@@ -12,6 +12,11 @@ export * from './coverage.js';
 export * from './dispositions.js';
 export * from './consent-model.js';
 export * from './consent-html.js';
+export * from './consent-diff.js';
 export * from './consent-md.js';
+export * from './consent-compatibility.js';
+export * from './consent-tool-proof.js';
+export * from './consent-remediation.js';
+export * from './consent-rerender.js';
 
 export type { ResearchWorkflow, ResearchItem } from './research.js';

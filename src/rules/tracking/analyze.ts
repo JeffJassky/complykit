@@ -13,6 +13,9 @@ import {
   lookupStore,
   registrableDomain,
   hostOf,
+  classifyPlatform,
+  platformLoaderOf,
+  type PlatformName,
   type KnowledgeBase,
   type KnowledgeEntry,
   type PartyCategory,
@@ -42,6 +45,22 @@ export type Phase =
 export const UNCONSENTED: ReadonlySet<Phase> = new Set<Phase>(['no-banner', 'before-banner', 'before-choice', 'after-reject', 'after-dismiss', 'after-withdraw', 'after-opt-out-link']);
 /** Before the visitor did anything at all. */
 export const PRE_INTERACTION: ReadonlySet<Phase> = new Set<Phase>(['no-banner', 'before-banner', 'before-choice']);
+
+/** Withdraw / revoking-reject grace (D10 follow-up, #52, #57): how long after the choice step's start a send on that page is still the vendor's queued data, ms. */
+export const WITHDRAW_GRACE_MS = 1000;
+/** The behavior-observation phase key withdraw-grace requests are counted under (summed by no rule; see summarizeBehavior). */
+export const WITHDRAW_GRACE_PHASE = 'withdraw-grace';
+/** #57: the same grace for a reject that revoked a granted state, for a vendor active before it. */
+export const REJECT_GRACE_PHASE = 'reject-grace';
+/** The grace key of each revoking choice's phase (summed by no rule; consumers note it). */
+export const GRACE_PHASE_OF: Readonly<Partial<Record<Phase, string>>> = { 'after-withdraw': WITHDRAW_GRACE_PHASE, 'after-reject': REJECT_GRACE_PHASE };
+
+/** Grace requests (data and loads) recorded for these phases' revoking choices. */
+export function graceCount(facts: { dataRequestPhases: Record<string, number>; loadRequestsByPhase?: Record<string, number> }, phases: readonly string[]): number {
+  let n = 0;
+  for (const key of new Set(phases.map((ph) => GRACE_PHASE_OF[ph as Phase]).filter((k): k is string => Boolean(k)))) n += (facts.dataRequestPhases[key] ?? 0) + (facts.loadRequestsByPhase?.[key] ?? 0);
+  return n;
+}
 
 export const PHASE_LABEL: Record<Phase, string> = {
   'no-banner': 'with no banner shown and no choice made',
@@ -83,6 +102,7 @@ export interface PartyStore {
   setByUrl?: string;
   t?: number;
   phase?: Phase;
+  writePhases?: Phase[];
 }
 
 export interface PartyFacts {
@@ -134,7 +154,7 @@ export function parseTimelines(artifacts: Artifact[]): Timeline[] {
   return out;
 }
 
-function phaseAt(t: number, bannerShownT: number | undefined, choices: ChoiceEvent[]): Phase {
+export function phaseAt(t: number, bannerShownT: number | undefined, choices: ChoiceEvent[]): Phase {
   let last: ChoiceEvent | undefined;
   for (const c of choices) if (c.ok && c.t <= t) last = c;
   if (last) return `after-${last.choice}` as Phase;
@@ -157,6 +177,7 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
   const startEpoch = Date.parse(snapshot.startedAt) / 1000;
   const docUrls = new Set<string>([...snapshot.pages.map((p) => stripHash(p.url)), ...snapshot.frames.map((f) => stripHash(f.url))]);
   const sandboxed = new Set(snapshot.frames.filter((f) => f.sandboxed).map((f) => f.url));
+  const platform = classifyPlatform(snapshot.platformSignals);
 
   // CNAME cloaking: a first-party subdomain whose DNS points at a TRACKING
   // vendor. The site's own host is the first party by definition, and CNAMEs to
@@ -289,8 +310,12 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
     });
     // Set-Cookie on this party's responses.
     for (const c of e.setCookies) {
+      // A Set-Cookie that expires the cookie is a deletion, not a write (E4).
+      if ((c.maxAgeSec !== undefined && c.maxAgeSec <= 0) || (c.maxAgeSec === undefined && c.expires && Date.parse(c.expires) / 1000 <= startEpoch + e.t / 1000 + 1)) continue;
       const lifetimeDays = c.maxAgeSec !== undefined ? c.maxAgeSec / 86400 : c.expires ? Math.max(0, (Date.parse(c.expires) / 1000 - startEpoch) / 86400) : 0;
-      if (!f.stores.some((s) => s.name === c.name && s.kind === 'cookie')) {
+      const previous = f.stores.find(s=>s.name===c.name&&s.kind==='cookie');
+      if (previous) previous.writePhases = [...new Set([...(previous.writePhases ?? (previous.phase ? [previous.phase] : [])), phaseAt(e.t, bannerShownT, choices)])];
+      if (!previous) {
         f.stores.push({ name: c.name, kind: 'cookie', lifetimeDays: Math.round(lifetimeDays), setBy: 'header', setByUrl: e.url, t: e.t, phase: phaseAt(e.t, bannerShownT, choices) });
       }
     }
@@ -349,11 +374,18 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
   const cookieExpiry = new Map(snapshot.cookies.map((c) => [c.name, c.expires]));
   for (const e of events) {
     if (e.type === 'cookie-write') {
+      // Expiring a cookie (Max-Age<=0, or an expiry at or before the write) deletes
+      // it: a consent tool's withdrawal cleanup or a vendor dropping its id after a
+      // refusal is not the vendor storing anything (E4: counted as "storage writes
+      // after rejecting", which turned held vendors red).
+      if (isCookieDeletion(e.attributes, startEpoch + e.t / 1000)) continue;
       const f = writerParty(e.chain) ?? (() => {
         const entry = lookupStore(kb, e.name);
         return entry ? ensure({ id: entry.id, entry, domain: entry.match.hosts[0] }, entry.match.hosts[0]) : undefined;
       })();
-      if (!f || f.stores.some((s) => s.name === e.name && s.kind === 'cookie')) continue;
+      if (!f) continue;
+      const previous = f.stores.find(s=>s.name===e.name&&s.kind==='cookie');
+      if(previous){previous.writePhases=[...new Set([...(previous.writePhases??(previous.phase?[previous.phase]:[])),phaseAt(e.t,bannerShownT,choices)])];continue;}
       const exp = cookieExpiry.get(e.name);
       const maxAge = /max-age=(\d+)/i.exec(e.attributes ?? '')?.[1];
       const lifetimeDays = exp !== undefined && exp > 0 ? (exp - startEpoch) / 86400 : maxAge ? Number(maxAge) / 86400 : 0;
@@ -363,7 +395,9 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
         const entry = lookupStore(kb, e.key);
         return entry ? ensure({ id: entry.id, entry, domain: entry.match.hosts[0] }, entry.match.hosts[0]) : undefined;
       })();
-      if (!f || f.stores.some((s) => s.name === e.key && s.kind === e.area)) continue;
+      if (!f) continue;
+      const previous = f.stores.find(s=>s.name===e.key&&s.kind===e.area);
+      if(previous){previous.writePhases=[...new Set([...(previous.writePhases??(previous.phase?[previous.phase]:[])),phaseAt(e.t,bannerShownT,choices)])];continue;}
       f.stores.push({ name: e.key, kind: e.area, lifetimeDays: e.area === 'local' ? null : 0, setBy: 'script', setByUrl: e.chain[0], t: e.t, phase: phaseAt(e.t, bannerShownT, choices) });
     }
   }
@@ -387,9 +421,19 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
   // 3. Why each party wasn't held back.
   const byUrl = new Map<string, RequestEvent>();
   for (const e of allRequests) if (!byUrl.has(e.url)) byUrl.set(e.url, e);
+  const byId = new Map(allRequests.map((e) => [e.id, e]));
+  const pageDocs = new Set(snapshot.pages.map((p) => stripHash(p.url)));
+  const redirectOrigin = (id: string | undefined): RequestEvent | undefined => {
+    const e = id ? byId.get(id) : undefined;
+    return e ? redirectOriginOf(e, byId, allRequests) : undefined;
+  };
   for (const f of parties.values()) {
     const first = [...f.requests].sort((a, b) => a.t - b.t)[0];
-    const { source, loadedBy } = f.cnameOf ? { source: 'first-party-proxy' as PartySource, loadedBy: [] } : first ? explainSource(first, f, byUrl, docUrls, sandboxed) : { source: 'unknown' as PartySource, loadedBy: [] };
+    const { source, loadedBy } = f.cnameOf
+      ? { source: 'first-party-proxy' as PartySource, loadedBy: [] }
+      : first
+        ? explainSource(first, f, { byUrl, docUrls, pageDocs, sandboxed, platform, siteDomain, redirectOrigin })
+        : { source: 'unknown' as PartySource, loadedBy: [] };
     f.source = source;
     f.loadedBy = loadedBy;
     f.trackerSignals = trackerSignals(f, firstPartyCookieNames);
@@ -421,41 +465,108 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
   };
 }
 
-function explainSource(
-  first: PartyRequest,
-  f: PartyFacts,
-  byUrl: Map<string, RequestEvent>,
-  docUrls: Set<string>,
-  sandboxed: Set<string>,
-): { source: PartySource; loadedBy: string[] } {
+/**
+ * The request a redirect hop continues. The browser reports a hop (c.gif → a
+ * partner's cookie sync → back) with no initiator of its own, which is also
+ * what an element in the HTML can look like — so a hop must be followed back,
+ * never read as markup. Exact when the collector recorded `redirectedFrom`;
+ * on older records, only a 3xx response on the same page and frame shortly
+ * before whose host the hop's own URL names (`…&RedC=c.example.test`).
+ */
+export function redirectOriginOf(e: RequestEvent, byId: Map<string, RequestEvent>, all: RequestEvent[]): RequestEvent | undefined {
+  if (e.redirectedFrom) return byId.get(e.redirectedFrom);
+  let query: string;
+  try {
+    const u = new URL(e.url);
+    query = decodeURIComponent(u.search + u.hash).toLowerCase();
+  } catch {
+    return undefined;
+  }
+  if (!query) return undefined;
+  let best: RequestEvent | undefined;
+  for (const c of all) {
+    if (c === e || c.t > e.t || e.t - c.t > 10_000 || c.status === undefined || c.status < 300 || c.status > 399) continue;
+    if (c.pageIndex !== e.pageIndex || (c.frameUrl ?? '') !== (e.frameUrl ?? '')) continue;
+    const host = hostOf(c.url);
+    if (!host || host === hostOf(e.url) || !query.includes(host.toLowerCase())) continue;
+    if (!best || c.t >= best.t) best = c;
+  }
+  return best;
+}
+
+interface SourceContext {
+  byUrl: Map<string, RequestEvent>;
+  /** Every document URL (pages and frames), hash stripped. */
+  docUrls: Set<string>;
+  /** Top-level page URLs only, hash stripped. */
+  pageDocs: Set<string>;
+  sandboxed: Set<string>;
+  platform?: { name: PlatformName };
+  siteDomain: string;
+  redirectOrigin: (id: string | undefined) => RequestEvent | undefined;
+}
+
+// Why a party was not held back, from its first request's initiator. A
+// markup-leak is claimed only for what the site's OWN document's parser
+// fetched (an <img>/<iframe>/<link> in the HTML): a request with no initiator
+// at all is a redirect hop (followed back to the request that started it) or
+// something the scan could not trace (unknown) — never a leak by default. A
+// request a third-party frame's document made belongs to that frame: it is
+// 'injected' with the frame as its loader, so it inherits the frame's path.
+function explainSource(first: PartyRequest, f: PartyFacts, ctx: SourceContext): { source: PartySource; loadedBy: string[] } {
+  const { byUrl, docUrls, pageDocs, sandboxed, platform, siteDomain } = ctx;
   if (first.origin === 'worker' || first.origin === 'service-worker') return { source: 'platform', loadedBy: first.chain.slice(0, 3) };
   const ev = byUrl.get(first.url);
   if (ev?.frameUrl && sandboxed.has(ev.frameUrl)) return { source: 'platform', loadedBy: [ev.frameUrl] };
   const web = (c: string[]): string[] => c.filter((u) => /^https?:\/\//i.test(u));
+  const stripQuery = (u: string): string => u.replace(/[?#].*$/, '');
   let chain = web(first.chain);
-  let req: { chain: string[]; initiatorType: string; resourceType: string; element?: string } = first;
-  for (let depth = 0; depth < 4; depth++) {
+  let req: { id?: string; chain: string[]; initiatorType: string; resourceType: string; element?: string } = { ...first, id: first.id };
+  const via: string[] = []; // redirect origins passed, nearest first
+  for (let depth = 0; depth < 6; depth++) {
     if (!chain.length) {
-      const leak = ['image', 'iframe', 'document', 'ping', 'media'].includes(req.resourceType) || req.element === 'img' || req.element === 'iframe' || req.initiatorType === 'preload';
-      return { source: req.initiatorType === 'parser' || req.initiatorType === 'other' || req.initiatorType === 'preload' ? (leak && req.resourceType !== 'script' ? 'markup-leak' : 'markup') : 'unknown', loadedBy: [] };
+      if (req.initiatorType === 'parser') {
+        const leak = ['image', 'iframe', 'document', 'ping', 'media'].includes(req.resourceType) || req.element === 'img' || req.element === 'iframe';
+        return { source: leak && req.resourceType !== 'script' ? 'markup-leak' : 'markup', loadedBy: via };
+      }
+      const origin = ctx.redirectOrigin(req.id);
+      if (origin) {
+        via.push(stripQuery(origin.url));
+        chain = web(origin.initiator.chain);
+        req = { id: origin.id, chain, initiatorType: origin.initiator.type, resourceType: origin.resourceType, element: origin.initiator.element };
+        continue;
+      }
+      // A <link rel=preload> or a script-less fetch with no document named: in the
+      // page, perhaps, but not located — not a leak claim.
+      if (req.initiatorType === 'preload') return { source: 'markup', loadedBy: via };
+      return { source: 'unknown', loadedBy: via };
     }
     const outside = chain.find((u) => registrableDomain(hostOf(u)) !== f.domain);
     if (outside) {
-      if (docUrls.has(stripHash(outside))) {
+      const doc = stripHash(outside);
+      if (docUrls.has(doc)) {
+        // A document that is not the site's own page: a third-party frame. What
+        // its parser fetched is the frame's doing — the frame is the loader.
+        if (!pageDocs.has(doc) && registrableDomain(hostOf(outside)) !== siteDomain) return { source: 'injected', loadedBy: [...via, outside].slice(0, 4) };
         // An inline script or a tag written in the page itself.
         const leak = req.initiatorType === 'parser' && req.resourceType !== 'script' && req.resourceType !== 'fetch' && req.resourceType !== 'xhr';
-        return { source: leak ? 'markup-leak' : 'markup', loadedBy: [outside] };
+        return { source: leak ? 'markup-leak' : 'markup', loadedBy: [...via, outside].slice(0, 4) };
       }
-      return { source: 'injected', loadedBy: chain.slice(chain.indexOf(outside)).filter((u, i, a) => a.indexOf(u) === i).slice(0, 4) };
+      const injectors = chain.slice(chain.indexOf(outside)).filter((u, i, a) => a.indexOf(u) === i);
+      // Injected by the platform's own loader (Shopify, Wix, Squarespace, a WordPress
+      // plugin): the fix is the platform's consent bridge, not a rewrite of the tag.
+      const platformLoader = injectors.find((u) => platformLoaderOf(u, platform));
+      if (platformLoader) return { source: 'platform', loadedBy: [platformLoader, ...injectors.filter((u) => u !== platformLoader)].slice(0, 4) };
+      return { source: 'injected', loadedBy: [...via, ...injectors].slice(0, 4) };
     }
     // Every frame is the party's own script: find what loaded that script.
     const own = chain[chain.length - 1];
     const loader = byUrl.get(own);
-    if (!loader) return { source: 'unknown', loadedBy: [] };
+    if (!loader) return { source: 'unknown', loadedBy: via };
     chain = web(loader.initiator.chain);
-    req = { chain, initiatorType: loader.initiator.type, resourceType: loader.resourceType, element: loader.initiator.element };
+    req = { id: loader.id, chain, initiatorType: loader.initiator.type, resourceType: loader.resourceType, element: loader.initiator.element };
   }
-  return { source: 'unknown', loadedBy: [] };
+  return { source: 'unknown', loadedBy: via };
 }
 
 function trackerSignals(f: PartyFacts, firstPartyCookies: Set<string>): string[] {
@@ -501,4 +612,15 @@ export function analyzeArtifacts(artifacts: Artifact[], kb: KnowledgeBase = DEFA
 /** Party categories that mean "needs prior consent" for this party. */
 export function partyCategories(f: PartyFacts): PartyCategory[] {
   return f.categories.filter((c): c is PartyCategory => c !== 'unknown');
+}
+
+/** Does a document.cookie write with these attributes delete the cookie? `nowSec`: when it was written (epoch seconds). */
+export function isCookieDeletion(attributes: string | undefined, nowSec: number): boolean {
+  if (!attributes) return false;
+  const maxAge = /(?:^|;)\s*max-age\s*=\s*(-?\d+)/i.exec(attributes)?.[1];
+  if (maxAge !== undefined) return Number(maxAge) <= 0;
+  const expires = /(?:^|;)\s*expires\s*=\s*([^;]+)/i.exec(attributes)?.[1];
+  if (!expires) return false;
+  const at = Date.parse(expires.trim());
+  return Number.isFinite(at) && at / 1000 <= nowSec + 1;
 }

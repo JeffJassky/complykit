@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Gated scripts fixture</title></head>
+<body>
+<h1>Gated scripts fixture</h1>
+<!-- Held back until consent: type is not executable, so the browser skips them. -->
+<script type="text/plain" data-ck-category="analytics" src="/vendor/analytics.js"></script>
+<script type="text/plain" data-ck-category="marketing">window.__gatedInlineRan = true;</script>
+<!-- Fake vendor API global, as a consent-aware vendor would expose. -->
+<script src="/vendor/fake-vendor.js"></script>
+<!-- Fake GTM container (loaded unconditionally, as the real one would be). -->
+<script src="/gtm/gtm.js?id=GTM-XXXX01"></script>
+</body>
+</html>

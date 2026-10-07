@@ -138,22 +138,23 @@ describe('human consent report', () => {
   it('never treats a failed choice with zero findings as a successful privacy check', () => {
     const model = { ...m, grid: { de: { reject: { status: 'tested' as const, choice: 'reject (failed)', counts: { violation: 0, 'needs-review': 0, exposure: 0, practice: 0 } } } } };
     const html = renderConsentHtml(model);
-    expect(html).toContain('attempted visitor choice did not succeed');
-    expect(html).toContain('not verified passes');
+    expect(html).toContain('reject (failed)');
+    expect(html).toContain('Retest with a working control or manual interaction');
     expect(html).toContain('Choices that did not succeed');
   });
 
-  it('keeps provisional classification separate from tool problems and cookie-specific evidence', () => {
+  it('keeps known seed categories separate from tool problems and cookie-specific evidence', () => {
     const inventory = [{ partyId: 'x', label: 'X', domain: 'x.example', hosts: ['x.example'], recognized: true, kbStatus: 'proposed' as const, categories: ['analytics'], behavesLikeTracker: true, trackerSignals: [], sends: ['page-address'], stores: [{ name: '_test', kind: 'cookie', lifetimeDays: 400 }], sources: ['injected' as const], loadedBy: [], samples: [], seenIn: [] }];
     const model = { ...m, inventory, findings: [m.findings.find((f) => f.kind === 'violation')!] };
     const html = renderConsentHtml(model);
-    expect(html).toContain('data-tool-state="problem classify"');
-    expect(html).toContain('Needs classification or verification');
-    expect(html).not.toContain('Cookie problem observed</span>');
+    expect(html).toContain('data-tool-state="problem"');
+    expect(html).toContain('No cookie-specific problem recorded');
+    expect(html).toContain('known category from the built-in library');
+    expect(html).not.toContain('Cookie problem observed');
     expect(html).toContain('Tool-level tracking findings do not automatically');
     const f = model.findings[0];
     const exact = { ...model, findings: [{ ...f, evidence: [{ kind: 'cookie' as const, name: '_test', domain: '.x.example', phase: 'pre-consent' as const, flags: { secure: true, httpOnly: false } }] }] };
-    expect(renderConsentHtml(exact)).toContain('Cookie problem observed</span>');
+    expect(renderConsentHtml(exact)).toContain('Cookie problem observed');
   });
 
   it('escapes untrusted descriptions and blocks executable evidence links', () => {
@@ -163,5 +164,17 @@ describe('human consent report', () => {
     expect(html).not.toContain('href="javascript:');
     expect(html).toContain('&lt;img src=x');
   });
-});
 
+  it('scopes every green count and renders the blind-spot box once', () => {
+    const html = renderConsentHtml(m);
+    const md = renderConsentMarkdown(m);
+    for (const out of [html, md]) {
+      expect(containsBannedVocabulary(out)).toBe(false);
+      expect(out.toLowerCase()).not.toContain('compliant');
+      expect(out).toMatch(/\d+ checks? working as expected on .*, \d+ locations?, logged out, \d+ runs? each/);
+      for (const spot of ['Pages not visited', 'Server-side', 'Vendor-side', 'Other browsers']) expect(out).toContain(spot);
+    }
+    expect(html.match(/id="blind-spots"/g)).toHaveLength(1);
+    expect(html.indexOf('id="blind-spots"')).toBeLessThan(html.indexOf('id="behavior-matrix"'));
+  });
+});

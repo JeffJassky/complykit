@@ -27,8 +27,10 @@ export {
   getEngineMapping,
 } from './mappings/index.js';
 export { verifyRegistry, unmappedEngineRules } from './verify.js';
+export { classifyPlatform, platformLoaderOf, consentPluginPathPattern, type PlatformName, type PlatformSignalsInput } from './platform.js';
 export { classifyCookie, requiresConsent, type CookieCategory, type CookieClassification } from './cookies.js';
 export { jurisdictionsFor, requirementScopeFor, normalizeRegion, isEuEea, type MeasuredPlace } from './jurisdictions.js';
+export { regimeFor, parseRegimeLocation, isOptOutSignalState } from './regime.js';
 export {
   KB_VERSION,
   KB_ENTRIES,
@@ -37,6 +39,10 @@ export {
   lookupEntry,
   lookupStore,
   entryStatus,
+  matchVendorSignatures,
+  hostsInText,
+  entriesForText,
+  inlineRegExp,
   registrableDomain,
   hostOf,
   hostMatches,
@@ -49,6 +55,8 @@ export {
   type KnowledgeEntryInput,
   type PartyCategory,
   type ConsentDecoder,
+  type ControlApi,
+  type TagControl,
   type SiteOverride,
 } from './kb/index.js';
 

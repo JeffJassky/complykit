@@ -25,7 +25,10 @@ import { normalizeEngineArtifacts } from './engines.js';
 import { collectStatic } from './collect/static/index.js';
 import { buildVueScopeMap, enrichFindingsWithVueSource } from './enrich/vue-scope.js';
 import { supersedeByMeasurement } from './enrich/supersede.js';
+import { applyWorkspace, type WorkspaceSnapshot } from './site-workspace.js';
+import { reconcileCompatibility } from './consent-compatibility.js';
 import type { RouteDiscoveryOptions } from './collect/browser/routes.js';
+import { localCopyRecord, type LocalCopy } from './collect/browser/evaluation/local-copy.js';
 
 // The scan pipeline: collect artifacts, normalize engine output, evaluate our
 // pure rules, and resolve everything into stored Findings. Kept OUT of the root
@@ -242,9 +245,23 @@ export interface ConsentScanOptions {
   quick?: boolean;
   journey?: import('./collect/browser/evaluation/journey.js').JourneyOptions;
   knowledgeBase?: KnowledgeBase;
+  /** The site's workspace (C3): its classifications apply to this run as KB overrides; done tasks are recorded on the evaluation. */
+  workspace?: WorkspaceSnapshot;
   rawEvidence?: boolean;
   har?: boolean;
   concurrency?: number;
+  /** Visits per scenario (default 1). Runs after the first repeat the scenario under network + CPU throttling. */
+  runs?: number;
+  /** Per-scenario hard budget, ms (default 300000). */
+  scenarioTimeoutMs?: number;
+  /** Throttled repeat runs get scenarioTimeoutMs times this (default 3). */
+  throttledBudgetFactor?: number;
+  /**
+   * Local-copy mode (D11): apply an owner's change set to the site inside the
+   * scanner's own browser (src/local-copy.ts). The run is then evidence about
+   * the rewritten copy, not the live site, and the record says so.
+   */
+  localCopy?: LocalCopy;
   /** Tests only: stub geolocation + map fake hosts. */
   geoSources?: import('./collect/browser/evaluation/location.js').GeoSource[];
   launchArgs?: string[];
@@ -276,7 +293,7 @@ export async function runConsentScan(opts: ConsentScanOptions): Promise<ConsentS
       "the consent evaluation needs the 'playwright' peer. Install it with `npm i -D playwright` and `npx playwright install chromium`.",
     );
   }
-  const kb = opts.knowledgeBase ?? DEFAULT_KB;
+  const baseKb = opts.knowledgeBase ?? DEFAULT_KB;
   const journey = opts.quick ? { dwellMs: 4000, pageDwellMs: 2000, scrollSteps: 2, maxPages: 1, ...opts.journey } : opts.journey;
   const collection = await mod.collectConsentEvaluation({
     property: opts.property,
@@ -289,6 +306,10 @@ export async function runConsentScan(opts: ConsentScanOptions): Promise<ConsentS
     rawEvidence: opts.rawEvidence,
     har: opts.har,
     concurrency: opts.concurrency,
+    runs: opts.runs,
+    scenarioTimeoutMs: opts.scenarioTimeoutMs,
+    throttledBudgetFactor: opts.throttledBudgetFactor,
+    localCopy: opts.localCopy,
     geoSources: opts.geoSources,
     launchArgs: opts.launchArgs,
     bannerWaitMs: opts.bannerWaitMs,
@@ -301,6 +322,10 @@ export async function runConsentScan(opts: ConsentScanOptions): Promise<ConsentS
     },
   });
 
+  // The site workspace is applied after collection: its keys are computed from
+  // what this run observed (src/site-workspace.ts), so the KB below is per run.
+  const site = opts.workspace ? applyWorkspace(collection.timelines, baseKb, opts.workspace) : undefined;
+  const kb = site?.kb ?? baseKb;
   const raws = evaluate(collection.artifacts, ALL_RULES, { property: opts.property, tags: opts.tags ?? [], knowledgeBase: kb });
   const findings = resolveRuleFindings(raws, opts.runId, opts.packageVersion);
   const evaluation = tracking.buildTrackingEvaluation({
@@ -313,9 +338,19 @@ export async function runConsentScan(opts: ConsentScanOptions): Promise<ConsentS
     locations: collection.locations,
     timelines: collection.timelines,
     notTested: collection.notTested,
+    containers: collection.containers,
     redacted: opts.rawEvidence !== true,
     kb,
   });
+  if (site) evaluation.siteWorkspace = site.record;
+  if (opts.localCopy) evaluation.localCopy = localCopyRecord(opts.localCopy);
+  // complykit's own tool, when installed (D10): the deployed config against
+  // what happened, and whether it is the workspace's latest. Its denied-state
+  // misfires feed the compatibility verdict below as behavior mismatches.
+  evaluation.consentToolProof = tracking.evaluateConsentToolProof(evaluation, { workspaceConfig: opts.workspace?.config });
+  // Re-decide compatibility against the report's own matrix, now that the
+  // workspace is on the record, so the change list and the grid agree (B2).
+  evaluation.compatibility = reconcileCompatibility(evaluation, { kb, extraBehavior: tracking.configBehaviorCells(evaluation.consentToolProof) });
   const tested = collection.locations.flatMap((l) => l.scenarios.filter((s) => s.status === 'tested'));
   const matrix: MatrixCell[] = [
     {

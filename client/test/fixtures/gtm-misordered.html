@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>GTM bridge: GTM snippet above the consent tool</title>
+<!-- Google Tag Manager (the standard snippet, pointed at the fake container) -->
+<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s);j.async=true;j.src='/gtm-recording.js?id='+i;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','GTM-XXXX01');</script>
+<script>
+// Stand-in for the state store (D3): isGranted + subscribe.
+(function () {
+  var state = {}, subs = [];
+  window.__store = {
+    isGranted: function (id) { return id === "necessary" || state[id] === true; },
+    subscribe: function (fn) { subs.push(fn); return function () { subs = subs.filter(function (f) { return f !== fn; }); }; },
+    set: function (next) { state = next; subs.forEach(function (f) { f(); }); }
+  };
+})();
+</script>
+<script src="/complykit-consent.js"></script>
+<script>window.__bridge = ComplyKit.installGtmBridge(window.__ckConfig, window.__ckRegime, window.__store);</script>
+</head>
+<body><h1>GTM bridge, wrong order</h1></body>
+</html>

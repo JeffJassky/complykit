@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Gate CSP nonce fixture</title>
+<!-- Served with: Content-Security-Policy: script-src 'nonce-ck-test-nonce' -->
+<script nonce="ck-test-nonce" src="/test-store.js"></script>
+<script nonce="ck-test-nonce" src="/complykit-consent.js"></script>
+</head>
+<body>
+<script type="text/plain" data-category="analytics" nonce="ck-test-nonce" data-src="/slow/order.js?n=nonced&ms=5"></script>
+<script type="text/plain" data-category="analytics" nonce="ck-test-nonce" id="nonced-inline">window.__noncedInlineRan = true;</script>
+<!-- negative control: no nonce, so the released twin is blocked by the CSP -->
+<script type="text/plain" data-category="analytics" id="unnonced">window.__unnoncedRan = true;</script>
+</body>
+</html>

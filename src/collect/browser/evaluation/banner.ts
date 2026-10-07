@@ -1,4 +1,5 @@
 import type { Page } from 'playwright';
+import { CK, complykitPartial, complykitRunning } from './complykit.js';
 
 // Everything banner-shaped that autoconsent doesn't do: the heuristic fallback,
 // dismiss (close without choosing), partial consent, reopening settings to
@@ -28,6 +29,11 @@ async function readConsentStateUnbounded(page: Page): Promise<Record<string, unk
         }
       };
       safe('gpc', () => (navigator as unknown as { globalPrivacyControl?: boolean }).globalPrivacyControl);
+      // complykit's own tool (D10): its state, minus the visitor id and timestamp.
+      safe('complykit', () => {
+        const s = typeof w.ComplyKit?.get === 'function' ? w.ComplyKit.get() : null;
+        return s ? { status: s.status, regime: s.regime, gpc: Boolean(s.gpc), categories: s.categories } : undefined;
+      });
       safe('googleConsent', () => {
         // gtag keeps these as booleans internally; normalize to Consent Mode's words.
         const e = w.google_tag_data?.ics?.entries;
@@ -139,6 +145,13 @@ export function readoutConfirms(choice: 'accept' | 'reject', readout: Record<str
   // only when no consent tool is readable (it is often wired up separately,
   // and a mismatch is reported by consentModeMismatch, not treated as a failed click).
   const tool: boolean[] = [];
+  // complykit: a choice exists only when status is 'chosen'; accept = some
+  // non-necessary category granted, reject = none.
+  const ck = readout.complykit as { status?: string; categories?: Record<string, boolean> } | undefined;
+  if (ck?.categories && typeof ck.status === 'string') {
+    const optional = Object.entries(ck.categories).filter(([id]) => id !== 'necessary');
+    tool.push(ck.status === 'chosen' && (choice === 'accept' ? optional.some(([, on]) => on) : optional.every(([, on]) => !on)));
+  }
   const shop = (readout.shopify as { currentVisitorConsent?: { marketing?: string } } | undefined)?.currentVisitorConsent;
   if (shop && typeof shop.marketing === 'string') tool.push(choice === 'accept' ? shop.marketing === 'yes' : shop.marketing === 'no');
   if (typeof readout.oneTrustActiveGroups === 'string') {
@@ -194,6 +207,8 @@ export function readoutContradicts(choice: 'accept' | 'reject', readout: Record<
 // control. Known consent-tool selectors are tried first.
 
 const KNOWN_BANNERS: Array<{ name: string; banner: string; accept?: string; reject?: string; manage?: string; close?: string }> = [
+  // Our own tool first (D10): exact hooks from client/src/ui/index.ts; it has no close control by design.
+  { name: 'complykit', banner: CK.banner, accept: '.ck-btn[data-ck-action="accept"]', reject: '.ck-btn[data-ck-action="reject"]', manage: '.ck-btn[data-ck-action="manage"]' },
   { name: 'OneTrust', banner: '#onetrust-banner-sdk', accept: '#onetrust-accept-btn-handler', reject: '#onetrust-reject-all-handler', manage: '#onetrust-pc-btn-handler', close: '.onetrust-close-btn-handler' },
   { name: 'Cookiebot', banner: '#CybotCookiebotDialog', accept: '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll,#CybotCookiebotDialogBodyButtonAccept', reject: '#CybotCookiebotDialogBodyButtonDecline', manage: '#CybotCookiebotDialogBodyButtonDetails' },
   { name: 'Didomi', banner: '#didomi-notice', accept: '#didomi-notice-agree-button', reject: '#didomi-notice-disagree-button', manage: '#didomi-notice-learn-more-button', close: '.didomi-popup-close' },
@@ -339,6 +354,9 @@ const ANALYTICS_LABEL = /analytic|statistic|performance|measurement|mesure|stati
 const SAVE_LABEL = /save|confirm|allow selection|accept selected|submit|apply|speichern|enregistrer/i;
 
 export async function partialConsent(page: Page): Promise<{ ok: boolean; method: string }> {
+  // complykit (D10): exact toggles and buttons, no text matching — also when its
+  // banner is not showing (the tool is running): never fall through to heuristics.
+  if ((await page.$(CK.banner).catch(() => null)) || (await complykitRunning(page))) return complykitPartial(page);
   // OneTrust: open preferences, toggle Performance (C0002), confirm.
   if (await page.$('#onetrust-pc-btn-handler').catch(() => null)) {
     await page.click('#onetrust-pc-btn-handler', { timeout: 4000 }).catch(() => {});

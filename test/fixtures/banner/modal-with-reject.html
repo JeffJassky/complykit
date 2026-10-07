@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Banner fixture: blocking modal with an equal reject (pass)</title>
+<style>
+  html, body { overflow: hidden; }
+  body { margin: 0; font: 16px/1.4 sans-serif; background: #fff; color: #111; }
+  main { padding: 2rem; min-height: 1600px; }
+  .veil { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; }
+  .consent-box { background: #fff; padding: 1.5rem; max-width: 30rem; }
+  .consent-box button { font: inherit; padding: .5rem 1rem; min-width: 8rem; background: #eee; color: #111; border: 1px solid #111; }
+</style></head>
+<body>
+<main><h1>Example magazine</h1><p>Article text.</p></main>
+<div class="veil" id="veil"><div class="consent-box" role="dialog">
+  <p>We use cookies for analytics and advertising. You can withdraw consent at any time. <a href="/cookies">Cookie policy</a></p>
+  <button id="no">Reject all</button> <button id="yes">Accept all</button>
+</div></div>
+<script>
+  for (const id of ['no', 'yes']) document.getElementById(id).addEventListener('click', () => {
+    document.getElementById('veil').remove();
+    document.documentElement.style.overflow = 'auto';
+    document.body.style.overflow = 'auto';
+  });
+</script>
+</body></html>

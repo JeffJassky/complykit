@@ -18,3 +18,7 @@ service/node_modules
 service/dist
 service/.data
 service/test
+
+client/node_modules
+client/dist
+client/test

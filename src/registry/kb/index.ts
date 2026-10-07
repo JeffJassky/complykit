@@ -9,9 +9,11 @@ import { hostMatches } from './domains.js';
 
 export * from './schema.js';
 export * from './domains.js';
+export * from './signatures.js';
+import { entriesMatchingInline } from './signatures.js';
 
 /** Bump on any entry change; stamped into every evaluation. */
-export const KB_VERSION = '0.1.1';
+export const KB_VERSION = '0.1.5';
 
 export const KB_ENTRIES: KnowledgeEntry[] = SEED_ENTRIES.map((e) => KnowledgeEntry.parse(e));
 
@@ -44,6 +46,11 @@ export function buildKnowledgeBase(opts: { extra?: KnowledgeEntryInput[]; overri
 }
 
 export const DEFAULT_KB: KnowledgeBase = { version: KB_VERSION, entries: KB_ENTRIES };
+
+/** Every KB entry id whose install signature (`match.inline`) appears in `text`. */
+export function matchVendorSignatures(text: string, kb: KnowledgeBase = DEFAULT_KB): string[] {
+  return entriesMatchingInline(kb, text).map((e) => e.id);
+}
 
 const pathRegexCache = new Map<string, RegExp>();
 function pathRe(src: string): RegExp {

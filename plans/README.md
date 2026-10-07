@@ -25,6 +25,8 @@ implementations to mine. It's greenfield, so planning starts from research.
 |---|---|
 | [research-consent-law.md](research-consent-law.md) | What US privacy statutes, US wiretap litigation, and EU/UK law actually require of pixels and banners; how regulators and plaintiffs find violations |
 | [consent-design.md](consent-design.md) | **Approved plan.** How an evaluation works and what the report shows; knowledge base + AI/human research workflow; in-house consent tool; guard; milestones M6–M13 |
+| [client-consent-design.md](client-consent-design.md) | **Plan (2026-10-06).** The client-side consent tool and the implementation checks that feed it: how trackers get onto a page (seven ways), what a scan can and cannot establish, the compatibility finding, what two demand letters require; milestones M14–M18 |
+| [client-consent-implementation.md](client-consent-implementation.md) | **Implementation plan (2026-10-06).** 41 tickets in 7 phases with model assignment (Sonnet / Opus / Fable), dependency waves and the critical path; filed as GitHub issues under one epic |
 
 ## Findings that shape the build
 

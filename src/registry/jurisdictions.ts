@@ -1,4 +1,5 @@
 import type { Requirement } from './schema.js';
+import { EU_EEA_COUNTRIES } from './regime.js';
 
 // Visitor location → jurisdiction codes, and requirement scoping by those codes
 // (plans/consent-design.md §8). Pure. A location is what the scan MEASURED
@@ -8,11 +9,8 @@ import type { Requirement } from './schema.js';
 // 'uk'; 'us' plus 'us-<state>' when the region is verified; otherwise the
 // lower-cased ISO country. 'any' on a requirement matches every location.
 
-// EU-27 + EEA (IS, LI, NO).
-const EU_EEA = new Set([
-  'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE', 'IT', 'LV',
-  'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE', 'IS', 'LI', 'NO',
-]);
+// EU-27 + EEA (IS, LI, NO) — the list lives in regime.ts, shared with the client.
+const EU_EEA = new Set(EU_EEA_COUNTRIES);
 
 export function isEuEea(country: string): boolean {
   return EU_EEA.has(country.toUpperCase());

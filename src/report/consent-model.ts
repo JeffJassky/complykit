@@ -1,4 +1,8 @@
+import { buildBehaviorMatrix } from './consent-matrix.js';
+import type { BehaviorMatrix } from '../../types/index.js';
 import { consentResearch, type ResearchWorkflow } from './research.js';
+import { buildCompatibilityReport, type CompatibilityReport } from './consent-compatibility.js';
+import { buildConsentToolProofReport, type ConsentToolProofReport } from './consent-tool-proof.js';
 import type { Finding, TrackingEvaluation, ScenarioId, Evidence } from '../record/index.js';
 import { getRequirement, getInstrument, type Requirement } from '../registry/index.js';
 
@@ -48,6 +52,8 @@ export interface GridCell {
   counts: Record<FindingKind, number>;
   banner?: string;
   choice?: string;
+  /** Visits that completed (1 = a single run; 2 = plus the throttled pass). Absent = not recorded. */
+  runs?: number;
 }
 
 export interface ReportFinding {
@@ -96,7 +102,19 @@ export interface ConsentReportModel {
   notTested: TrackingEvaluation['notTested'];
   researchQueue: TrackingEvaluation['researchQueue'];
   researchWorkflow?: ResearchWorkflow;
+  behaviorObservations?: TrackingEvaluation['behaviorObservations'];
+  behaviorMatrix?: BehaviorMatrix;
   evidenceIndex: Array<{ location: string; scenario: ScenarioId; har?: string; timeline?: string; screenshots: string[] }>;
+  /** The site workspace applied to this run (classifications used, tasks marked done). */
+  siteWorkspace?: TrackingEvaluation['siteWorkspace'];
+  /** What changed since the previous run of this site (set by the caller: consent-diff.ts). */
+  since?: import('../../types/index.js').ConsentRunDiff;
+  /** Per-tool compatibility rows, the owner's change list and the "outside your consent tool's reach" line (B2). Absent = the record has no verdicts. */
+  compatibility?: CompatibilityReport;
+  /** complykit's own tool, when installed: deployed config vs what ran (D10). Absent = the record predates the proof step. */
+  consentToolProof?: ConsentToolProofReport;
+  /** The guided checklist from the latest generated config (set by the caller: the run's generated output or the site workspace's config.value.tasks). Absent = no config generated yet. */
+  remediation?: import('./consent-remediation.js').RemediationSection;
 }
 
 const SHORT_INSTRUMENT: Record<string, string> = {
@@ -159,6 +177,7 @@ export function buildConsentReportModel(evaluation: TrackingEvaluation, findings
           counts: emptyCounts(),
           banner: s.banner?.found ? s.banner.cmp ?? 'banner' : 'no banner',
           choice: s.choice ? `${s.choice.kind}${s.choice.ok ? '' : ' (failed)'}` : undefined,
+          runs: s.runs,
         };
       }
     }
@@ -239,10 +258,20 @@ export function buildConsentReportModel(evaluation: TrackingEvaluation, findings
     findings: out,
     totals,
     inventory: evaluation.inventory,
+    behaviorObservations: evaluation.behaviorObservations,
     notTested: evaluation.notTested,
     researchQueue: evaluation.researchQueue,
     evidenceIndex,
+    ...(evaluation.siteWorkspace ? { siteWorkspace: evaluation.siteWorkspace } : {}),
+    ...(evaluation.localCopy ? { localCopy: evaluation.localCopy } : {}),
   };
+  model.behaviorMatrix = buildBehaviorMatrix(model);
   model.researchWorkflow = consentResearch(model);
+  if (evaluation.compatibility) {
+    const runs = Math.max(1, ...Object.values(grid).flatMap((row) => Object.values(row).map((c) => c?.runs ?? 1)));
+    model.compatibility = buildCompatibilityReport(evaluation.compatibility, { inventory: evaluation.inventory, markup: evaluation.markup, locations: model.locations, runs, matrix: model.behaviorMatrix });
+  }
+  const proof = buildConsentToolProofReport(evaluation.consentToolProof);
+  if (proof) model.consentToolProof = proof;
   return model;
 }

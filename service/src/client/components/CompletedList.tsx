@@ -150,6 +150,13 @@ function ReportRow({ job, now, onDeleted }: { job: JobSummary; now: number; onDe
               <span className="visually-hidden"> for {job.host} (opens in a new tab)</span>
             </a>
           ) : null}
+          {consent?.changeListUrl ? (
+            <a className="btn btn-secondary btn-sm" href={consent.changeListUrl} download="change-list.md">
+              <Icon name="download" size={14} />
+              Download change list
+              <span className="visually-hidden"> for {job.host}</span>
+            </a>
+          ) : null}
           {a11y ? (
             <a className={`btn ${consent ? 'btn-secondary' : 'btn-primary'} btn-sm`} href={a11y.reportUrl} target="_blank" rel="noopener">
               Open accessibility report
