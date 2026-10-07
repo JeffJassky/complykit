@@ -19,7 +19,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const ROOTS = ['src', 'test', 'types', 'docs', 'examples', 'scripts', 'skills', '.github', 'client'];
+const ROOTS = ['src', 'test', 'types', 'docs', 'examples', 'scripts', 'skills', '.github', 'client', 'schema'];
 
 // Genuinely-not-source things that live under those roots.
 const ALLOWED = [
@@ -27,6 +27,7 @@ const ALLOWED = [
   /(^|\/)node_modules(\/|$)/,
   /^docs\/\.vitepress\/(dist|cache)(\/|$)/,
   /^client\/dist(\/|$)/, // build output, gitignored
+  /^client\/test\/__screenshots__(\/|$)/, // test output, regenerated every run
 ];
 
 const tracked = new Set(
