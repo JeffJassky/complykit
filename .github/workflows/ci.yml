@@ -20,6 +20,10 @@ jobs:
           cache: npm
       - run: npm ci
 
+      # Root tests and typecheck import the service (shared workspace, report
+      # serving, the remediation end-to-end test), so its deps must be present.
+      - run: npm --prefix service ci
+
       # FIRST. Every later step passes against the working tree, which is
       # exactly the thing that lies when a global gitignore ate a file.
       # See standards/traps.md #1.
@@ -50,6 +54,8 @@ jobs:
       # Root tests that load the consent tool (client-banner-a11y) read
       # client/dist; without it they self-skip, which hides a regression.
       - run: npm --prefix client ci && npm --prefix client run build
+      # The remediation end-to-end test drives the built service.
+      - run: npm --prefix service run build
 
       - run: npm test
 
@@ -136,5 +142,23 @@ jobs:
       - run: npm ci
       # --no-save keeps the lockfile authoritative for everything else.
       - run: npm install @anthropic-ai/sdk@${{ matrix.anthropic }} --no-save
+      - run: npm --prefix service ci
       - run: npm run build
       - run: npm test
+
+  # The service (service/): its own typecheck, tests and build.
+  service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: service/package-lock.json
+      - run: npm ci
+      - run: npm --prefix service ci
+      - run: npm run build
+      - run: npm --prefix service run typecheck
+      - run: npm --prefix service test
+      - run: npm --prefix service run build
