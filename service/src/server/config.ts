@@ -49,6 +49,8 @@ export interface ServiceConfig {
   killGraceMs: number;
   /** events.ndjson poll interval. */
   pollMs: number;
+  /** Make the site's to-do list (config + checklist) when a consent scan finishes, with no button (AUTO_CHECKLIST=0 turns it off). */
+  autoChecklist: boolean;
 }
 
 /** The service directory (holds package.json). Same depth from src/server and
@@ -132,5 +134,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     jobTimeoutMs: 45 * 60_000,
     killGraceMs: 10_000,
     pollMs: 500,
+    autoChecklist: env.AUTO_CHECKLIST !== '0',
   };
 }

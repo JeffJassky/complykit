@@ -268,6 +268,20 @@ export interface ConsentScanOptions {
   bannerWaitMs?: number;
   trace?: (line: string) => void;
   onEvent?: (e: import('./collect/browser/evaluation/index.js').EvaluationEvent) => void;
+  /**
+   * After every finished visit: the same analysis as the final result, over the
+   * visits finished so far (no DNS records, no containers yet). For live views —
+   * the CLI writes the owner report from it. A throw here never stops the scan.
+   */
+  onPartial?: (partial: ConsentScanPartial) => void;
+}
+
+/** The analysis of the visits finished so far (onPartial). */
+export interface ConsentScanPartial {
+  findings: Finding[];
+  evaluation: TrackingEvaluation;
+  /** The timelines it was built from (pages visited, banner seen). */
+  timelines: import('./record/index.js').Timeline[];
 }
 
 export interface ConsentScanResult {
@@ -315,6 +329,16 @@ export async function runConsentScan(opts: ConsentScanOptions): Promise<ConsentS
     bannerWaitMs: opts.bannerWaitMs,
     trace: opts.trace,
     onEvent: opts.onEvent,
+    onProgress: opts.onPartial
+      ? (partial) => {
+          try {
+            const r = analyzeConsentCollection(partial, opts, baseKb);
+            opts.onPartial!({ ...r, timelines: partial.timelines });
+          } catch (err) {
+            opts.trace?.(`live analysis skipped: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      : undefined,
     policy: {
       registrableDomain,
       verify: (spec, sources) => tracking.decideVerification(spec, sources),
@@ -322,6 +346,31 @@ export async function runConsentScan(opts: ConsentScanOptions): Promise<ConsentS
     },
   });
 
+  const { findings, evaluation } = analyzeConsentCollection(collection, opts, baseKb);
+  const tested = collection.locations.flatMap((l) => l.scenarios.filter((s) => s.status === 'tested'));
+  const matrix: MatrixCell[] = [
+    {
+      family: 'evidence',
+      routePatterns: 1,
+      instances: collection.timelines.length,
+      viewports: ['desktop'],
+      schemes: ['light'],
+      states: tested.length,
+    },
+  ];
+  const rulesExecuted = ALL_RULES.filter((r) => !isLlmRule(r) && (r as { consumes?: readonly string[] }).consumes?.includes('consent-timeline')).map((r) => r.id);
+  return { findings, evaluation, matrix, rulesExecuted };
+}
+
+/**
+ * Collection → findings + evaluation, the same for the final result and the
+ * live partials (onPartial), so a live view and the report agree.
+ */
+function analyzeConsentCollection(
+  collection: import('./collect/browser/evaluation/index.js').PartialConsentCollection,
+  opts: ConsentScanOptions,
+  baseKb: KnowledgeBase,
+): { findings: Finding[]; evaluation: TrackingEvaluation } {
   // The site workspace is applied after collection: its keys are computed from
   // what this run observed (src/site-workspace.ts), so the KB below is per run.
   const site = opts.workspace ? applyWorkspace(collection.timelines, baseKb, opts.workspace) : undefined;
@@ -351,17 +400,5 @@ export async function runConsentScan(opts: ConsentScanOptions): Promise<ConsentS
   // Re-decide compatibility against the report's own matrix, now that the
   // workspace is on the record, so the change list and the grid agree (B2).
   evaluation.compatibility = reconcileCompatibility(evaluation, { kb, extraBehavior: tracking.configBehaviorCells(evaluation.consentToolProof) });
-  const tested = collection.locations.flatMap((l) => l.scenarios.filter((s) => s.status === 'tested'));
-  const matrix: MatrixCell[] = [
-    {
-      family: 'evidence',
-      routePatterns: 1,
-      instances: collection.timelines.length,
-      viewports: ['desktop'],
-      schemes: ['light'],
-      states: tested.length,
-    },
-  ];
-  const rulesExecuted = ALL_RULES.filter((r) => !isLlmRule(r) && (r as { consumes?: readonly string[] }).consumes?.includes('consent-timeline')).map((r) => r.id);
-  return { findings, evaluation, matrix, rulesExecuted };
+  return { findings, evaluation };
 }

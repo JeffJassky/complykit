@@ -281,8 +281,9 @@ async function main(): Promise<void> {
 demo ready. Browser: ${process.env.COMPLYKIT_BROWSER_CHANNEL || 'Playwright Chromium'}; data ${DATA_DIR}
 
   Service UI        http://localhost:${SERVICE_PORT}/
+  Report page       http://localhost:${SERVICE_PORT}/#report/${jobId}
   Site workspace    http://localhost:${SERVICE_PORT}/  (site ${SITE}; checklist API: http://localhost:${SERVICE_PORT}/api/sites/${SITE}/remediation)
-  Report            http://localhost:${SERVICE_PORT}${reportUrl}
+  Full report       http://localhost:${SERVICE_PORT}${reportUrl}
   Site page         ${c}/            (current markup; the scanned URL is ${s.url})
   State             ${c}/__demo/state
 

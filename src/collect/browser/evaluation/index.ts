@@ -105,6 +105,26 @@ export interface ConsentEvaluationOptions {
   policy: EvaluationPolicy;
   trace?: (line: string) => void;
   onEvent?: (e: EvaluationEvent) => void;
+  /**
+   * Called after every finished visit (repeats included) with what has been
+   * collected so far: the timelines, the locations with the scenarios finished
+   * so far, the gaps. No DNS records and no containers yet (they are resolved
+   * once, at the end). For live views; a throw here is swallowed, never stops the scan.
+   */
+  onProgress?: (partial: PartialConsentCollection) => void;
+}
+
+/** What a scan has collected so far (onProgress): enough to run the analysis over the finished visits. */
+export interface PartialConsentCollection {
+  artifacts: Artifact[];
+  timelines: Timeline[];
+  locations: LocationRun[];
+  notTested: NotTestedItem[];
+  site: { url: string; host: string; registrableDomain: string };
+  autoconsentVersion?: string;
+  containers: ContainerCapture[];
+  startedAt: string;
+  finishedAt: string;
 }
 
 export interface LocationRun {
@@ -214,6 +234,27 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
     trace(`local copy: documents from ${lc.origin} are rewritten in this browser (${lc.file}) — nothing is installed on the site`);
     notTested.push({ scope: 'flow', id: 'local-copy', reason: `LOCAL COPY: the site's documents were rewritten inside the scanner's browser (${lc.file}): what this run shows is the rewritten copy's behavior, not the live site's` });
   }
+  // A snapshot of everything finished so far, for live views (onProgress). The
+  // arrays are copied: the analysis may run while the next visit adds to them.
+  const progress = (): void => {
+    if (!opts.onProgress) return;
+    try {
+      const at = new Date().toISOString();
+      opts.onProgress({
+        artifacts: timelines.map((tl) => timelineArtifact(tl, opts.property, site.url, at)),
+        timelines: [...timelines],
+        locations: runs.map((r) => ({ ...r, scenarios: [...r.scenarios] })),
+        notTested: [...notTested],
+        site,
+        autoconsentVersion: autoconsentVersion(),
+        containers: [],
+        startedAt,
+        finishedAt: at,
+      });
+    } catch (err) {
+      trace(`live progress skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
   const browser = await launch(opts.launchArgs);
   if (process.env.COMPLYKIT_BROWSER_CHANNEL) trace(`browser: ${process.env.COMPLYKIT_BROWSER_CHANNEL} channel ${browser.version()} (COMPLYKIT_BROWSER_CHANNEL)`);
 
@@ -322,6 +363,9 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
         // a blocked visit recorded a challenge page, not the site — neither is evidence.
         if (out.status !== 'not-applicable' && !out.reason?.startsWith('bot protection')) timelines.push(tl);
         for (const n of tl.snapshot.notTested) notTested.push({ scope: 'flow', id: scenario, location: spec.id, reason: n });
+        const finished = () => (run.scenarios = scenarios.map((s) => results.get(s)).filter((x): x is ScenarioSummary => Boolean(x)));
+        finished();
+        progress();
         // Repeat visits under throttling (A7). Only after a visit that tested: a
         // scenario that could not run once will not run slower. A repeat that fails
         // is a stated gap, never a quiet drop — the cell then reads "1 of 1 runs"
@@ -344,11 +388,14 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
             });
             if (again.status !== 'tested') {
               notTested.push({ scope: 'scenario', id: scenario, location: spec.id, reason: `throttled run ${runNo} of ${totalRuns} did not complete: ${again.reason ?? again.status}` });
+              progress();
               continue;
             }
             sum.runs++;
             timelines.push(again.timeline);
             for (const n of again.timeline.snapshot.notTested) notTested.push({ scope: 'flow', id: scenario, location: spec.id, reason: n });
+            finished();
+            progress();
           }
         } else if (totalRuns > 1) {
           // The planned repeats are skipped (see above). Each still closes its step,
@@ -368,6 +415,7 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
               durationMs: 0,
             });
           }
+          progress();
         }
       });
       run.scenarios = scenarios.map((s) => results.get(s)).filter((x): x is ScenarioSummary => Boolean(x));
@@ -419,17 +467,7 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
     tl.snapshot.dns = dnsRecords;
     const runSuffix = (tl.snapshot.run ?? 1) > 1 ? `-run${tl.snapshot.run}` : '';
     writeTimelineEvidence(path.join(dir, 'evidence', 'tracking', tl.location.id, tl.snapshot.scenario + runSuffix), tl, raw);
-    artifacts.push({
-      kind: 'consent-timeline',
-      subject: { property: opts.property, routePattern: '*', instanceUrl: site.url, state: `${tl.location.id}/${tl.snapshot.scenario}${runSuffix}` },
-      capturedAt,
-      payloadPath: tl.snapshot.evidence.timeline,
-      scenario: tl.snapshot.scenario,
-      location: tl.location as unknown as Record<string, unknown>,
-      verification: tl.verification as unknown as Record<string, unknown>,
-      events: tl.events as unknown as Record<string, unknown>[],
-      snapshot: tl.snapshot as unknown as Record<string, unknown>,
-    });
+    artifacts.push(timelineArtifact(tl, opts.property, site.url, capturedAt));
   }
 
   return {
@@ -442,6 +480,22 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
     containers,
     startedAt,
     finishedAt: new Date().toISOString(),
+  };
+}
+
+/** One visit's timeline as the rules consume it (a `consent-timeline` artifact). */
+function timelineArtifact(tl: Timeline, property: string, instanceUrl: string, capturedAt: string): Artifact {
+  const runSuffix = (tl.snapshot.run ?? 1) > 1 ? `-run${tl.snapshot.run}` : '';
+  return {
+    kind: 'consent-timeline',
+    subject: { property, routePattern: '*', instanceUrl, state: `${tl.location.id}/${tl.snapshot.scenario}${runSuffix}` },
+    capturedAt,
+    payloadPath: tl.snapshot.evidence.timeline,
+    scenario: tl.snapshot.scenario,
+    location: tl.location as unknown as Record<string, unknown>,
+    verification: tl.verification as unknown as Record<string, unknown>,
+    events: tl.events as unknown as Record<string, unknown>[],
+    snapshot: tl.snapshot as unknown as Record<string, unknown>,
   };
 }
 

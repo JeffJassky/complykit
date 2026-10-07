@@ -35,6 +35,7 @@ import { generateConsentConfigForJob } from './consent-config.js';
 import { checklistProgress, RemediationVerifier, remediationView } from './remediation.js';
 import { rescanSite } from './rescan.js';
 import { rerenderJob } from './rerender.js';
+import { ChecklistMaker, jobReport } from './job-report.js';
 import { sendJobZip } from './zip.js';
 
 export interface Service {
@@ -50,6 +51,8 @@ export interface Service {
   consentRecords: ConsentRecordStore;
   /** Epoch ms of the last request that counts as activity (see lifecycle.idleReason). */
   lastActivity(): number;
+  /** Makes the to-do list after a consent scan (config.autoChecklist). */
+  checklists: ChecklistMaker;
   /** Kill running checks (marked "server stopped"), close streams, flush to disk. */
   stop(killGraceMs?: number): Promise<void>;
 }
@@ -64,12 +67,15 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
   // A job finishing counts as activity, and a consent check feeds the KB queue.
   const workspaces = new WorkspaceStore(path.join(config.dataDir, 'sites'), checklistProgress);
   // A consent job applies its site's workspace and records itself as a run (C3).
+  // The to-do list is made when a consent scan finishes (plans/simple-report.md).
+  const checklists = new ChecklistMaker({ config, workspaces, jobDir: (id) => store.jobDir(id), origin: `http://localhost:${config.port}` });
   const runner = new Runner(
     store,
     config,
-    () => {
+    (job) => {
       touch();
       hub.notifyKb();
+      if (job && config.autoChecklist) checklists.afterScan(job);
     },
     workspaces,
   );
@@ -270,6 +276,17 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
         origin: `${req.protocol}://${req.get('host') ?? 'localhost'}`,
       });
       res.json(out);
+    }),
+  );
+
+  // The owner report page in one poll: the job, the live/final owner report, the site's to-do list.
+  app.get(
+    '/api/jobs/:id/report',
+    withJob,
+    siteRoute(async (_req, res) => {
+      const job = res.locals.job as JobDetail;
+      res.set('Cache-Control', 'no-store');
+      res.json(await jobReport(job, { jobDir: store.jobDir(job.id), workspaces, maker: checklists }));
     }),
   );
 
@@ -521,11 +538,13 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
     kb,
     workspaces,
     consentRecords,
+    checklists,
     lastActivity: () => lastActivity,
     async stop(killGraceMs?: number) {
       clearInterval(sweep);
       clearInterval(consentSweep);
       await Promise.all([runner.shutdown(killGraceMs), kb.stop(killGraceMs)]);
+      await checklists.settled();
       hub.closeAll();
       await Promise.all([store.flush(), workspaces.flush(), consentRecords.flush()]);
     },

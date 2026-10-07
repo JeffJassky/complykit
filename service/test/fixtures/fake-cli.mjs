@@ -7,7 +7,12 @@
 //   slow.*        300ms between events (for cancel / concurrency tests)
 //   unverified.*  location unverified, no scenarios
 //   anything else 30ms between events (FAKE_CLI_DELAY overrides)
-// consent also writes env.json (the KB dir it was given) into its cwd.
+// consent also writes env.json (the KB dir it was given) into its cwd, and the
+// owner report (owner-report.json in the run dir) after every visit (stage
+// live, with a `live` event) and once more at the end (final), like the real
+// CLI. widget.* hosts also find an unclassified tool (classKey class:fake-widget):
+// its row needs a decision until the workspace classifies it, and
+// consent-config then lists a 'classify' task first.
 // --runs N (N > 1) adds the real CLI's repeat events: the location plans `runs`,
 // each tested scenario gets scenario-start/-done with `run: 2..N`, and a
 // not-applicable one a skipped-repeat scenario-done per run.
@@ -41,8 +46,56 @@ function emit(ev) {
   fs.appendFileSync(opts.events, JSON.stringify({ at: new Date().toISOString(), ...ev }) + '\n');
 }
 
+// --- the owner report (plans/simple-report.md), fake ---------------------------
+const SCENARIOS = ['do-nothing', 'reject', 'gpc'];
+const LABEL = { 'do-nothing': 'Before a choice', reject: 'After rejection', gpc: 'Privacy signal (GPC)' };
+const decided = (v) => !!v && typeof v === 'object' && v.categoryChosen !== false && [v.category, ...(v.categories ?? [])].some((c) => typeof c === 'string' && c && c !== 'other' && c !== 'unknown');
+
+/** done: finished scenario names; current: the one running; widget: the host finds the unknown widget. */
+function ownerReport({ stage, url, done, current, widget, ws }) {
+  const u = new URL(url);
+  const columns = SCENARIOS.map((sc, i) => ({
+    id: `local:${sc}`, location: 'local', scenario: sc, label: LABEL[sc],
+    ...(stage === 'final' || done.includes(sc) ? (i === 1 ? { state: 'not-checked', note: 'There was no consent banner, so this choice couldn’t be made.' } : { state: 'done' }) : { state: current === sc ? 'running' : 'pending' }),
+  }));
+  const cell = (i, judged) => (columns[i].state === 'done' ? { state: judged, expected: 'Off until the visitor gives permission', observed: '2 data request(s) observed', reason: judged === 'mismatch' ? 'Active when opt-in rules expect it to be off.' : 'Working as expected.' } : columns[i].state === 'not-checked' ? { state: 'not-checked', reason: columns[i].note } : { state: 'pending' });
+  const tools = [];
+  if (stage === 'final' || done.length >= 1) {
+    tools.push({ id: 'tool:meta.pixel', partyId: 'meta.pixel', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:fake-meta', cells: [cell(0, 'mismatch'), cell(1, 'ok'), cell(2, 'ok')], cookies: [{ id: '["meta.pixel","cookie","_fbp"]', name: '_fbp', kind: 'cookie', purpose: 'Advertising', classified: true, cells: [cell(0, 'mismatch'), cell(1, 'ok'), cell(2, 'ok')] }] });
+  }
+  const widgetDecided = decided(ws?.entries?.['class:fake-widget']?.value);
+  if (widget && (stage === 'final' || done.length >= 2)) {
+    const judged = widgetDecided ? 'ok' : 'needs-decision';
+    tools.push({ id: 'tool:unknown:widgets.test', partyId: 'unknown:widgets.test', label: 'widgets.test', domain: 'widgets.test', purpose: widgetDecided ? 'Analytics' : 'Unclassified', categories: widgetDecided ? ['analytics'] : [], classified: widgetDecided, recognized: widgetDecided, classKey: 'class:fake-widget', cells: [cell(0, judged), cell(1, judged), cell(2, judged)], cookies: [] });
+  }
+  const counts = { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0 };
+  const key = { ok: 'ok', mismatch: 'mismatch', 'needs-decision': 'needsDecision', pending: 'pending', 'not-checked': 'notChecked' };
+  for (const t of tools) for (const c of [...t.cells, ...t.cookies.flatMap((k) => k.cells)]) counts[key[c.state]]++;
+  const visitsDone = stage === 'final' ? SCENARIOS.length : done.length;
+  return {
+    version: 1, stage, runId, generatedAt: new Date().toISOString(),
+    site: { url, host: u.hostname, domain: u.hostname.split('.').slice(-2).join('.') },
+    scan: { startedAt: new Date().toISOString(), visitsDone, visitsTotal: SCENARIOS.length, pagesVisited: 2 * visitsDone, ...(current ? { current: LABEL[current] } : {}), location: { id: 'local', label: 'This machine', observed: 'US-FL', verified: true } },
+    banner: visitsDone ? { state: 'detected', provider: 'OneTrust', visitsWithBanner: visitsDone, visitsChecked: visitsDone } : { state: 'pending', visitsWithBanner: 0, visitsChecked: 0 },
+    matrix: { columns, tools, counts },
+    decisions: tools.filter((t) => !t.classified).map((t) => ({ partyId: t.partyId, label: t.label, domain: t.domain, classKey: t.classKey })),
+  };
+}
+
+function writeOwner(dir, report) {
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'owner-report.json');
+  fs.writeFileSync(file + '.tmp', JSON.stringify(report, null, 2));
+  fs.renameSync(file + '.tmp', file);
+  emit({ type: 'live', file, stage: report.stage, visitsDone: report.scan.visitsDone, visitsTotal: report.scan.visitsTotal });
+}
+
 async function consent() {
   fs.writeFileSync(path.join(cwd, 'env.json'), JSON.stringify({ COMPLYKIT_KB_DIR: process.env.COMPLYKIT_KB_DIR ?? null }));
+  const ws = opts.workspace ? JSON.parse(fs.readFileSync(opts.workspace, 'utf8')) : { entries: {} };
+  const widget = /(^|\.)widget\./.test(host);
+  const ownerDir = path.join(cwd, '.comply', 'runs', runId);
+  const finished = [];
   emit({ type: 'start', runId, url: opts.url, locations: ['local'] });
   await sleep(delay);
   if (host.startsWith('fail.')) {
@@ -56,14 +109,18 @@ async function consent() {
   const scenarios = host.startsWith('unverified.') ? [] : ['do-nothing', 'reject', 'gpc'];
   const runs = Math.max(1, Number(opts.runs ?? 1) || 1);
   emit({ type: 'location', location: 'local', verdict: scenarios.length ? 'verified' : 'unverified', observed: 'US-FL', scenarios, runs, ...(scenarios.length ? {} : { note: 'no geolocation source answered' }) });
+  if (scenarios.length) writeOwner(ownerDir, ownerReport({ stage: 'live', url: opts.url, done: finished, widget, ws }));
   for (const [i, scenario] of scenarios.entries()) {
     emit({ type: 'scenario-start', location: 'local', scenario });
+    if (opts.events) writeOwner(ownerDir, ownerReport({ stage: 'live', url: opts.url, done: finished, current: scenario, widget, ws }));
     await sleep(delay);
     // Write half a line first, like a writer caught mid-append.
     const done = JSON.stringify({ at: new Date().toISOString(), type: 'scenario-done', location: 'local', scenario, status: i === 1 ? 'not-applicable' : 'tested', ...(i === 1 ? { reason: 'no banner' } : {}), requests: 10 * (i + 1), thirdPartyRequests: 3 * (i + 1), parties: 2 + i, cookies: 4 - i, durationMs: delay, ...(i === 2 ? { banner: 'onetrust' } : {}) });
     fs.appendFileSync(opts.events, done.slice(0, 20));
     await sleep(Math.min(delay, 20));
     fs.appendFileSync(opts.events, done.slice(20) + '\n');
+    finished.push(scenario);
+    writeOwner(ownerDir, ownerReport({ stage: 'live', url: opts.url, done: finished, widget, ws }));
     for (let run = 2; run <= runs; run++) {
       if (i === 1) {
         emit({ type: 'scenario-done', location: 'local', scenario, run, status: 'not-applicable', reason: 'repeat skipped: the first visit was not applicable', requests: 0, thirdPartyRequests: 0, parties: 0, cookies: 0, durationMs: 0 });
@@ -77,10 +134,11 @@ async function consent() {
   const runDir = path.join(cwd, '.comply', 'runs', runId);
   fs.mkdirSync(path.join(runDir, 'evidence'), { recursive: true });
   fs.writeFileSync(path.join(runDir, 'evidence', 'note.txt'), 'evidence for ' + opts.url + '\n');
-  fs.writeFileSync(path.join(runDir, 'tracking.json'), JSON.stringify({ url: opts.url }));
+  fs.writeFileSync(path.join(runDir, 'tracking.json'), JSON.stringify({ url: opts.url, ...(widget ? { unknownTool: 'widgets.test' } : {}) }));
   fs.writeFileSync(path.join(runDir, 'findings.jsonl'), '{"ruleId":"fake"}\n');
   fs.writeFileSync(path.join(runDir, 'consent-report.html'), `<!doctype html><title>consent report</title><h1>Consent report for ${opts.url}</h1><a href="evidence/note.txt">evidence</a>\n`);
   fs.writeFileSync(path.join(runDir, 'change-list.md'), `# Change list — ${opts.url}\n`);
+  if (scenarios.length) writeOwner(runDir, ownerReport({ stage: 'final', url: opts.url, done: finished, widget, ws }));
   fs.mkdirSync(path.join(cwd, '.comply', 'cache'), { recursive: true });
   fs.writeFileSync(path.join(cwd, '.comply', 'cache', 'verdicts.json'), '{}');
   await sleep(delay);
@@ -134,6 +192,9 @@ async function consentReport() {
   fs.writeFileSync(opts.out, html);
   fs.writeFileSync(path.join(path.dirname(opts.out), 'change-list.md'), `# Change list — re-rendered with ${classes.length} classification(s)\n`);
   fs.writeFileSync(opts.out.replace(/\.html?$/i, '') + '.json', JSON.stringify({ runId: opts.run, classes }));
+  // The owner report, final, with the workspace's classifications applied.
+  const tracking = JSON.parse(fs.readFileSync(path.join(dir, 'tracking.json'), 'utf8'));
+  fs.writeFileSync(path.join(path.dirname(opts.out), 'owner-report.json'), JSON.stringify(ownerReport({ stage: 'final', url: tracking.url ?? tracking.site?.url ?? 'https://example.com/', done: SCENARIOS, widget: !!tracking.unknownTool, ws }), null, 2));
   process.stdout.write(`wrote ${opts.out}\n`);
 }
 
@@ -286,7 +347,9 @@ async function consentConfig() {
   // The checklist: ids are content hashes in the real CLI, so a regeneration that changes nothing keeps them.
   const page = `https://${ws.domain ?? 'example.com'}/`;
   const task = (id, kind, order, verify) => ({ id, kind, group: kind === 'install' ? 'install' : 'markup', title: `${kind} task`, summary: 'fake', tools: [], partyIds: [], steps: ['do it'], pages: [page], verify, status: 'todo', optional: false, notes: [], order });
-  const tasks = [task('install', 'install', 0, { check: 'install', method: 'static', page, configHash: 'sha256:fake', scriptSrc: config.scriptSrc, elementId: 'complykit-config' }), task('rewrite-tag:0123456789ab', 'rewrite-tag', 1, { check: 'rewrite-tag', method: 'static', page })];
+  const tracking = JSON.parse(fs.readFileSync(path.join(runDir, 'tracking.json'), 'utf8'));
+  const decision = tracking.unknownTool ? [{ ...task('classify:aaaaaaaaaaaa', 'classify', -1, { check: 'manual', method: 'manual' }), title: `Decide: what is ${tracking.unknownTool}?`, group: 'decide', tools: [tracking.unknownTool], classKey: 'class:fake-widget' }] : [];
+  const tasks = [...decision, task('install', 'install', 0, { check: 'install', method: 'static', page, configHash: 'sha256:fake', scriptSrc: config.scriptSrc, elementId: 'complykit-config' }), task('rewrite-tag:0123456789ab', 'rewrite-tag', 1, { check: 'rewrite-tag', method: 'static', page })];
   process.stdout.write(JSON.stringify({ config, snippet, changeList, notes, tasks, env: process.env.COMPLYKIT_KB_DIR ?? null }) + '\n');
 }
 

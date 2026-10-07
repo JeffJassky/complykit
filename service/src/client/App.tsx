@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CreateBatchResponse, JobSummary } from '../shared/api';
-import { ActiveJobs } from './components/ActiveJobs';
-import { CompletedList } from './components/CompletedList';
+import type { JobSummary } from '../shared/api';
 import { Header } from './components/Header';
+import { Home } from './components/Home';
 import { KnowledgeBase } from './components/KnowledgeBase';
+import { ReportPage } from './components/ReportPage';
 import { SitePage, SitesList } from './components/Sites';
-import { SubmitPanel } from './components/SubmitPanel';
 import { Toasts, type Toast } from './components/Toasts';
-import { isActive, plural, totalFindings } from './lib/format';
-import { useHashRoute } from './lib/useHashView';
+import { isActive } from './lib/format';
+import { reportHref, useHashRoute } from './lib/useHashView';
 import { useJobs } from './lib/useJobs';
+import { useNow } from './lib/useNow';
+import { useSites } from './lib/useSites';
 
 export function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -21,32 +22,28 @@ export function App() {
   }, []);
   const dismissToast = useCallback((id: number) => setToasts((list) => list.filter((t) => t.id !== id)), []);
 
+  const { view, domain: siteDomain, jobId } = useHashRoute();
+  const viewRef = useRef({ view, jobId });
+  viewRef.current = { view, jobId };
+
+  // A scan finishing elsewhere (not the report you are looking at) gets a toast to its report.
   const onTransition = useCallback(
     (prev: JobSummary, next: JobSummary) => {
-      if (!isActive(prev)) return;
-      if (next.status === 'done') {
-        const n = totalFindings(next);
-        pushToast({
-          tone: 'success',
-          title: `${next.host} — report ready, ${plural(n, 'finding')}`,
-          href: next.result?.consent?.reportUrl ?? next.result?.accessibility?.reportUrl,
-          hrefLabel: 'View report',
-        });
-      } else if (next.status === 'failed') {
-        pushToast({ tone: 'error', title: `${next.host} — failed`, body: next.error });
-      } else if (next.status === 'cancelled') {
-        pushToast({ tone: 'neutral', title: `${next.host} — cancelled` });
-      }
+      if (!isActive(prev) || isActive(next)) return;
+      if (viewRef.current.view === 'report' && viewRef.current.jobId === next.id) return;
+      if (next.status === 'done') pushToast({ tone: 'success', title: `${next.host} — scan finished`, href: reportHref(next.id), hrefLabel: 'Open report' });
+      else if (next.status === 'failed') pushToast({ tone: 'error', title: `${next.host} — scan didn’t finish`, body: next.error });
     },
     [pushToast],
   );
 
-  const { view, domain: siteDomain } = useHashRoute();
   // Bumped by the stream's `kb` event; the KB view refetches on each bump.
   const [kbVersion, setKbVersion] = useState(0);
   const onKb = useCallback(() => setKbVersion((v) => v + 1), []);
 
-  const { jobs, server, loaded, loadError, connection, upsert, remove } = useJobs(onTransition, onKb);
+  const { jobs, server, loaded, loadError, connection } = useJobs(onTransition, onKb);
+  const sites = useSites();
+  const now = useNow(30_000);
 
   // Switching views moves focus to the new content (skip on first render).
   const mainRef = useRef<HTMLElement>(null);
@@ -58,27 +55,34 @@ export function App() {
     }
     mainRef.current?.focus({ preventScroll: true });
     window.scrollTo({ top: 0 });
-  }, [view, siteDomain]);
+  }, [view, siteDomain, jobId]);
 
   const list = useMemo(() => Object.values(jobs), [jobs]);
-  const active = useMemo(() => list.filter(isActive), [list]);
-  const completed = useMemo(() => list.filter((j) => !isActive(j)), [list]);
-  const running = active.filter((j) => j.status === 'running').length;
-  const queued = active.length - running;
+  const running = list.filter((j) => j.status === 'running').length;
+  const queued = list.filter((j) => j.status === 'queued').length;
+
+  // The home list follows finished scans (their to-do progress comes from the sites API).
+  const finished = list.filter((j) => !isActive(j)).length;
+  const refreshSites = sites.refresh;
+  useEffect(() => {
+    if (view === 'checks') void refreshSites();
+  }, [finished, view, refreshSites]);
 
   useEffect(() => {
     document.title = running ? `(${running} running) complykit` : queued ? `(${queued} queued) complykit` : 'complykit';
   }, [running, queued]);
-
-  const onCreated = useCallback((res: CreateBatchResponse) => res.jobs.forEach(upsert), [upsert]);
 
   return (
     <div className="app">
       <a className="skip-link" href="#main">
         Skip to content
       </a>
-      <Header view={view} server={server} running={running} queued={queued} connection={connection} />
-      {view === 'sites' ? (
+      <Header view={view === 'report' ? 'checks' : view} server={server} running={running} queued={queued} connection={connection} />
+      {view === 'report' && jobId ? (
+        <main id="main" ref={mainRef} tabIndex={-1} className="rp-layout" aria-label="Report">
+          <ReportPage key={jobId} jobId={jobId} />
+        </main>
+      ) : view === 'sites' ? (
         <main id="main" ref={mainRef} tabIndex={-1} className="kb-layout" aria-label="Sites">
           {siteDomain ? <SitePage domain={siteDomain} jobs={loaded ? jobs : null} /> : <SitesList />}
         </main>
@@ -87,38 +91,13 @@ export function App() {
           <KnowledgeBase version={kbVersion} pushToast={pushToast} />
         </main>
       ) : (
-        <main id="main" ref={mainRef} tabIndex={-1} className="layout">
-          <section className="page-intro" aria-labelledby="page-title">
-            <p className="eyebrow">Website health, made clearer</p>
-            <h1 id="page-title">Find the issues. Plan the next step.</h1>
-            <p>Check how your website handles visitor privacy and accessibility. Get a readable report with evidence and practical next steps.</p>
-            <ol className="journey" aria-label="How it works">
-              <li><span>1</span><div><strong>Scan a website</strong><small>Choose what to check.</small></div></li>
-              <li><span>2</span><div><strong>Understand the findings</strong><small>See problems and open questions.</small></div></li>
-              <li><span>3</span><div><strong>Work through the fixes</strong><small>Use the checklist in your report.</small></div></li>
-            </ol>
-          </section>
-          <div className="col-side">
-            <SubmitPanel onCreated={onCreated} />
-          </div>
-          <div className="col-main">
-            {loadError ? (
-              <div className="banner-error" role="alert">
-                Couldn’t reach the server: {loadError}. Retrying…
-              </div>
-            ) : null}
-            {!loaded ? (
-              <div className="skeleton" aria-busy="true" aria-label="Loading jobs">
-                <div className="skeleton-card" />
-                <div className="skeleton-card" />
-              </div>
-            ) : (
-              <>
-                {active.length > 0 ? <ActiveJobs jobs={active} onUpdated={upsert} /> : null}
-                <CompletedList jobs={completed} onDeleted={remove} />
-              </>
-            )}
-          </div>
+        <main id="main" ref={mainRef} tabIndex={-1} className="rp-layout" aria-label="Home">
+          {loadError ? (
+            <div className="banner-error" role="alert">
+              Couldn’t reach the server: {loadError}. Retrying…
+            </div>
+          ) : null}
+          <Home jobs={list} sites={sites.data?.sites ?? []} loaded={loaded} now={now} />
         </main>
       )}
       <Toasts toasts={toasts} onDismiss={dismissToast} />

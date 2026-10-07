@@ -23,6 +23,8 @@ export function testConfig(overrides: Partial<ServiceConfig> = {}): ServiceConfi
     clientDir: path.join(tempDir(), 'no-client'),
     pollMs: 25,
     killGraceMs: 500,
+    // Off by default here: tests that exercise the automatic to-do list turn it on.
+    autoChecklist: false,
     ...overrides,
   };
 }

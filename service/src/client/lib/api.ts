@@ -4,6 +4,7 @@ import type {
   CreateBatchRequest,
   CreateBatchResponse,
   JobDetail,
+  JobReportResponse,
   JobSummary,
   JobsResponse,
   KbConfirmRequest,
@@ -68,6 +69,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const api = {
   jobs: () => request<JobsResponse>('GET', '/api/jobs'),
   job: (id: string) => request<JobDetail>('GET', `/api/jobs/${encodeURIComponent(id)}`),
+  /** The report page in one poll (plans/simple-report.md). */
+  jobReport: (id: string) => request<JobReportResponse>('GET', `/api/jobs/${encodeURIComponent(id)}/report`),
   createBatch: (req: CreateBatchRequest) => request<CreateBatchResponse>('POST', '/api/batches', req),
   cancel: (id: string) => request<JobSummary>('POST', `/api/jobs/${encodeURIComponent(id)}/cancel`),
   remove: (id: string) => request<void>('DELETE', `/api/jobs/${encodeURIComponent(id)}`),

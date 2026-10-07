@@ -20,14 +20,14 @@ carries a change. Only the **rescan** at the end shows how the site behaved.
 The steps:
 
 1. [Run the service locally](#_1-run-the-service-locally)
-2. [Scan, then open the report](#_2-scan-then-open-the-report)
+2. [Scan: the report page](#_2-scan-the-report-page)
 3. [Classify the tools it does not know](#_3-classify-the-tools-it-does-not-know)
-4. [Generate the checklist](#_4-generate-the-checklist)
-5. [Read the checklist](#_5-read-the-checklist)
+4. [Your to-do list is made for you](#_4-your-to-do-list-is-made-for-you)
+5. [Read the to-do list](#_5-read-the-to-do-list)
 6. [Download the install bundle and make the changes](#_6-download-the-install-bundle-and-make-the-changes)
 7. [Verify each change](#_7-verify-each-change)
 8. [Follow your progress](#_8-follow-your-progress)
-9. [Rescan](#_9-rescan)
+9. [Run the final scan](#_9-run-the-final-scan)
 10. [What stays out of reach](#_10-what-stays-out-of-reach)
 11. [The same path from the command line](#_11-the-same-path-from-the-command-line)
 
@@ -55,106 +55,116 @@ Then open `http://localhost:8080`.
 | `PORT` | Default `8080`. |
 | `COMPLYKIT_KB_DIR` | Where the tool knowledge base lives. Default: `<DATA_DIR>/kb`. Point it at an existing store to reuse tools you have already confirmed. |
 | `COMPLYKIT_BROWSER_CHANNEL=chrome` | Use your installed Google Chrome. Set this when Playwright's own Chromium is not installed (the scans and the **Verify** browser checks both read it). Without either, they fail to start a browser. |
+| `AUTO_CHECKLIST` | `0` turns off making the to-do list automatically when a scan finishes (the report page then offers **Make my to-do list**). Default: on. |
 | `CONSENT_RUNS` | Visits per visitor choice when a scan opts into **Also repeat on a slow connection** (2 to 5, default 2). Other scans visit each choice once. |
 | `COMPLYKIT_CLI`, `COMPLYKIT_CLIENT_DIST` | Only if you built into non-default places: the built `dist/cli.js`, and the `client/dist` folder the install bundle copies from. |
 
-## 2. Scan, then open the report
+## 2. Scan: the report page
 
-On the home page, under **Scan a website**, enter the site's address, leave **Visitor
-privacy** ticked (that is the consent scan), and press **Start scan**. The page shows
-the scan's progress. A full scan takes some minutes; it visits several pages as a
-first-time visitor and tries each visitor choice (accept, reject, withdraw, Global
-Privacy Control), once each. **Scan options** has **Also repeat on a slow
-connection**: every choice is visited again on a slowed connection to catch timing
-races. It takes about three times as long, and the progress bar counts the repeats.
+The home page has one field and one button: enter the site's address and press
+**Scan**. (**Options** holds the rest: visitor privacy is on by default,
+accessibility, a quick scan, and **Also repeat on a slow connection**, which visits
+each choice again on a slowed connection to catch timing races and takes about three
+times as long.) Below the field, **Your sites** lists each site with its latest
+status; each links to its report page.
 
-When it finishes, open its report. The report lists, for each tool the site loads,
-what it did in each visitor choice, and below that the **compatibility** section and
-the **change list** (see [Compatibility verdicts](./compatibility.md)). The service
-also gives the site a **site page** (the **Sites** list, then the site) where the
-checklist, downloads and rescan live between scans.
+Pressing **Scan** opens the scan's report page at once. You can watch it fill in.
+The page has four parts, in this order, and nothing else:
+
+1. **Scan status**, only while the scan runs: how many visits are done of how many,
+   pages visited, how long it has been going, the visit running now, a progress bar
+   and **Cancel**.
+2. **Consent banner**: "Consent banner: OneTrust" (the provider, when recognized),
+   or "No consent banner detected" (naming a consent tool that loaded without showing
+   one). Until the first visit finishes: "Looking for a consent banner…".
+3. **Tools and cookies**: one row per tool the scan found, its cookies under it, and
+   one column per visitor action ("Before a choice", "After rejection", "After
+   acceptance", "Privacy signal (GPC)"…). New rows appear as visits find them. Each
+   cell is a spinner while that visit is still to come, then **✓** (behaved as
+   expected for its purpose), **✕** (running where it should be off: a behavior
+   mismatch, not a legal verdict), **?** (needs your decision: what the tool is for),
+   or **–** (not checked: the visit could not complete, for example no banner to
+   reject; one line under the table says why, for the whole column). Select a cell to
+   see what was expected and what the scan saw.
+4. **Your to-do list** (steps 3 to 9 below).
+
+At the bottom, **Technical details** opens the full report: the legal scope, every
+finding with its evidence, the coverage and limits, and the compatibility table and
+change list. Nothing is removed from it; it is simply off the main page. The
+service's **Sites** page links each site to its latest report page too.
 
 ## 3. Classify the tools it does not know
 
 The scan recognizes many vendors from its knowledge base. For anything it does not,
-the report asks what the tool is for. Is it analytics, advertising, something the
-site cannot work without? That answer decides whether the tool needs consent, so it
-decides what you will be asked to change.
+the first items of the to-do list ask what it is for: **Necessary**, **Functional**,
+**Analytics** or **Advertising**. (The same choice opens when you select the tool's
+row in the matrix.) That answer decides whether the tool needs consent, so it decides
+what you will be asked to change. These questions appear while the scan is still
+running, as soon as a visit finds the tool.
 
-In the report's behavior matrix, select an unknown tool or cookie and pick its main
-purpose (Necessary, Functional, Analytics, Performance, Advertisement, Other; see
-[Classifying a cookie in the report](./consent.md#classifying-a-cookie-in-the-report)).
-The matrix recalculates at once. The compatibility section, the change list and the
-checklist do not, because they are built from the saved scan: a banner at the top of
-the report tells you so.
+Your answer is saved with the site, shared by everyone who opens its report, and used
+by every later report and scan. Once the scan has finished, the page re-renders the
+report with your answers by itself (it waits a moment, so several answers in a row
+make one update): the tool's row is judged, its cookies follow, and the changes that
+depend on it are kept if the tool tracks visitors and dropped if it does not. Nothing
+is rescanned, so it takes seconds. An answer given while the scan is running is
+applied when it finishes.
 
-Press **Update report with my classifications**. The service re-reads the saved scan
-with your answers and reloads the report where you were. Nothing is rescanned, so it
-takes seconds. Your answers are saved with the site, shared by everyone who opens its
-report, and used by every later report and config.
+## 4. Your to-do list is made for you
 
-You do not have to classify everything first. Each tool you leave alone is a decision
-at the top of the to-do list ("Decide: what is getscrolly.com?"), and the changes that
-depend on it say "Waiting on: your decision on what getscrolly.com is" until you make it.
-It is one list: the decisions and the changes are counted together.
+When a scan finishes, the service makes the site's consent tool config, the
+paste-in snippet, the change list and the to-do list from it ("Preparing the changes
+to make on your site…"), with your answers so far. There is no button to press.
 
-## 4. Generate the checklist
+One exception keeps your work safe: if you are already working an earlier scan's
+list (something verified, marked done or failed), a new scan does not replace it,
+because a new config would change the install you may have deployed. The new report
+page then shows that list, with your progress, and says it comes from an earlier
+scan. Each change has a stable id, so a change that is still needed keeps its status
+whenever the list is remade.
 
-Press **Generate the consent tool config** (in the report's "Your to-do list"
-section, or **Generate consent tool config** on the site page). One press makes the
-config, the paste-in snippet and the change list from the scan and your
-classifications, and then refreshes the report so all three agree. The checklist
-appears.
+If making the list fails, the page says why and offers **Try again**. With
+`AUTO_CHECKLIST=0` the page offers **Make my to-do list** instead.
 
-If you classify more tools later, press **Update report with my classifications**
-again. The checklist keeps your progress: each change has a stable id, so a change
-that is still needed keeps its status. If the checklist was regenerated elsewhere
-(another tab, a teammate), the report says so and offers **Show the new checklist**.
+## 5. Read the to-do list
 
-## 5. Read the checklist
+The list is one numbered list. Do it in order: the questions about tools the scan
+does not know come first (their answers decide which changes apply, and what the
+config in the install snippet says), then the install, which the rest rely on. Each
+change has a short title ("Hold the Meta Pixel tag until consent"), a line on why,
+and **How to do it**: numbered plain steps, the markup to paste with a **Copy**
+button, the markup as it is now, and the pages it appears on. The change to do next
+shows its steps open.
 
-The "Your to-do list" section is one ordered list. Do it in order: the decisions about
-tools the scan does not know come first (their answers decide which changes apply, and
-what the config in the install snippet says), then the install, which the rest rely on. Each item has a short title ("Hold the Meta Pixel
-tag until consent"), a line on why, numbered plain steps, the markup to paste with a
-**Copy** button, the markup as it is now, the pages it appears on, and notes.
-
-The order is: decide what each unrecognized tool is; install the consent tool; remove the existing consent tool, if the scan
-found one; fix any tool seen running where it should be off; hold tags in the page;
-remove pixels that load on their own; gate tags inside Google Tag Manager; platform
-settings; consent defaults; vendor calls, DNS and decisions that stay; then
-confirmations in the browser. A tag-manager item, a platform item and so on are
-described in [Compatibility verdicts](./compatibility.md).
+The order is: what each unrecognized tool is for; install the consent tool; remove
+the existing consent tool, if the scan found one; fix any tool seen running where it
+should be off; hold tags in the page; remove pixels that load on their own; gate tags
+inside Google Tag Manager; platform settings; consent defaults; vendor calls, DNS and
+decisions that stay; then confirmations in the browser. The last item is always
+**Run the final scan**. A tag-manager item, a platform item and so on are described
+in [Compatibility verdicts](./compatibility.md).
 
 Each item shows one of these statuses:
 
 | Status | Meaning |
 |---|---|
 | **To do** | Nothing recorded yet. |
-| **Marked done** | You pressed **I've made this change**. Not checked. It is counted apart from verified and never folded into it. |
+| **Marked done** | You pressed **Mark done without checking** (or **I've done this** for a change with no automatic check). Not checked. It is counted apart from verified and never folded into it. |
 | **Verified** | **Verify** ran and the check passed. See [step 7](#_7-verify-each-change) for exactly what that means. |
 | **Failed** | **Verify** ran and the change is missing or wrong. The message says what it found. |
 | **Can't verify automatically** | The check could not decide: the element is gone, the site served a bot challenge, or this kind of change has no automatic check. Never a pass. |
-| **To decide** / **Decided** | Decisions only: whether the site's workspace holds a purpose for that tool. Set by classifying it, never by a button. |
+| **To decide** / **Decided** | Questions only: whether the site holds a purpose for that tool. Set by answering it, never by a button. |
 
-**This also fixes.** An item can list others under "This also fixes". For example,
-holding a tag can also clear a "this tool ran after a refusal" finding for the same
-vendor, and installing the tool covers a vendor's consent call. Those are folded into
-the one change so you make it once; its Verify is its own check of that change.
+**This also fixes.** A change can list others it fixes. For example, holding a tag
+can also clear a "this tool ran after a refusal" finding for the same vendor, and
+installing the tool covers a vendor's consent call. Those are folded into the one
+change so you make it once; its Verify is its own check of that change.
 
-**Decisions.** A "Decide: what is …?" item has no Verify button: its button opens that
-tool's classify form in the report's grid. It shows **To decide** until you pick a main
-purpose (Necessary, Functional, Analytics, Performance or Advertisement; "Other" does not
-decide it), then **Decided** at once. It lists the changes it unblocks. Press **Update
-report with my classifications**: the changes that were waiting are recomputed, kept if the
-tool tracks visitors and dropped if it does not, and the decision stays on the list, done.
-On the site page the item links to it in the report.
+**Waiting on.** A change whose tools are all unclassified names the question it waits
+on and hides its buttons until you answer it. It still counts toward the total.
 
-**Waiting on.** A change whose tools are all unclassified names the decision it waits on
-and hides its buttons until that decision is made. It still counts toward the total.
-
-**Only if they apply.** Chat widgets, embeds and fonts sit in a folded list at the end.
-They are not counted in the progress. Each says when it applies.
+**Only if they apply.** Chat widgets, embeds and fonts sit in a folded list at the
+end. They are not counted in the progress. Each says when it applies.
 
 ## 6. Download the install bundle and make the changes
 
@@ -210,40 +220,30 @@ through, or turn the challenge off for the check, and press Verify again.
 
 **Changes that can't be checked automatically.** DNS changes, decisions to keep an
 exposure, and items with no element to find have no check. They show "Can't be checked
-automatically" and no Verify button. Make the change, press **I've made this change**,
+automatically" and no Verify button. Make the change, press **I've done this**,
 and the rescan decides. An item you marked is shown as "Marked done", apart from
 verified; pressing the button again undoes it.
 
 ## 8. Follow your progress
 
-The to-do list's header reads, for example, "3 of 9 done", then "1 more marked done,
-not verified yet" and "1 failed" when they apply. "Done" counts verified changes and
-decisions made; a change you only marked done is counted apart until Verify passes. The
-site list on the **Sites** page shows the same counts per site, so you can see where each
-one stands without opening it. Items under "Only if they apply" are never counted.
+The to-do list's header reads, for example, "3 of 9 done". "Done" counts verified
+changes, answered questions and changes you marked done; the item itself still shows
+**Marked done** apart from **Verified**. The **Sites** page and the home page's site
+list show the same counts per site. Items under "Only if they apply" are never
+counted.
 
-When every required item is done or marked done, including the install, the last step
-opens up.
+## 9. Run the final scan
 
-## 9. Rescan
+The last item, **Run the final scan**, opens up when every required item is verified,
+decided or marked done, including the install. It starts a new scan of the site with
+the options of its latest scan, from the service's own connection (the only place it
+scans from today), and opens that scan's report page, which fills in as before. A site
+can run only one scan at a time; if one is already running, the button says so. If
+the scan fails or is cancelled, nothing on the list changes and you can start it again.
 
-At the end of the checklist, **Last step: rescan the site**. The scan's location is
-fixed text: it runs from the service's own connection, the only place it scans from
-today. You choose how much:
-
-- **Full** (the default): every visitor choice and normal visits. Use this for the
-  final check. Tick **Also repeat on a slow connection** to visit each choice a
-  second time on a slowed connection (see [Limits](./limits.md#n-of-n-runs)); it
-  catches tracking that slips in when the banner loads late, and takes about three
-  times as long.
-- **Quick**: shorter visits and fewer visitor choices. Use it to see if a round of
-  changes landed; its report covers less and says so.
-
-Press **Rescan site**. The panel follows the scan live (phase, current step, a
-progress bar) and, when it finishes, links to the new report at the section **"Your
-complykit consent tool: what it controls"**. A site can run only one scan at a time;
-if one is already running, the button says so. If the scan fails or is cancelled,
-nothing on the checklist changes and you can start it again.
+The final scan's matrix shows, per tool and visitor action, whether each tool now
+behaves. Its full report (**Technical details**) has the section **"Your complykit
+consent tool: what it controls"**, the per-vendor proof.
 
 ### Reading "what it controls"
 

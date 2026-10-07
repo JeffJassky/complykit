@@ -5,6 +5,8 @@ Status: contract + pure core built (2026-10-07; this document, `src/record/remed
 UI, service, browser spot-check, install bundle, e2e and docs are parallel builds (§9).
 Design authority stays `client-consent-design.md`; this plan adds the owner-facing loop on
 top of B2 (change list), D8 (generator), C1–C4 (workspace), D10 (proof).
+The owner-facing page that carries this loop (live matrix, one to-do list, no Generate /
+Update buttons) is `simple-report.md`.
 
 ## 1. The workflow, end to end
 

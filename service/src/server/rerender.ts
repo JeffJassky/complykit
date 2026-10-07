@@ -33,7 +33,7 @@ const RUN_ID_RE = /^[0-9TZ:.-]{10,40}$/;
 /** The generator's placeholder path: passing it explicitly would change the snippet's note, so it is never carried over. */
 const DEFAULT_SCRIPT_SRC = '/complykit/v1/complykit-consent.js';
 const REPORT = 'consent-report.html';
-const SIBLINGS = ['consent-report.json', 'change-list.md'];
+const SIBLINGS = ['consent-report.json', 'change-list.md', 'owner-report.json'];
 
 export interface RerenderDeps {
   config: ServiceConfig;
@@ -47,6 +47,11 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 
 // One re-render per job at a time: a second click waits for the first.
 const running = new Map<string, Promise<unknown>>();
+
+/** A re-render of this job is running or queued (the report page says "Updating…"). */
+export function rerenderRunning(jobId: string): boolean {
+  return running.has(jobId);
+}
 
 export function rerenderJob(job: JobDetail, body: RerenderRequest, deps: RerenderDeps): Promise<RerenderResponse> {
   const prev = running.get(job.id) ?? Promise.resolve();

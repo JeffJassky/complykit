@@ -5,7 +5,7 @@ import { api } from '../lib/api';
 import { configDownloads, configStoredOf, generatableRuns, generateErrorText, REPORT_REFRESH_FAILED, summarizeWorkspace } from '../lib/sites';
 import { PHASE_LABEL } from '../lib/format';
 import { checklistFromWorkspace, checklistProgress, installZipHref, openDecisions, reportChecklistHref, reportTaskHref, taskStatusLabel, TASK_CHANGE_PREFIX } from '../lib/checklist';
-import { siteHref } from '../lib/useHashView';
+import { reportHref, siteHref } from '../lib/useHashView';
 import { useNow } from '../lib/useNow';
 import { useReviewer } from '../lib/useKb';
 import { useLiveRefresh, useSites, useSiteWorkspace } from '../lib/useSites';
@@ -501,6 +501,7 @@ export function SitePageView({
   const downloads = configDownloads(workspace);
   const generatable = generatableRuns(runs, jobs);
   const latest = generatable[0];
+  const latestJob = latestSiteJob(workspace, jobs);
   const download = (d: (typeof downloads)[number]) => {
     const url = URL.createObjectURL(new Blob([d.body], { type: 'application/json' }));
     const a = document.createElement('a');
@@ -518,6 +519,13 @@ export function SitePageView({
         <h1 id="site-title" className="research-title">
           {workspace.domain}
         </h1>
+        {latestJob ? (
+          <p>
+            <a className="btn btn-sm btn-primary" href={reportHref(latestJob.id)} data-testid="latest-report">
+              Open the latest report
+            </a>
+          </p>
+        ) : null}
         <dl className="kb-facts">
           <div className="fact">
             <dt>Checklist</dt>

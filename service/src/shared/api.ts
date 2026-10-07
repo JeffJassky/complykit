@@ -540,6 +540,119 @@ export interface ReportServiceConfig {
   jobId: string;
 }
 
+// --- The owner report (plans/simple-report.md) -------------------------------------
+// Mirrors complykit's src/report/owner-report.ts (the CLI writes it as
+// owner-report.json beside the consent report: live after every visit, final
+// when the run is written and on every re-render). The service never imports
+// the package; a test checks this mirror against the builder's output.
+
+export type OwnerCellState = 'pending' | 'ok' | 'mismatch' | 'needs-decision' | 'not-checked';
+
+export interface OwnerCell {
+  state: OwnerCellState;
+  expected?: string;
+  observed?: string;
+  reason?: string;
+  runs?: { total: number; active: number };
+}
+
+export interface OwnerColumn {
+  id: string;
+  location: string;
+  scenario: string;
+  /** Plain name of the visitor action ("After rejection"). */
+  label: string;
+  locationLabel?: string;
+  state: 'pending' | 'running' | 'done' | 'not-checked';
+  /** Why the whole column is not checked — said once, not per cell. */
+  note?: string;
+}
+
+export interface OwnerCookieRow {
+  id: string;
+  name: string;
+  kind: string;
+  purpose: string;
+  classified: boolean;
+  cells: OwnerCell[];
+}
+
+export interface OwnerToolRow {
+  id: string;
+  partyId: string;
+  label: string;
+  domain: string;
+  purpose: string;
+  categories: string[];
+  classified: boolean;
+  recognized: boolean;
+  /** The workspace key its classification is saved under (`class:<id>`). */
+  classKey: string;
+  cells: OwnerCell[];
+  cookies: OwnerCookieRow[];
+}
+
+export interface OwnerReport {
+  version: 1;
+  stage: 'live' | 'final';
+  runId: string;
+  generatedAt: string;
+  site: { url: string; host: string; domain: string };
+  scan: {
+    startedAt: string;
+    finishedAt?: string;
+    visitsDone: number;
+    visitsTotal: number;
+    pagesVisited: number;
+    current?: string;
+    location?: { id: string; label: string; observed?: string; verified: boolean; note?: string };
+  };
+  banner: { state: 'pending' | 'detected' | 'none'; provider?: string; visitsWithBanner: number; visitsChecked: number; /** Consent tools seen loading (banner or not). */ consentTools?: string[] };
+  matrix: {
+    columns: OwnerColumn[];
+    tools: OwnerToolRow[];
+    counts: Record<'ok' | 'mismatch' | 'needsDecision' | 'pending' | 'notChecked', number>;
+  };
+  /** Tools whose purpose is not known yet (the to-do list's first items while the checklist does not exist yet). */
+  decisions: Array<{ partyId: string; label: string; domain: string; classKey: string }>;
+  todo?: { tasks: RemediationTask[]; configAt?: string; runId?: string };
+}
+
+/** GET /api/jobs/:id/report — everything the report page shows, in one poll. */
+export interface JobReportResponse {
+  job: JobSummary;
+  /** The registrable domain whose workspace holds the classifications and the to-do list. */
+  domain: string;
+  /** The owner report: live while the scan runs (null until the first one is written), final when done. Null for an accessibility-only job. */
+  report: OwnerReport | null;
+  todo: {
+    /**
+     * waiting   — the scan is running; the list is made when it finishes
+     * preparing — making the list from the finished scan (config + checklist)
+     * ready     — `tasks` is the site's checklist, with status
+     * error     — the list could not be made (`error`); `POST /api/jobs/:id/rerender {generate:true}` retries
+     * none      — no list for this job (failed / cancelled scan, or no consent check)
+     */
+    state: 'waiting' | 'preparing' | 'ready' | 'error' | 'none';
+    tasks: RemediationTask[];
+    /** Over the required tasks: verified = checks passed + decisions made. */
+    progress?: { verified: number; required: number; doneUnverified: number; failed: number };
+    error?: string;
+    configAt?: string;
+    /** The run the checklist was generated from; differs from this job's run when the site's list came from another scan. */
+    runId?: string;
+    /** Whether the checklist came from this job's scan. */
+    fromThisRun?: boolean;
+  };
+  /** A re-render of this report with new classifications is running. */
+  updating: boolean;
+  /** The full HTML report (legal scope, evidence, limits): "Technical details". */
+  technicalReportUrl?: string;
+  accessibilityReportUrl?: string;
+  /** The site's install bundle (once a checklist exists). */
+  installZipUrl?: string;
+}
+
 export interface SiteSummary {
   domain: string;
   updatedAt?: string;
@@ -569,6 +682,8 @@ export interface SitesResponse {
 //   POST   /api/jobs/:id/consent-config  ConsentConfigRequest → ConsentConfigResponse
 //          (a finished consent job: generates the consent tool config with the
 //          site's current workspace and stores it as the workspace `config`)
+//   GET    /api/jobs/:id/report             → JobReportResponse (the owner report page: live while
+//          the scan runs, final when done, with the site's to-do list and its status)
 //   POST   /api/jobs/:id/rerender  RerenderRequest → RerenderResponse
 //          (re-renders the job's consent report from its saved run with the
 //          site's current workspace — no rescan; regenerates the stored config

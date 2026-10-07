@@ -35,8 +35,8 @@ export class Runner {
   constructor(
     private readonly store: JobStore,
     private readonly config: ServiceConfig,
-    /** Called whenever a job reaches a terminal state (idle tracking). */
-    private readonly onSettled: () => void = () => {},
+    /** Called whenever a job reaches a terminal state (idle tracking; the to-do list after a consent scan). */
+    private readonly onSettled: (job?: JobDetail) => void = () => {},
     /** Site workspaces (C3): a consent job applies its site's workspace and records itself as a run. */
     private readonly workspaces?: WorkspaceStore,
   ) {}
@@ -102,7 +102,7 @@ export class Runner {
       this.active.set(id, a);
       a.finished = this.run(a).finally(() => {
         this.active.delete(id);
-        this.onSettled();
+        this.onSettled(job);
         this.pump();
       });
     }

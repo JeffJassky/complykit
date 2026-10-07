@@ -14,6 +14,7 @@ import { KbStore, defaultKbDir, ingestEvaluation } from '../../research/index.js
 import { assembleAndWrite } from '../write-run.js';
 import type { LoadedConfig } from '../config-load.js';
 import { packageVersion } from '../pkg.js';
+import { buildOwnerReport, OWNER_REPORT_FILE, type OwnerReportInput } from '../../report/owner-report.js';
 
 type LoadConfig = (opts: { url?: string; config?: string }, cwd?: string) => Promise<LoadedConfig>;
 
@@ -54,7 +55,10 @@ records everything the browser does, and applies that location's rules.
                            newest earlier consent run of this site in .comply/runs)
   --events <file>          append progress as JSON lines (start, location,
                            scenario-start, scenario-done, done, error) — for UIs.
-                           Repeat runs carry run: 2..N; location carries runs
+                           Repeat runs carry run: 2..N; location carries runs.
+                           With --events the owner report (owner-report.json, beside
+                           the HTML report) is rewritten after every visit, from the
+                           visits finished so far, and a \`live\` event points to it
   --local-copy <file>      TEST MODE: apply a change set to the site inside this
                            browser only (snippet first in <head>, tag rewrites,
                            local files at the tool's path, simulated tag-manager
@@ -244,6 +248,52 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
   };
   event({ type: 'start', runId: String(runId), url: targetUrl, locations: locations.map((l) => l.id) });
 
+  // The owner report, live (plans/simple-report.md): with --events, rewritten
+  // after every visit from the analysis of the visits finished so far, beside
+  // where the HTML report will go. Never stops the scan.
+  const out = values.out ? path.resolve(cwd, values.out) : path.join(runDir(runId, cwd), 'consent-report.html');
+  const ownerFile = path.join(path.dirname(out), OWNER_REPORT_FILE);
+  const scanStartedAt = new Date().toISOString();
+  const live: Pick<OwnerReportInput, 'plan' | 'done' | 'current' | 'locations' | 'pagesVisited'> & { plan: NonNullable<OwnerReportInput['plan']>; done: NonNullable<OwnerReportInput['done']>; locations: NonNullable<OwnerReportInput['locations']> } = { plan: [], done: [], locations: [] };
+  let lastPartial: Parameters<NonNullable<Parameters<typeof runConsentScan>[0]['onPartial']>>[0] | undefined;
+  let liveSite = (() => {
+    const u = new URL(targetUrl);
+    return { url: u.toString(), host: u.hostname, registrableDomain: u.hostname };
+  })();
+  const writeOwner = (input: Omit<OwnerReportInput, 'runId' | 'site' | 'startedAt'>): void => {
+    fs.mkdirSync(path.dirname(ownerFile), { recursive: true });
+    const report = buildOwnerReport({ ...input, runId: String(runId), site: liveSite, startedAt: scanStartedAt });
+    const tmp = `${ownerFile}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(report, null, 2));
+    fs.renameSync(tmp, ownerFile);
+    event({ type: 'live', file: ownerFile, stage: report.stage, visitsDone: report.scan.visitsDone, visitsTotal: report.scan.visitsTotal });
+  };
+  const writeLive = (): void => {
+    if (!eventsFile) return;
+    try {
+      const model = lastPartial ? buildConsentReportModel(lastPartial.evaluation, lastPartial.findings) : undefined;
+      const pages = new Set((lastPartial?.timelines ?? []).flatMap((tl) => tl.snapshot.pages.map((p) => p.url)));
+      writeOwner({ model, stage: 'live', ...live, pagesVisited: pages.size });
+    } catch (err) {
+      process.stderr.write(`owner report (live) not written: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  };
+  const onScanEvent = (e: import('../../collect/browser/evaluation/index.js').EvaluationEvent): void => {
+    event(e as unknown as Record<string, unknown>);
+    if (e.type === 'location') {
+      const label = locations.find((l) => l.id === e.location)?.label;
+      live.locations.push({ id: e.location, ...(label ? { label } : {}), verdict: e.verdict, ...(e.observed ? { observed: e.observed } : {}), ...(e.note ? { note: e.note } : {}) });
+      for (const scenario of e.scenarios) live.plan.push({ location: e.location, scenario, runs: e.runs ?? 1 });
+      writeLive();
+    } else if (e.type === 'scenario-start') {
+      live.current = { location: e.location, scenario: e.scenario, ...(e.run ? { run: e.run } : {}) };
+      writeLive();
+    } else if (e.type === 'scenario-done') {
+      live.done.push({ location: e.location, scenario: e.scenario, ...(e.run ? { run: e.run } : {}) });
+      live.current = undefined;
+    }
+  };
+
   let res: Awaited<ReturnType<typeof runConsentScan>>;
   try {
     res = await runConsentScan({
@@ -267,7 +317,14 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
     // Extra Chromium flags (e.g. --host-resolver-rules for a fixture site), as verify-change takes them.
     launchArgs: process.env.COMPLYKIT_BROWSER_ARGS ? process.env.COMPLYKIT_BROWSER_ARGS.split(/\s+(?=--)/) : undefined,
     trace,
-    onEvent: (e) => event(e as unknown as Record<string, unknown>),
+    onEvent: onScanEvent,
+    onPartial: eventsFile
+      ? (partial) => {
+          lastPartial = partial;
+          liveSite = partial.evaluation.site;
+          writeLive();
+        }
+      : undefined,
   });
   } catch (err) {
     event({ type: 'error', message: err instanceof Error ? err.message : String(err) });
@@ -303,7 +360,6 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
     }
   }
   if (previous) model.since = diffConsentModels(buildConsentReportModel(previous.evaluation, previous.findings), model);
-  const out = values.out ? path.resolve(cwd, values.out) : path.join(dir, 'consent-report.html');
   // Links in the report are run-relative; a report written elsewhere inlines screenshots but links won't resolve.
   // The classifications this report applied (the workspace read before the scan), so a served report can offer an update (R2).
   fs.writeFileSync(out, renderConsentHtml(model, { runDir: dir, render: reportRenderInfo(String(run.id), workspace) }));
@@ -311,6 +367,13 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
   // The owner's change list, beside the report (the report links it by this name).
   const changeList = path.join(path.dirname(out), CHANGE_LIST_FILE);
   fs.writeFileSync(changeList, renderChangeListMarkdown(model));
+  // The owner report, final: the same model, every visit done.
+  liveSite = res.evaluation.site;
+  try {
+    writeOwner({ model, stage: 'final', locations: live.locations, finishedAt: res.evaluation.finishedAt, pagesVisited: new Set((lastPartial?.timelines ?? []).flatMap((tl) => tl.snapshot.pages.map((p) => p.url))).size || undefined });
+  } catch (err) {
+    process.stderr.write(`owner report not written: ${err instanceof Error ? err.message : String(err)}\n`);
+  }
 
   let queued: { added: number; resolved: number } | undefined;
   if (!values['no-kb-queue']) {

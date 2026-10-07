@@ -1,17 +1,24 @@
 import { useEffect, useState } from 'react';
 
 /** The top-level views. `#kb` is the knowledge base, `#sites` and
- *  `#sites/<domain>` are the per-site pages; anything else is checks. */
-export type View = 'checks' | 'kb' | 'sites';
+ *  `#sites/<domain>` are the per-site pages, `#report/<jobId>` is a scan's
+ *  report page; anything else is the home page (checks). */
+export type View = 'checks' | 'kb' | 'sites' | 'report';
 
 export interface Route {
   view: View;
   /** Set on `#sites/<domain>`: the site page rather than the list. */
   domain?: string;
+  /** Set on `#report/<jobId>`. */
+  jobId?: string;
 }
 
 export function parseHash(hash: string): Route {
   if (hash === '#kb') return { view: 'kb' };
+  if (hash.startsWith('#report/')) {
+    const jobId = hash.slice('#report/'.length).replace(/[^A-Za-z0-9_-]/g, '');
+    return jobId ? { view: 'report', jobId } : { view: 'checks' };
+  }
   if (hash === '#sites') return { view: 'sites' };
   if (hash.startsWith('#sites/')) {
     let domain = hash.slice('#sites/'.length);
@@ -26,6 +33,7 @@ export function parseHash(hash: string): Route {
 }
 
 export const siteHref = (domain: string) => `#sites/${encodeURIComponent(domain)}`;
+export const reportHref = (jobId: string) => `#report/${encodeURIComponent(jobId)}`;
 
 const read = (): Route => parseHash(window.location.hash);
 

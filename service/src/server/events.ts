@@ -43,7 +43,9 @@ export type ConsentEvent =
       parties: number;
       unrecognized: number;
     }
-  | { type: 'error'; at: string; message: string };
+  | { type: 'error'; at: string; message: string }
+  /** The owner report (owner-report.json) was rewritten: after each visit (live), and once more when the run is written (final). GET /api/jobs/:id/report reads it. */
+  | { type: 'live'; at: string; file: string; stage: 'live' | 'final'; visitsDone: number; visitsTotal: number };
 
 // --- Tail ---------------------------------------------------------------------
 

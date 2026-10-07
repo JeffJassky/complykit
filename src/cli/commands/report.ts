@@ -24,6 +24,7 @@ import { tracking } from '../../rules/index.js';
 import { buildKnowledgeBase, type KnowledgeEntryInput } from '../../registry/index.js';
 import { KbStore, defaultKbDir } from '../../research/index.js';
 import { readWorkspaceFile, readConsentRunDir, findPreviousConsentRun, type PreviousRun } from '../previous-run.js';
+import { buildOwnerReport, OWNER_REPORT_FILE } from '../../report/owner-report.js';
 import type { WorkspaceSnapshot } from '../../site-workspace.js';
 import { readRunRemediation } from '../remediation-input.js';
 import { buildCoverageIndex } from '../../coverage-index.js';
@@ -170,6 +171,10 @@ export async function cmdReport(argv: string[], loadConfig?: LoadConfig): Promis
         const cl = path.join(path.dirname(values.out), CHANGE_LIST_FILE);
         fs.writeFileSync(cl, renderChangeListMarkdown(model));
         process.stdout.write(`wrote ${cl}\n`);
+        // The owner report (plans/simple-report.md), final, with this rendering's classifications.
+        const owner = path.join(path.dirname(values.out), OWNER_REPORT_FILE);
+        fs.writeFileSync(owner, JSON.stringify(buildOwnerReport({ model, stage: 'final', runId: String(runId), site: evaluation.site, startedAt: evaluation.startedAt, finishedAt: evaluation.finishedAt }), null, 2));
+        process.stdout.write(`wrote ${owner}\n`);
       }
     } else process.stdout.write(text.endsWith('\n') ? text : text + '\n');
     return 0;
