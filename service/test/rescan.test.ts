@@ -10,8 +10,8 @@ afterEach(stopAll);
 // checklist progress on the sites list, and task status across a regeneration.
 
 type S = Awaited<ReturnType<typeof startService>>;
-async function scan(s: S, url: string, opts: { quick?: boolean; accessibility?: boolean } = {}): Promise<string> {
-  const res = await request(s.app).post('/api/batches').send({ urls: url, quick: opts.quick ?? false, checks: { consent: true, accessibility: opts.accessibility ?? false } }).expect(201);
+async function scan(s: S, url: string, opts: { quick?: boolean; slowRepeat?: boolean; accessibility?: boolean } = {}): Promise<string> {
+  const res = await request(s.app).post('/api/batches').send({ urls: url, quick: opts.quick ?? false, slowRepeat: opts.slowRepeat ?? false, checks: { consent: true, accessibility: opts.accessibility ?? false } }).expect(201);
   const id = (res.body as CreateBatchResponse).jobs[0].id;
   await waitForStatus(s, id, ['done']);
   return id;
@@ -26,7 +26,7 @@ describe('POST /api/sites/:domain/rescan', () => {
     const res = await request(s.app).post('/api/sites/example.com/rescan').send({}).expect(201);
     const body = res.body as RescanResponse;
     expect(body.domain).toBe('example.com');
-    expect(body.from).toEqual({ jobId: last, url: 'https://shop.example.com/start', checks: ['consent'], quick: true });
+    expect(body.from).toEqual({ jobId: last, url: 'https://shop.example.com/start', checks: ['consent'], quick: true, slowRepeat: false });
     expect(body.job).toMatchObject({ url: 'https://shop.example.com/start', checks: ['consent'], quick: true });
     expect(['queued', 'running']).toContain(body.job.status);
     // A second click while it runs: refused, naming the job.
@@ -48,6 +48,29 @@ describe('POST /api/sites/:domain/rescan', () => {
     await waitForStatus(s, b.job.id, ['done']);
   });
 
+  it('a full rescan can opt into the slow-connection repeat (default: as the latest job); quick never repeats; a bad value is a 400', async () => {
+    const s = await startService();
+    await scan(s, 'https://shop.example.com/', { slowRepeat: true });
+    await request(s.app).post('/api/sites/example.com/rescan').send({ slowRepeat: 'yes' }).expect(400);
+    // Same options as the latest job: it repeated, so this one does.
+    const same = (await request(s.app).post('/api/sites/example.com/rescan').send({}).expect(201)).body as RescanResponse;
+    expect(same.from.slowRepeat).toBe(true);
+    expect(same.job).toMatchObject({ quick: false, slowRepeat: true });
+    await waitForStatus(s, same.job.id, ['done']);
+    expect(s.store.get(same.job.id)!.log.some((l) => l.includes('--runs 2'))).toBe(true);
+    // Quick wins over an inherited repeat.
+    const quick = (await request(s.app).post('/api/sites/example.com/rescan').send({ quick: true }).expect(201)).body as RescanResponse;
+    expect(quick.job).toMatchObject({ quick: true, slowRepeat: false });
+    await waitForStatus(s, quick.job.id, ['done']);
+    // Off by request, then on by request after a quick one.
+    const off = (await request(s.app).post('/api/sites/example.com/rescan').send({ quick: false, slowRepeat: false }).expect(201)).body as RescanResponse;
+    expect(off.job).toMatchObject({ quick: false, slowRepeat: false });
+    await waitForStatus(s, off.job.id, ['done']);
+    const on = (await request(s.app).post('/api/sites/example.com/rescan').send({ slowRepeat: true }).expect(201)).body as RescanResponse;
+    expect(on.job).toMatchObject({ quick: false, slowRepeat: true });
+    await waitForStatus(s, on.job.id, ['done']);
+  });
+
   it('keeps the accessibility check when the last job had it; falls back to the workspace’s newest run URL; 404 with nothing to repeat', async () => {
     const s = await startService();
     await scan(s, 'https://a11y.example.net/', { accessibility: true });
@@ -57,7 +80,7 @@ describe('POST /api/sites/:domain/rescan', () => {
 
     await request(s.app).patch('/api/sites/example.org/workspace').send({ runs: [{ id: 'r1', url: 'https://www.example.org/home' }] }).expect(200);
     const f = (await request(s.app).post('/api/sites/example.org/rescan').send({}).expect(201)).body as RescanResponse;
-    expect(f.from).toEqual({ url: 'https://www.example.org/home', checks: ['consent'], quick: false });
+    expect(f.from).toEqual({ url: 'https://www.example.org/home', checks: ['consent'], quick: false, slowRepeat: false });
     await waitForStatus(s, f.job.id, ['done']);
 
     const none = await request(s.app).post('/api/sites/nothing.example/rescan').send({}).expect(404);

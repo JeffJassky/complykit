@@ -1051,6 +1051,19 @@ code,
   border-color: var(--border);
   border-style: dashed;
 }
+/* An upcoming visit, named (the plan is known). */
+.sc-upcoming {
+  width: auto;
+  padding: 0 8px;
+  color: var(--faint);
+}
+.sc-upcoming .sc-dot {
+  color: var(--border-strong);
+}
+/* A slowed-connection repeat: same status colours, a dotted outline. */
+.sc-repeat {
+  border-style: dotted;
+}
 
 .job-foot {
   display: flex;
@@ -1088,6 +1101,11 @@ code,
   color: var(--blue);
   border-color: var(--blue-bd);
   background: var(--blue-bg);
+}
+.tag-slow {
+  color: var(--purple);
+  border-color: var(--purple-bd);
+  background: var(--purple-bg);
 }
 
 /* ---------- Reports ---------- */
@@ -2855,6 +2873,10 @@ textarea.input {
   gap: 8px;
   align-items: baseline;
   margin: 4px 0;
+}
+.checklist-rescan-options .option-nested {
+  margin-left: 24px;
+  font-size: 14px;
 }
 .checklist-also {
   margin: 6px 0;

@@ -135,12 +135,15 @@ export interface EvaluationPolicy {
   scenariosFor(spec: LocationSpec, verification: LocationVerification): ScenarioId[];
 }
 export type EvaluationEvent =
-  | { type: 'location'; location: string; verdict: string; observed?: string; scenarios: ScenarioId[]; note?: string }
-  | { type: 'scenario-start'; location: string; scenario: ScenarioId }
+  /** `runs`: visits planned per scenario (1 when absent, as older CLIs wrote it); the planned visit count is scenarios x runs. */
+  | { type: 'location'; location: string; verdict: string; observed?: string; scenarios: ScenarioId[]; runs?: number; note?: string }
+  /** `run`: the visit number, present only on repeat visits (2..runs, the slowed-connection repeats); absent = the first visit. */
+  | { type: 'scenario-start'; location: string; scenario: ScenarioId; run?: number }
   | {
       type: 'scenario-done';
       location: string;
       scenario: ScenarioId;
+      run?: number;
       status: 'tested' | 'not-tested' | 'not-applicable';
       reason?: string;
       requests: number;

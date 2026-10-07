@@ -8,6 +8,9 @@
 //   unverified.*  location unverified, no scenarios
 //   anything else 30ms between events (FAKE_CLI_DELAY overrides)
 // consent also writes env.json (the KB dir it was given) into its cwd.
+// --runs N (N > 1) adds the real CLI's repeat events: the location plans `runs`,
+// each tested scenario gets scenario-start/-done with `run: 2..N`, and a
+// not-applicable one a skipped-repeat scenario-done per run.
 //
 // `kb <sub>` keeps a tiny JSON store at <--dir>/fake-kb.json, seeded on first
 // use, and appends every invocation's argv to <--dir>/calls.ndjson so tests
@@ -51,7 +54,8 @@ async function consent() {
     process.exit(2);
   }
   const scenarios = host.startsWith('unverified.') ? [] : ['do-nothing', 'reject', 'gpc'];
-  emit({ type: 'location', location: 'local', verdict: scenarios.length ? 'verified' : 'unverified', observed: 'US-FL', scenarios, ...(scenarios.length ? {} : { note: 'no geolocation source answered' }) });
+  const runs = Math.max(1, Number(opts.runs ?? 1) || 1);
+  emit({ type: 'location', location: 'local', verdict: scenarios.length ? 'verified' : 'unverified', observed: 'US-FL', scenarios, runs, ...(scenarios.length ? {} : { note: 'no geolocation source answered' }) });
   for (const [i, scenario] of scenarios.entries()) {
     emit({ type: 'scenario-start', location: 'local', scenario });
     await sleep(delay);
@@ -60,6 +64,15 @@ async function consent() {
     fs.appendFileSync(opts.events, done.slice(0, 20));
     await sleep(Math.min(delay, 20));
     fs.appendFileSync(opts.events, done.slice(20) + '\n');
+    for (let run = 2; run <= runs; run++) {
+      if (i === 1) {
+        emit({ type: 'scenario-done', location: 'local', scenario, run, status: 'not-applicable', reason: 'repeat skipped: the first visit was not applicable', requests: 0, thirdPartyRequests: 0, parties: 0, cookies: 0, durationMs: 0 });
+        continue;
+      }
+      emit({ type: 'scenario-start', location: 'local', scenario, run });
+      await sleep(delay);
+      emit({ type: 'scenario-done', location: 'local', scenario, run, status: 'tested', requests: 1, thirdPartyRequests: 1, parties: 1, cookies: 1, durationMs: delay });
+    }
   }
   const runDir = path.join(cwd, '.comply', 'runs', runId);
   fs.mkdirSync(path.join(runDir, 'evidence'), { recursive: true });

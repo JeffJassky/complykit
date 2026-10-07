@@ -327,6 +327,24 @@ describe('rescan and progress on the sites list', () => {
     expect(full).toMatch(/<input type="radio"[^>]*checked=""[^>]*\/> <span>Full/);
   });
 
+  it('rescan options: a full rescan can also repeat on a slow connection (preselected from the latest scan); not with quick', () => {
+    const slowJob = { ...job('job-2'), checks: ['consent'], quick: false, slowRepeat: true } as JobSummary;
+    const box = (html: string) => html.match(/<input type="checkbox"[^>]*data-testid="rescan-slow-repeat"[^>]*\/>/)?.[0] ?? '';
+    const on = renderToStaticMarkup(<ChecklistPanel workspace={withTasks} jobs={{ 'job-2': slowJob }} />);
+    expect(on).toContain('Also repeat on a slow connection');
+    expect(on).toContain('takes about 3x longer');
+    expect(box(on)).toContain('checked=""');
+    expect(box(on)).not.toContain('disabled=""');
+    const off = renderToStaticMarkup(<ChecklistPanel workspace={withTasks} jobs={{ 'job-2': { ...slowJob, slowRepeat: false } }} />);
+    expect(box(off)).not.toContain('checked=""');
+    // Quick preselected: the repeat is off and cannot be turned on.
+    const quick = renderToStaticMarkup(<ChecklistPanel workspace={withTasks} jobs={{ 'job-2': { ...slowJob, quick: true } }} />);
+    expect(box(quick)).toContain('disabled=""');
+    expect(box(quick)).not.toContain('checked=""');
+    const started = renderToStaticMarkup(<ChecklistPanel workspace={withTasks} jobs={null} rescan={{ started: { jobId: 'j9', url: 'https://example-shop.test/', quick: false, slowRepeat: true } }} />);
+    expect(started).toContain('Rescanning https://example-shop.test/ (full, with a slow-connection repeat)… starting');
+  });
+
   it('follows the started rescan from the live jobs: progress while it runs, then a link straight to the new report’s proof section', () => {
     const started = { jobId: 'j9', url: 'https://example-shop.test/', quick: false };
     const running = { id: 'j9', status: 'running', progress: { fraction: 0.4, done: 2, total: 5, phase: 'scenarios', current: 'local · reject' } } as unknown as JobSummary;

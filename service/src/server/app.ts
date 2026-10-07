@@ -211,7 +211,8 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
     }
     const batchId = newId();
     const quick = body.quick === true;
-    const jobs = urls.map((url) => store.create({ batchId, url, checks, quick }));
+    const slowRepeat = body.slowRepeat === true;
+    const jobs = urls.map((url) => store.create({ batchId, url, checks, quick, slowRepeat }));
     for (const job of jobs) runner.enqueue(job.id);
     const out: CreateBatchResponse = { batchId, jobs: jobs.map(toSummary), rejected };
     res.status(201).json(out);

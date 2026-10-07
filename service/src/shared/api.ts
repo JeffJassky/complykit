@@ -15,6 +15,9 @@ export interface CreateBatchRequest {
   checks?: Partial<Record<CheckKind, boolean>>;
   /** Quick mode: shorter visits, reduced scenario set (consent only). Default false. */
   quick?: boolean;
+  /** Also repeat every visitor choice on a slowed connection (Slow 3G, CPU x4) to catch timing races; about 3x longer.
+   *  Consent only; ignored with quick (quick is always one pass). Default false. */
+  slowRepeat?: boolean;
 }
 
 export interface CreateBatchResponse {
@@ -43,7 +46,10 @@ export interface JobMetrics {
   cookies: number; // max seen in one scenario
   banner?: string; // consent tool detected, if any
   location?: { id: string; verdict: string; observed?: string };
-  scenarios: Array<{ location: string; scenario: string; status: 'running' | 'tested' | 'not-tested' | 'not-applicable'; reason?: string; durationMs?: number }>;
+  /** `run` is set only on slowed-connection repeats (2..); absent = the first visit. */
+  scenarios: Array<{ location: string; scenario: string; run?: number; status: 'running' | 'tested' | 'not-tested' | 'not-applicable'; reason?: string; durationMs?: number }>;
+  /** Every planned visit, in run order, as each location's plan arrives (absent on jobs from before it existed). */
+  planned?: Array<{ location: string; scenario: string; run?: number }>;
 }
 
 export interface JobResult {
@@ -74,6 +80,8 @@ export interface JobSummary {
   host: string;
   checks: CheckKind[];
   quick: boolean;
+  /** The consent scan repeats every visitor choice on a slowed connection (see CreateBatchRequest.slowRepeat). */
+  slowRepeat: boolean;
   status: JobStatus;
   createdAt: string; // ISO
   startedAt?: string;
@@ -436,6 +444,8 @@ export interface RerenderRequest {
 export interface RescanRequest {
   /** Quick (shorter visits, fewer visitor choices) or full; default: as the site's latest job. */
   quick?: boolean;
+  /** Repeat on a slowed connection (full scans only); default: as the site's latest job. Always false when the rescan is quick. */
+  slowRepeat?: boolean;
 }
 
 /** POST /api/sites/:domain/rescan: a new consent job with the options of the site's latest one (quick / full as the request chooses). */
@@ -443,8 +453,8 @@ export interface RescanResponse {
   domain: string;
   /** The new job (queued). */
   job: JobSummary;
-  /** What it repeats: the latest job's URL, checks and quick flag (or the workspace's newest run URL when no job is left). The new job's own `quick` is the request's choice when it made one. */
-  from: { jobId?: string; url: string; checks: CheckKind[]; quick: boolean };
+  /** What it repeats: the latest job's URL, checks, quick and slowRepeat flags (or the workspace's newest run URL when no job is left). The new job's own `quick` / `slowRepeat` are the request's choice when it made one. */
+  from: { jobId?: string; url: string; checks: CheckKind[]; quick: boolean; slowRepeat: boolean };
 }
 
 /** The job's consent report re-rendered from its saved run with the site's current workspace (R2). */
@@ -564,7 +574,7 @@ export interface SitesResponse {
 //   PATCH  /api/sites/:domain/workspace  SiteWorkspacePatch → SiteWorkspacePatchResponse
 //   GET    /api/sites/:domain/remediation   → RemediationResponse (config.value.tasks + task:change:* status)
 //   POST   /api/sites/:domain/rescan  RescanRequest → RescanResponse (201: a new consent job with the
-//          latest job's URL / checks / quick, or the requested quick; 409 while a scan of the site is queued or running)
+//          latest job's URL / checks / quick / slowRepeat, or the requested ones; 409 while a scan of the site is queued or running)
 //   POST   /api/sites/:domain/remediation/:id/verify → VerifyTaskResponse (runs `complykit
 //          verify-change`, stores { status, lastVerify } by 'verify'; 409 while another
 //          verify for the site runs, or for a manual task)

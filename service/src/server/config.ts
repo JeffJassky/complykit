@@ -34,9 +34,16 @@ export interface ServiceConfig {
   consentClientDist: string;
   version: string;
   production: boolean;
-  /** Visits per consent scenario (CONSENT_RUNS, default 2): runs after the first repeat under network + CPU throttling to catch timing races. 1 = single run. */
+  /**
+   * Visits per consent scenario for a job that opts into the slowed repeat
+   * (`slowRepeat`): CONSENT_RUNS, default 2, 2 to 5 (below 2 counts as 2). Runs
+   * after the first repeat under Slow 3G + CPU x4 to catch timing races. Every
+   * other job, and every quick job, is a single pass: one visit per scenario.
+   * See consentRunsFor.
+   */
   consentRuns?: number;
-  /** Hard cap per job, all checks included. */
+  /** Hard cap per job for a single pass, all checks included (45 min). A job with
+   *  repeat runs gets more: see jobTimeoutFor. */
   jobTimeoutMs: number;
   /** SIGTERM → SIGKILL grace when stopping a check process. */
   killGraceMs: number;
@@ -47,6 +54,27 @@ export interface ServiceConfig {
 /** The service directory (holds package.json). Same depth from src/server and
  *  dist/server, so this works under tsx and from the compiled output. */
 export const SERVICE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/**
+ * How much longer a slowed repeat takes than a normal visit. Mirrors the CLI's
+ * THROTTLED_BUDGET_FACTOR (3): each repeat run gets three times the scenario
+ * budget, so the job cap grows by the same factor per extra run.
+ */
+export const SLOW_REPEAT_TIMEOUT_FACTOR = 3;
+
+/** Visits per consent scenario for this job: 1 unless it opted into the slowed repeat (never for quick). */
+export function consentRunsFor(job: { quick: boolean; slowRepeat?: boolean }, config: Pick<ServiceConfig, 'consentRuns'>): number {
+  if (job.quick || !job.slowRepeat) return 1;
+  return Math.max(2, Math.min(5, config.consentRuns ?? 2));
+}
+
+/**
+ * The job's hard cap: jobTimeoutMs x (1 + SLOW_REPEAT_TIMEOUT_FACTOR x (runs - 1)).
+ * runs = 1 → 45 min; runs = 2 → 180 min; runs = 3 → 315 min.
+ */
+export function jobTimeoutFor(config: Pick<ServiceConfig, 'jobTimeoutMs'>, runs: number): number {
+  return config.jobTimeoutMs * (1 + SLOW_REPEAT_TIMEOUT_FACTOR * Math.max(0, runs - 1));
+}
 
 function int(env: NodeJS.ProcessEnv, key: string, fallback: number, min = 0): number {
   const raw = env[key];
@@ -100,7 +128,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     consentClientDist: path.resolve(env.COMPLYKIT_CLIENT_DIST || path.join(SERVICE_DIR, '..', 'client', 'dist')),
     version: readVersion(),
     production,
-    consentRuns: Math.min(5, int(env, 'CONSENT_RUNS', 2, 1)),
+    consentRuns: Math.max(2, Math.min(5, int(env, 'CONSENT_RUNS', 2, 1))),
     jobTimeoutMs: 45 * 60_000,
     killGraceMs: 10_000,
     pollMs: 500,

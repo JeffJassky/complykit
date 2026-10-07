@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { JobDetail } from '../shared/api.js';
-import type { ServiceConfig } from './config.js';
+import { consentRunsFor, jobTimeoutFor, type ServiceConfig } from './config.js';
 import { ConsentProgress, NdjsonTail, fraction } from './events.js';
 import type { JobStore } from './store.js';
 import type { WorkspaceStore } from './workspace.js';
@@ -125,7 +125,9 @@ export class Runner {
       : { fraction: 0, done: 0, total: 1, phase: 'accessibility', current: 'accessibility scan' };
     this.store.update(job);
 
-    const timeout = setTimeout(() => this.stop(a, 'timeout'), this.config.jobTimeoutMs);
+    // One pass gets the base cap; each slowed repeat adds SLOW_REPEAT_TIMEOUT_FACTOR times it.
+    const timeoutMs = jobTimeoutFor(this.config, consent ? consentRunsFor(job, this.config) : 1);
+    const timeout = setTimeout(() => this.stop(a, 'timeout'), timeoutMs);
     try {
       if (consent) await this.runConsent(a, a11y ? 1 : 0);
       if (a11y) await this.runAccessibility(a);
@@ -141,7 +143,7 @@ export class Runner {
           a.reason === 'stopped'
             ? 'server stopped'
             : a.reason === 'timeout'
-              ? `timed out after ${Math.round(this.config.jobTimeoutMs / 60_000)} minutes`
+              ? `timed out after ${Math.round(timeoutMs / 60_000)} minutes`
               : (err as Error).message;
       }
     } finally {
@@ -170,7 +172,8 @@ export class Runner {
     );
     const site = await this.siteArgs(job, dir);
     tail.start();
-    const args = ['consent', '--url', job.url, '--cwd', dir, '--events', eventsFile, '--quiet', '--runs', String(this.config.consentRuns ?? 2), ...(job.quick ? ['--quick'] : []), ...site.args];
+    // COMPLYKIT_DEBUG drops --quiet so the CLI's per-visit stage trace lands in the job log.
+    const args = ['consent', '--url', job.url, '--cwd', dir, '--events', eventsFile, ...(process.env.COMPLYKIT_DEBUG ? [] : ['--quiet']), '--runs', String(consentRunsFor(job, this.config)), ...(job.quick ? ['--quick'] : []), ...site.args];
     let res: StepResult;
     try {
       res = await this.step(a, 'consent', args, dir);

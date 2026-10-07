@@ -249,7 +249,7 @@ function ChecklistItem({ task, domain, state, onVerify, onMarkDone }: { task: Re
 export interface RescanState {
   busy?: boolean;
   error?: string;
-  started?: { jobId: string; url: string; quick: boolean };
+  started?: { jobId: string; url: string; quick: boolean; slowRepeat?: boolean };
 }
 
 /** The proof section of a consent report: the rescan's final word. */
@@ -262,7 +262,7 @@ function RescanProgress({ started, job }: { started: NonNullable<RescanState['st
     return (
       <div className="checklist-rescan-follow" role="status" data-testid="rescan-progress">
         <p className="muted">
-          Rescanning {started.url} ({started.quick ? 'quick' : 'full'})… {job ? `${PHASE_LABEL[job.progress.phase]}${job.progress.current ? ` — ${job.progress.current}` : ''}` : 'starting'}
+          Rescanning {started.url} ({started.quick ? 'quick' : started.slowRepeat ? 'full, with a slow-connection repeat' : 'full'})… {job ? `${PHASE_LABEL[job.progress.phase]}${job.progress.current ? ` — ${job.progress.current}` : ''}` : 'starting'}
         </p>
         <progress className="checklist-progress" max={100} value={pct} aria-label="Rescan progress" />
       </div>
@@ -290,19 +290,23 @@ export function RescanPanel({
   canRescan,
   remaining,
   defaultQuick = false,
+  defaultSlowRepeat = false,
   job,
 }: {
   rescan?: RescanState;
-  onRescan?: (opts: { quick: boolean }) => void;
+  onRescan?: (opts: { quick: boolean; slowRepeat: boolean }) => void;
   canRescan: boolean;
   remaining: number;
   /** The site's latest scan was quick: preselect it. */
   defaultQuick?: boolean;
+  /** The site's latest scan repeated on a slow connection: preselect it. */
+  defaultSlowRepeat?: boolean;
   /** The started rescan's job, live (undefined until the stream has it). */
   job?: JobSummary;
 }) {
   const id = useId();
   const [quick, setQuick] = useState(defaultQuick);
+  const [slowRepeat, setSlowRepeat] = useState(defaultSlowRepeat);
   const running = Boolean(rescan.started) && (!job || job.status === 'queued' || job.status === 'running');
   return (
     <div className="checklist-rescan" data-testid="rescan">
@@ -322,12 +326,16 @@ export function RescanPanel({
             <label className="option">
               <input type="radio" name={`${id}-mode`} checked={!quick} onChange={() => setQuick(false)} /> <span>Full — every visitor choice, normal visits (best for the final check)</span>
             </label>
+            <label className="option option-nested">
+              <input type="checkbox" checked={!quick && slowRepeat} disabled={quick} onChange={(e) => setSlowRepeat(e.target.checked)} data-testid="rescan-slow-repeat" />{' '}
+              <span>Also repeat on a slow connection — catches tracking that slips in when the banner loads late; takes about 3x longer</span>
+            </label>
             <label className="option">
               <input type="radio" name={`${id}-mode`} checked={quick} onChange={() => setQuick(true)} /> <span>Quick — shorter visits, fewer visitor choices</span>
             </label>
           </fieldset>
           <p>
-            <button type="button" className="btn btn-sm" disabled={rescan.busy || running} onClick={() => onRescan?.({ quick })}>
+            <button type="button" className="btn btn-sm" disabled={rescan.busy || running} onClick={() => onRescan?.({ quick, slowRepeat: !quick && slowRepeat })}>
               {rescan.busy ? 'Starting…' : rescan.started && !running ? 'Rescan again' : 'Rescan site'}
             </button>
           </p>
@@ -371,7 +379,7 @@ export function ChecklistPanel({
   onVerify?: (t: RemediationTask) => void;
   onMarkDone?: (t: RemediationTask) => void;
   rescan?: RescanState;
-  onRescan?: (opts: { quick: boolean }) => void;
+  onRescan?: (opts: { quick: boolean; slowRepeat: boolean }) => void;
 }) {
   const tasks = checklistFromWorkspace(workspace);
   const report = reportChecklistHref(workspace, jobs);
@@ -412,6 +420,7 @@ export function ChecklistPanel({
             canRescan={workspace.runs.some((r) => r.url) || Object.values(jobs ?? {}).some((j) => j.checks?.includes('consent'))}
             remaining={p.required - p.verified - p.doneUnverified}
             defaultQuick={latestSiteJob(workspace, jobs)?.quick ?? false}
+            defaultSlowRepeat={latestSiteJob(workspace, jobs)?.slowRepeat ?? false}
             job={rescan?.started ? jobs?.[rescan.started.jobId] : undefined}
           />
         </>
@@ -446,7 +455,7 @@ export function SitePageView({
   onVerify?: (t: RemediationTask) => void;
   onMarkDone?: (t: RemediationTask) => void;
   rescan?: RescanState;
-  onRescan?: (opts: { quick: boolean }) => void;
+  onRescan?: (opts: { quick: boolean; slowRepeat: boolean }) => void;
 }) {
   const { runs, openTasks, doneTasks, classifications } = summarizeWorkspace(workspace);
   const tasks = checklistFromWorkspace(workspace);
@@ -630,12 +639,12 @@ export function SitePage({ domain, jobs }: { domain: string; jobs: Record<string
     }
   };
   const [rescan, setRescan] = useState<RescanState>({});
-  const onRescan = async (opts: { quick: boolean }) => {
+  const onRescan = async (opts: { quick: boolean; slowRepeat: boolean }) => {
     if (rescan.busy) return;
     setRescan({ busy: true });
     try {
-      const res = await api.rescan(domain, { quick: opts.quick });
-      setRescan({ started: { jobId: res.job.id, url: res.job.url, quick: res.job.quick } });
+      const res = await api.rescan(domain, { quick: opts.quick, slowRepeat: opts.slowRepeat });
+      setRescan({ started: { jobId: res.job.id, url: res.job.url, quick: res.job.quick, slowRepeat: res.job.slowRepeat } });
     } catch (err) {
       setRescan({ error: err instanceof Error ? err.message : String(err) });
     }

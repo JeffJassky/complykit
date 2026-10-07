@@ -13,6 +13,11 @@ function CheckTags({ job }: { job: JobSummary }) {
       {job.checks.includes('consent') ? <span className="tag">Consent</span> : null}
       {job.checks.includes('accessibility') ? <span className="tag">WCAG</span> : null}
       {job.quick ? <span className="tag tag-quick">Quick</span> : null}
+      {job.slowRepeat ? (
+        <span className="tag tag-slow" title="Every visitor choice is repeated on a slow connection">
+          Slow repeat
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -113,7 +118,7 @@ function RunningCard({ job, now, onUpdated }: { job: JobSummary; now: number; on
         />
       </dl>
 
-      <ScenarioStrip scenarios={m.scenarios} pending={pending} /></details>
+      <ScenarioStrip scenarios={m.scenarios} planned={m.planned} pending={pending} /></details>
 
       <div className="job-foot">
         <CheckTags job={job} />

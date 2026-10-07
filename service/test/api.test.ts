@@ -3,6 +3,7 @@ import path from 'node:path';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CreateBatchResponse, JobDetail, JobsResponse } from '../src/shared/api.js';
+import { consentRunsFor, jobTimeoutFor, loadConfig } from '../src/server/config.js';
 import { binaryParser, startService, stopAll, waitFor, waitForStatus } from './helpers.js';
 
 afterEach(stopAll);
@@ -95,6 +96,14 @@ describe('job lifecycle', () => {
     expect(job.result?.downloadUrl).toBe(`/api/jobs/${id}/download`);
     expect(job.log.some((l) => l.includes('$ complykit consent --url https://site.example.com/'))).toBe(true);
     expect(job.log.some((l) => l.includes('--quick'))).toBe(true);
+    // Single pass: one visit per scenario.
+    expect(job.slowRepeat).toBe(false);
+    expect(job.log.some((l) => l.includes('--runs 1'))).toBe(true);
+    expect(job.metrics.planned).toEqual([
+      { location: 'local', scenario: 'do-nothing' },
+      { location: 'local', scenario: 'reject' },
+      { location: 'local', scenario: 'gpc' },
+    ]);
 
     // Persisted to disk.
     await s.store.flush();
@@ -159,11 +168,86 @@ describe('job lifecycle', () => {
     expect(job.error).toMatch(/^timed out after/);
   });
 
+  it('the hard timeout scales with the slow-connection repeat', async () => {
+    // slow.* takes ~1.6 s for one pass, ~2.3 s with the repeat. A 1 s cap kills the
+    // single pass; the repeat job's cap is 1 s x (1 + 3) = 4 s and it finishes.
+    const s = await startService({ jobTimeoutMs: 1000 });
+    const one = await request(s.app).post('/api/batches').send({ urls: 'slow.example.com' }).expect(201);
+    const two = await request(s.app).post('/api/batches').send({ urls: 'slow.example.org', slowRepeat: true }).expect(201);
+    const single = await waitForStatus(s, (one.body as CreateBatchResponse).jobs[0].id, ['failed', 'done']);
+    const repeated = await waitForStatus(s, (two.body as CreateBatchResponse).jobs[0].id, ['failed', 'done']);
+    expect(single.status).toBe('failed');
+    expect(single.error).toMatch(/^timed out after/);
+    expect(repeated.status).toBe('done');
+  });
+
   it('fails cleanly when the CLI is missing', async () => {
     const s = await startService({ cliPath: '/nonexistent/cli.js' });
     const res = await request(s.app).post('/api/batches').send({ urls: 'site.example.com' }).expect(201);
     const job = await waitForStatus(s, (res.body as CreateBatchResponse).jobs[0].id, ['failed', 'done']);
     expect(job.error).toContain('CLI not found');
+  });
+});
+
+describe('slow-connection repeat (opt-in)', () => {
+  it('a job that opts in passes --runs 2 and counts the repeats as steps, with a named current step', async () => {
+    const s = await startService();
+    const currents: string[] = [];
+    s.store.on('change', (j) => {
+      if (j.progress.current) currents.push(j.progress.current);
+    });
+    const res = await request(s.app).post('/api/batches').send({ urls: 'site.example.com', slowRepeat: true }).expect(201);
+    const created = (res.body as CreateBatchResponse).jobs[0];
+    expect(created).toMatchObject({ quick: false, slowRepeat: true });
+    const job = await waitForStatus(s, created.id, ['done']);
+    expect(job.log.some((l) => l.includes('--runs 2'))).toBe(true);
+    // 3 scenarios x 2 runs: the skipped repeat of the not-applicable one still counts.
+    expect(job.progress).toMatchObject({ done: 6, total: 6, fraction: 1 });
+    expect(job.metrics.planned).toHaveLength(6);
+    expect(job.metrics.planned?.slice(0, 2)).toEqual([
+      { location: 'local', scenario: 'do-nothing' },
+      { location: 'local', scenario: 'do-nothing', run: 2 },
+    ]);
+    expect(job.metrics.scenarios.map((x) => [x.scenario, x.run, x.status])).toEqual([
+      ['do-nothing', undefined, 'tested'],
+      ['do-nothing', 2, 'tested'],
+      ['reject', undefined, 'not-applicable'],
+      ['reject', 2, 'not-applicable'],
+      ['gpc', undefined, 'tested'],
+      ['gpc', 2, 'tested'],
+    ]);
+    expect(currents).toContain('local · do-nothing (slow-connection repeat)');
+  });
+
+  it('quick is always one pass, and so is an accessibility-only job', async () => {
+    const s = await startService();
+    const res = await request(s.app).post('/api/batches').send({ urls: 'site.example.com', quick: true, slowRepeat: true }).expect(201);
+    const job = await waitForStatus(s, (res.body as CreateBatchResponse).jobs[0].id, ['done']);
+    expect(job).toMatchObject({ quick: true, slowRepeat: false });
+    expect(job.log.some((l) => l.includes('--runs 1'))).toBe(true);
+    const a11y = await request(s.app).post('/api/batches').send({ urls: 'site.example.com', checks: { consent: false, accessibility: true }, slowRepeat: true }).expect(201);
+    expect((a11y.body as CreateBatchResponse).jobs[0].slowRepeat).toBe(false);
+  });
+
+  it('CONSENT_RUNS sets the opted-in visit count (2 to 5); everything else is one visit', () => {
+    expect(loadConfig({}).consentRuns).toBe(2);
+    expect(loadConfig({ CONSENT_RUNS: '3' }).consentRuns).toBe(3);
+    expect(loadConfig({ CONSENT_RUNS: '1' }).consentRuns).toBe(2);
+    expect(loadConfig({ CONSENT_RUNS: '9' }).consentRuns).toBe(5);
+    const cfg = { consentRuns: 3 };
+    expect(consentRunsFor({ quick: false, slowRepeat: false }, cfg)).toBe(1);
+    expect(consentRunsFor({ quick: false }, cfg)).toBe(1); // a job from before the option
+    expect(consentRunsFor({ quick: true, slowRepeat: true }, cfg)).toBe(1);
+    expect(consentRunsFor({ quick: false, slowRepeat: true }, cfg)).toBe(3);
+    expect(consentRunsFor({ quick: false, slowRepeat: true }, {})).toBe(2);
+  });
+
+  it('the job cap is jobTimeoutMs x (1 + 3 x (runs - 1)): 45 min, 180 min, 315 min', () => {
+    const cfg = { jobTimeoutMs: loadConfig({}).jobTimeoutMs };
+    expect(cfg.jobTimeoutMs).toBe(45 * 60_000);
+    expect(jobTimeoutFor(cfg, 1)).toBe(45 * 60_000);
+    expect(jobTimeoutFor(cfg, 2)).toBe(180 * 60_000);
+    expect(jobTimeoutFor(cfg, 3)).toBe(315 * 60_000);
   });
 });
 

@@ -55,6 +55,7 @@ Then open `http://localhost:8080`.
 | `PORT` | Default `8080`. |
 | `COMPLYKIT_KB_DIR` | Where the tool knowledge base lives. Default: `<DATA_DIR>/kb`. Point it at an existing store to reuse tools you have already confirmed. |
 | `COMPLYKIT_BROWSER_CHANNEL=chrome` | Use your installed Google Chrome. Set this when Playwright's own Chromium is not installed (the scans and the **Verify** browser checks both read it). Without either, they fail to start a browser. |
+| `CONSENT_RUNS` | Visits per visitor choice when a scan opts into **Also repeat on a slow connection** (2 to 5, default 2). Other scans visit each choice once. |
 | `COMPLYKIT_CLI`, `COMPLYKIT_CLIENT_DIST` | Only if you built into non-default places: the built `dist/cli.js`, and the `client/dist` folder the install bundle copies from. |
 
 ## 2. Scan, then open the report
@@ -63,7 +64,9 @@ On the home page, under **Scan a website**, enter the site's address, leave **Vi
 privacy** ticked (that is the consent scan), and press **Start scan**. The page shows
 the scan's progress. A full scan takes some minutes; it visits several pages as a
 first-time visitor and tries each visitor choice (accept, reject, withdraw, Global
-Privacy Control).
+Privacy Control), once each. **Scan options** has **Also repeat on a slow
+connection**: every choice is visited again on a slowed connection to catch timing
+races. It takes about three times as long, and the progress bar counts the repeats.
 
 When it finishes, open its report. The report lists, for each tool the site loads,
 what it did in each visitor choice, and below that the **compatibility** section and
@@ -215,7 +218,10 @@ fixed text: it runs from the service's own connection, the only place it scans f
 today. You choose how much:
 
 - **Full** (the default): every visitor choice and normal visits. Use this for the
-  final check.
+  final check. Tick **Also repeat on a slow connection** to visit each choice a
+  second time on a slowed connection (see [Limits](./limits.md#n-of-n-runs)); it
+  catches tracking that slips in when the banner loads late, and takes about three
+  times as long.
 - **Quick**: shorter visits and fewer visitor choices. Use it to see if a round of
   changes landed; its report covers less and says so.
 

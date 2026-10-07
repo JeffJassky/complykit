@@ -11,13 +11,16 @@ type ScenarioStatus = 'tested' | 'not-tested' | 'not-applicable';
 
 export type ConsentEvent =
   | { type: 'start'; at: string; runId: string; url: string; locations: string[] }
-  | { type: 'location'; at: string; location: string; verdict: string; observed?: string; scenarios: string[]; note?: string }
-  | { type: 'scenario-start'; at: string; location: string; scenario: string }
+  /** `runs`: visits per scenario (absent from older CLIs = 1); the location plans scenarios x runs steps. */
+  | { type: 'location'; at: string; location: string; verdict: string; observed?: string; scenarios: string[]; runs?: number; note?: string }
+  /** `run`: set only on a slowed-connection repeat (2..runs); absent = the first visit. */
+  | { type: 'scenario-start'; at: string; location: string; scenario: string; run?: number }
   | {
       type: 'scenario-done';
       at: string;
       location: string;
       scenario: string;
+      run?: number;
       status: ScenarioStatus;
       reason?: string;
       requests: number;
@@ -129,6 +132,8 @@ export class ConsentProgress {
   private planned = 0;
   private locations: string[] = [];
   private locationsSeen = 0;
+  /** Visits per scenario, by location (from its `location` event). */
+  private runsAt = new Map<string, number>();
   done?: Extract<ConsentEvent, { type: 'done' }>;
   error?: string;
 
@@ -150,7 +155,16 @@ export class ConsentProgress {
         break;
       case 'location': {
         this.locationsSeen++;
-        this.planned += ev.scenarios?.length ?? 0;
+        const runs = Math.max(1, Math.floor(Number(ev.runs) || 1));
+        this.runsAt.set(ev.location, runs);
+        this.planned += (ev.scenarios?.length ?? 0) * runs;
+        // The visit order of the CLI (concurrency 1): each scenario, then its repeats.
+        if (ev.scenarios?.length) {
+          m.planned ??= [];
+          for (const scenario of ev.scenarios) {
+            for (let run = 1; run <= runs; run++) m.planned.push({ location: ev.location, scenario, ...(run > 1 ? { run } : {}) });
+          }
+        }
         m.location = { id: ev.location, verdict: ev.verdict, ...(ev.observed ? { observed: ev.observed } : {}) };
         p.total = this.planned + this.extraUnits;
         if (ev.scenarios?.length) {
@@ -165,13 +179,14 @@ export class ConsentProgress {
       }
       case 'scenario-start':
         p.phase = 'scenarios';
-        p.current = `${ev.location} · ${ev.scenario}`;
-        m.scenarios.push({ location: ev.location, scenario: ev.scenario, status: 'running' });
+        p.current = `${ev.location} · ${ev.scenario}${this.repeatLabel(ev.location, ev.run)}`;
+        m.scenarios.push({ location: ev.location, scenario: ev.scenario, ...(isRepeat(ev.run) ? { run: ev.run } : {}), status: 'running' });
         break;
       case 'scenario-done': {
-        let entry = findLast(m.scenarios, (s) => s.location === ev.location && s.scenario === ev.scenario && s.status === 'running');
+        const run = isRepeat(ev.run) ? ev.run : undefined;
+        let entry = findLast(m.scenarios, (s) => s.location === ev.location && s.scenario === ev.scenario && s.run === run && s.status === 'running');
         if (!entry) {
-          entry = { location: ev.location, scenario: ev.scenario, status: 'running' };
+          entry = { location: ev.location, scenario: ev.scenario, ...(run ? { run } : {}), status: 'running' };
           m.scenarios.push(entry);
         }
         entry.status = ev.status;
@@ -218,6 +233,13 @@ export class ConsentProgress {
     return true;
   }
 
+  /** " (slow-connection repeat)" for run 2 of 2; numbered when a location plans more repeats. */
+  private repeatLabel(location: string, run: number | undefined): string {
+    if (!isRepeat(run)) return '';
+    const repeats = (this.runsAt.get(location) ?? run) - 1;
+    return repeats > 1 ? ` (slow-connection repeat ${run - 1} of ${repeats})` : ' (slow-connection repeat)';
+  }
+
   private allPlannedDone(): boolean {
     return this.locationsSeen >= this.locations.length && this.job.progress.done >= this.planned;
   }
@@ -225,6 +247,10 @@ export class ConsentProgress {
 
 export function fraction(done: number, total: number): number {
   return total > 0 ? Math.min(1, done / total) : 0;
+}
+
+function isRepeat(run: number | undefined): run is number {
+  return typeof run === 'number' && run > 1;
 }
 
 function findLast<T>(arr: T[], pred: (x: T) => boolean): T | undefined {

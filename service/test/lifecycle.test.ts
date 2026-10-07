@@ -132,4 +132,74 @@ describe('ConsentProgress', () => {
     expect(job.progress).toMatchObject({ done: 2, total: 3, phase: 'analyzing' });
     expect(job.metrics).toMatchObject({ requests: 12, thirdPartyRequests: 3, parties: 3, cookies: 5, banner: 'cookiebot', location: { id: 'eu', verdict: 'unverified' } });
   });
+
+  it('old event files (no `runs`, no `run`) map as one visit per scenario', () => {
+    const job = {
+      id: 'job1abc',
+      progress: { fraction: 0, done: 0, total: 0, phase: 'verifying-location' },
+      metrics: { requests: 0, thirdPartyRequests: 0, parties: 0, cookies: 0, scenarios: [] },
+    } as unknown as JobDetail;
+    const m = new ConsentProgress(job, 0);
+    const at = '2026-10-03T00:00:00Z';
+    m.apply({ at, type: 'start', runId: 'r1', url: 'https://x.com/', locations: ['local'] });
+    m.apply({ at, type: 'location', location: 'local', verdict: 'verified', scenarios: ['reject'] });
+    expect(job.progress.total).toBe(1);
+    expect(job.metrics.planned).toEqual([{ location: 'local', scenario: 'reject' }]);
+    m.apply({ at, type: 'scenario-start', location: 'local', scenario: 'reject' });
+    m.apply({ at, type: 'scenario-done', location: 'local', scenario: 'reject', status: 'tested', requests: 1, thirdPartyRequests: 0, parties: 0, cookies: 0, durationMs: 9 });
+    expect(job.progress).toMatchObject({ done: 1, total: 1, fraction: 1, phase: 'analyzing' });
+    expect(job.metrics.scenarios).toEqual([{ location: 'local', scenario: 'reject', status: 'tested', durationMs: 9 }]);
+  });
+
+  it('repeat runs: the plan is scenarios x runs, each repeat is its own step with a labelled current', () => {
+    const job = {
+      id: 'job1abc',
+      progress: { fraction: 0, done: 0, total: 0, phase: 'verifying-location' },
+      metrics: { requests: 0, thirdPartyRequests: 0, parties: 0, cookies: 0, scenarios: [] },
+    } as unknown as JobDetail;
+    const m = new ConsentProgress(job, 0);
+    const at = '2026-10-03T00:00:00Z';
+    const done = (scenario: string, run?: number) =>
+      m.apply({ at, type: 'scenario-done', location: 'local', scenario, ...(run ? { run } : {}), status: 'tested', requests: 1, thirdPartyRequests: 0, parties: 0, cookies: 0, durationMs: 5 });
+    m.apply({ at, type: 'start', runId: 'r1', url: 'https://x.com/', locations: ['local'] });
+    m.apply({ at, type: 'location', location: 'local', verdict: 'verified', scenarios: ['a', 'b'], runs: 2 });
+    expect(job.progress.total).toBe(4);
+    expect(job.metrics.planned).toEqual([
+      { location: 'local', scenario: 'a' },
+      { location: 'local', scenario: 'a', run: 2 },
+      { location: 'local', scenario: 'b' },
+      { location: 'local', scenario: 'b', run: 2 },
+    ]);
+    m.apply({ at, type: 'scenario-start', location: 'local', scenario: 'a' });
+    done('a');
+    m.apply({ at, type: 'scenario-start', location: 'local', scenario: 'a', run: 2 });
+    expect(job.progress).toMatchObject({ done: 1, total: 4, current: 'local · a (slow-connection repeat)', phase: 'scenarios' });
+    done('a', 2);
+    expect(job.progress.fraction).toBeCloseTo(0.5);
+    m.apply({ at, type: 'scenario-start', location: 'local', scenario: 'b' });
+    done('b');
+    done('b', 2); // a skipped repeat: done without a start
+    expect(job.progress).toMatchObject({ done: 4, total: 4, phase: 'analyzing' });
+    expect(job.metrics.scenarios.map((x) => [x.scenario, x.run, x.status])).toEqual([
+      ['a', undefined, 'tested'],
+      ['a', 2, 'tested'],
+      ['b', undefined, 'tested'],
+      ['b', 2, 'tested'],
+    ]);
+  });
+
+  it('numbers the repeats when a location plans more than one', () => {
+    const job = {
+      id: 'job1abc',
+      progress: { fraction: 0, done: 0, total: 0, phase: 'verifying-location' },
+      metrics: { requests: 0, thirdPartyRequests: 0, parties: 0, cookies: 0, scenarios: [] },
+    } as unknown as JobDetail;
+    const m = new ConsentProgress(job, 1);
+    const at = '2026-10-03T00:00:00Z';
+    m.apply({ at, type: 'start', runId: 'r1', url: 'https://x.com/', locations: ['local'] });
+    m.apply({ at, type: 'location', location: 'local', verdict: 'verified', scenarios: ['reject'], runs: 3 });
+    expect(job.progress.total).toBe(4); // 1 x 3 + accessibility
+    m.apply({ at, type: 'scenario-start', location: 'local', scenario: 'reject', run: 3 });
+    expect(job.progress.current).toBe('local · reject (slow-connection repeat 2 of 2)');
+  });
 });

@@ -25,6 +25,7 @@ export function SubmitPanel({ onCreated }: Props) {
   const [consent, setConsent] = useState(true);
   const [a11y, setA11y] = useState(false);
   const [quick, setQuick] = useState(false);
+  const [slowRepeat, setSlowRepeat] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ queued: number; rejected: string[] } | null>(null);
@@ -40,7 +41,8 @@ export function SubmitPanel({ onCreated }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const res = await api.createBatch({ urls: raw, checks: { consent, accessibility: a11y }, quick });
+      // Quick is always one pass: the repeat only applies to a full privacy scan.
+      const res = await api.createBatch({ urls: raw, checks: { consent, accessibility: a11y }, quick, slowRepeat: consent && !quick && slowRepeat });
       setRaw('');
       setResult({ queued: res.jobs.length, rejected: res.rejected });
       onCreated(res);
@@ -135,6 +137,13 @@ export function SubmitPanel({ onCreated }: Props) {
             <span className="option-desc">Shorter visits, fewer scenarios</span>
           </span>
           <input type="checkbox" role="switch" className="switch" checked={quick} onChange={(e) => setQuick(e.target.checked)} disabled={!consent} />
+        </label>
+        <label className="option option-switch">
+          <span className="option-text">
+            <span className="option-title">Also repeat on a slow connection</span>
+            <span className="option-desc">Catches tracking that slips in when the consent banner loads late. Takes about 3x longer. Not with quick mode.</span>
+          </span>
+          <input type="checkbox" role="switch" className="switch" checked={slowRepeat && consent && !quick} onChange={(e) => setSlowRepeat(e.target.checked)} disabled={!consent || quick} />
         </label>
       </details>
 

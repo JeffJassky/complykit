@@ -58,6 +58,7 @@ export class JobStore extends EventEmitter<StoreEvents> {
         const job = JSON.parse(await fsp.readFile(path.join(this.jobsDir, name, 'job.json'), 'utf8')) as JobDetail;
         if (job.id !== name) continue;
         job.log ??= [];
+        job.slowRepeat ??= false; // jobs from before the option
         this.jobs.set(job.id, job);
       } catch (err) {
         console.warn(`[store] skipping ${name}: ${(err as Error).message}`);
@@ -75,7 +76,7 @@ export class JobStore extends EventEmitter<StoreEvents> {
     return [...this.jobs.values()].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : b.id.localeCompare(a.id)));
   }
 
-  create(input: { batchId: string; url: string; checks: CheckKind[]; quick: boolean }): JobDetail {
+  create(input: { batchId: string; url: string; checks: CheckKind[]; quick: boolean; slowRepeat?: boolean }): JobDetail {
     const id = newId();
     const job: JobDetail = {
       id,
@@ -84,6 +85,8 @@ export class JobStore extends EventEmitter<StoreEvents> {
       host: new URL(input.url).hostname,
       checks: input.checks,
       quick: input.quick,
+      // A quick scan is always one pass; the repeat only applies to the consent check.
+      slowRepeat: Boolean(input.slowRepeat) && !input.quick && input.checks.includes('consent'),
       status: 'queued',
       createdAt: new Date().toISOString(),
       progress: { fraction: 0, done: 0, total: 0, phase: 'queued' },

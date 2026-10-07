@@ -88,8 +88,14 @@ throttling**, to catch trackers that only fire when the consent tool loads slowl
 
 Two runs are better evidence than one. They are not proof: a race can still be
 missed, and the report says so ("One run, whatever it shows, is not proof"). The
-CLI default is one run; the hosted service runs the throttled second pass by
-default.
+CLI default is one run, and so is the service's. On the service, tick **Also repeat
+on a slow connection** (in **Scan options**, or on a full rescan) for the throttled
+pass; `CONSENT_RUNS` sets how many runs such a scan makes (default 2). Quick scans
+always run once.
+
+Throttled runs are slow: each gets three times the scenario budget, so a scan with
+two runs takes about three to four times as long as one. The service's per-scan time
+limit grows the same way: 45 minutes for one run, 180 minutes for two.
 
 ## Site search in the journey
 

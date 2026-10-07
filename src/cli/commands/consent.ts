@@ -53,7 +53,8 @@ records everything the browser does, and applies that location's rules.
   --previous <run dir>     run to compare with for "Since <date>" (default: the
                            newest earlier consent run of this site in .comply/runs)
   --events <file>          append progress as JSON lines (start, location,
-                           scenario-start, scenario-done, done, error) — for UIs
+                           scenario-start, scenario-done, done, error) — for UIs.
+                           Repeat runs carry run: 2..N; location carries runs
   --local-copy <file>      TEST MODE: apply a change set to the site inside this
                            browser only (snippet first in <head>, tag rewrites,
                            local files at the tool's path, simulated tag-manager

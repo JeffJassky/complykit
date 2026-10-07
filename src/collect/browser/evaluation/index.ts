@@ -49,12 +49,15 @@ export interface EvaluationPolicy {
 
 /** Structured progress, for UIs (the service streams these). Additive to `trace`. */
 export type EvaluationEvent =
-  | { type: 'location'; location: string; verdict: string; observed?: string; scenarios: ScenarioId[]; note?: string }
-  | { type: 'scenario-start'; location: string; scenario: ScenarioId }
+  /** `runs`: visits planned per scenario (1 when absent, as older CLIs wrote it); the planned visit count is scenarios x runs. */
+  | { type: 'location'; location: string; verdict: string; observed?: string; scenarios: ScenarioId[]; runs?: number; note?: string }
+  /** `run`: the visit number, present only on repeat visits (2..runs, the slowed-connection repeats); absent = the first visit. */
+  | { type: 'scenario-start'; location: string; scenario: ScenarioId; run?: number }
   | {
       type: 'scenario-done';
       location: string;
       scenario: ScenarioId;
+      run?: number;
       status: 'tested' | 'not-tested' | 'not-applicable';
       reason?: string;
       requests: number;
@@ -181,6 +184,22 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
   const target = new URL(opts.targetUrl);
   const site = { url: target.toString(), host: target.hostname, registrableDomain: opts.policy.registrableDomain(target.hostname) };
   const journey = resolveJourney(opts.journey);
+  const countsOf = (tl: Timeline): { requests: number; thirdPartyRequests: number; parties: number; cookies: number } => {
+    const requests = tl.events.filter((e) => e.type === 'request');
+    const third = requests.filter((e) => {
+      try {
+        return opts.policy.registrableDomain(new URL(e.url).hostname) !== site.registrableDomain;
+      } catch {
+        return false;
+      }
+    });
+    return {
+      requests: requests.length,
+      thirdPartyRequests: third.length,
+      parties: new Set(third.map((e) => opts.policy.registrableDomain(new URL(e.url).hostname))).size,
+      cookies: tl.snapshot.cookies.length,
+    };
+  };
   const locations = opts.locations?.length ? opts.locations : [LOCAL_LOCATION];
   const notTested: NotTestedItem[] = [];
   const runs: LocationRun[] = [];
@@ -224,7 +243,7 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
       }
       const scenarios = opts.scenarios?.length ? opts.scenarios : spec.scenarios?.length ? spec.scenarios : opts.policy.scenariosFor(spec, verification);
       trace(`location ${spec.id}: scenarios ${scenarios.join(', ')}`);
-      emit({ type: 'location', location: spec.id, verdict: verification.verdict, observed, scenarios, note: verification.note });
+      emit({ type: 'location', location: spec.id, verdict: verification.verdict, observed, scenarios, runs: totalRuns, note: verification.note });
       const results = new Map<ScenarioId, ScenarioSummary>();
       await pool(scenarios, opts.concurrency ?? 1, async (scenario) => {
         emit({ type: 'scenario-start', location: spec.id, scenario });
@@ -262,14 +281,6 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
           if (!verification.siteReported.some((x) => x.source === r.source)) verification.siteReported.push(r);
         }
         const tl = out.timeline;
-        const requests = tl.events.filter((e) => e.type === 'request');
-        const third = requests.filter((e) => {
-          try {
-            return opts.policy.registrableDomain(new URL(e.url).hostname) !== site.registrableDomain;
-          } catch {
-            return false;
-          }
-        });
         const banner = tl.events.find((e) => e.type === 'banner' && (e.state === 'shown' || e.state === 'reappeared'));
         const choice = [...tl.events].reverse().find((e) => e.type === 'choice');
         const toolRead = tl.events.find((e) => e.type === 'consent-readout' && e.label === 'default-consent-tool');
@@ -285,12 +296,7 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
           consentTool: consentTool?.success ? consentTool.data : undefined,
           complykit: complykit?.success ? complykit.data : undefined,
           choice: choice?.type === 'choice' ? { kind: choice.choice, ok: choice.ok, method: choice.note ? `${choice.method} — ${choice.note}` : choice.method } : undefined,
-          counts: {
-            requests: requests.length,
-            thirdPartyRequests: third.length,
-            parties: new Set(third.map((e) => opts.policy.registrableDomain(new URL(e.url).hostname))).size,
-            cookies: tl.snapshot.cookies.length,
-          },
+          counts: countsOf(tl),
           evidence: { har: tl.snapshot.evidence.har, timeline: tl.snapshot.evidence.timeline, screenshots: out.screenshots },
         });
         const sum = results.get(scenario)!;
@@ -322,7 +328,18 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
           sum.runs = 1;
           for (let runNo = 2; runNo <= totalRuns; runNo++) {
             trace(`${spec.id}/${scenario}: run ${runNo} of ${totalRuns} (throttled: Slow 3G, CPU x4)`);
+            emit({ type: 'scenario-start', location: spec.id, scenario, run: runNo });
             const again = await visit(runNo);
+            emit({
+              type: 'scenario-done',
+              location: spec.id,
+              scenario,
+              run: runNo,
+              status: again.status,
+              reason: again.reason,
+              ...countsOf(again.timeline),
+              durationMs: again.timeline.snapshot.durationMs,
+            });
             if (again.status !== 'tested') {
               notTested.push({ scope: 'scenario', id: scenario, location: spec.id, reason: `throttled run ${runNo} of ${totalRuns} did not complete: ${again.reason ?? again.status}` });
               continue;
@@ -330,6 +347,24 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
             sum.runs++;
             timelines.push(again.timeline);
             for (const n of again.timeline.snapshot.notTested) notTested.push({ scope: 'flow', id: scenario, location: spec.id, reason: n });
+          }
+        } else if (totalRuns > 1) {
+          // The planned repeats are skipped (see above). Each still closes its step,
+          // so a progress bar counting scenarios x runs reaches its total.
+          for (let runNo = 2; runNo <= totalRuns; runNo++) {
+            emit({
+              type: 'scenario-done',
+              location: spec.id,
+              scenario,
+              run: runNo,
+              status: out.status,
+              reason: `repeat skipped: the first visit was ${out.status === 'not-applicable' ? 'not applicable' : 'not tested'}`,
+              requests: 0,
+              thirdPartyRequests: 0,
+              parties: 0,
+              cookies: 0,
+              durationMs: 0,
+            });
           }
         }
       });

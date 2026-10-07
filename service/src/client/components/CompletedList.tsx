@@ -123,6 +123,7 @@ function ReportRow({ job, now, onDeleted }: { job: JobSummary; now: number; onDe
             <span>
               {checks}
               {job.quick ? ' · quick' : ''}
+              {job.slowRepeat ? ' · slow repeat' : ''}
             </span>
           </p>
         </div>

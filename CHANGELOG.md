@@ -61,3 +61,12 @@ real if CI runs the matrix. See standards/traps.md #10.
 ### Changed
 - `consent.pre-consent-tracker` cites ePrivacy Art. 5(3) (was GDPR Art. 7(4)).
 - Root `prepublishOnly` now also runs `check-pack`.
+- `consent --events`: repeat runs (`--runs N`) emit their own `scenario-start` /
+  `scenario-done` with `run: 2..N` (a skipped repeat still emits its
+  `scenario-done`), and `location` carries `runs`, so a UI can plan
+  scenarios x runs steps. Events without these fields mean one run.
+- Service: consent scans are a single pass by default (was two runs). A scan opts
+  into the slowed repeat with `slowRepeat` (submit form and full rescans;
+  `CONSENT_RUNS` sets its runs, default 2; quick is always one pass). The job time
+  limit scales with runs: 45 min x (1 + 3 x (runs - 1)). The progress bar counts
+  the repeats and the scan details name the upcoming visits.
