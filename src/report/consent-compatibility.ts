@@ -480,7 +480,7 @@ export function buildCompatibilityReport(section: CompatibilitySection, ctx: Com
       ...(reachReason ? { reachReason } : {}),
       provenHeld,
       ...(caveats.length ? { caveats } : {}),
-      whatToChange: purpose === 'unclassified' && c.changes.length ? `Classify first — then, if it tracks visitors: ${summary[0].toLowerCase()}${summary.slice(1)}` : summary,
+      whatToChange: purpose === 'unclassified' && c.changes.length ? `Waiting on your decision: what is ${c.label}? Then, if it tracks visitors: ${summary[0].toLowerCase()}${summary.slice(1)}` : summary,
       changes: c.changes,
       reasons: c.reasons,
     };
@@ -713,7 +713,7 @@ function itemTitle(it: ChangeItem): string {
 
 function itemHtml(it: ChangeItem): string {
   const parts: string[] = [`<div class="ck-item" id="change-${esc(it.id)}" data-change-id="${esc(it.id)}" data-change-kind="${esc(it.kind)}"><h5>${esc(itemTitle(it))}</h5>`];
-  if (it.classifyFirst) parts.push(`<p><strong>Classify first:</strong> its purpose is not classified — this applies only if it tracks visitors.</p>`);
+  if (it.classifyFirst) parts.push(`<p><strong>Waiting on:</strong> deciding what ${esc(it.tools.join(', '))} ${it.tools.length === 1 ? 'is' : 'are'} (the first items of your to-do list) — this applies only if it tracks visitors.</p>`);
   if (it.kind === 'gate-gtm-tag') {
     parts.push(`<p><strong>Consent setting to choose:</strong> Require additional consent for tag to fire → <code>${esc((it.consentTypes ?? []).join(', '))}</code></p>`);
     parts.push(`<p class="human-muted">${esc(it.tagNote ? `Now: ${it.tagNote}.` : it.note)}</p>`);
@@ -787,7 +787,7 @@ export function renderCompatibilityMarkdown(r: CompatibilityReport | undefined):
 function itemMarkdown(it: ChangeItem): string[] {
   // The anchor is the stable change id: a link into this file survives the owner's edits (the title's page:line does not).
   const out: string[] = [`<a id="change-${it.id}"></a>`, '', `### ${itemTitle(it)}`, '', `- Change id: \`${it.id}\``];
-  if (it.classifyFirst) out.push('- **Classify first:** its purpose is not classified — this applies only if it tracks visitors.');
+  if (it.classifyFirst) out.push(`- **Waiting on:** deciding what ${it.tools.join(', ')} ${it.tools.length === 1 ? 'is' : 'are'} (classify it in the report) — this applies only if it tracks visitors.`);
   if (it.kind === 'gate-gtm-tag') {
     out.push(`- Consent setting to choose: **Require additional consent for tag to fire** → \`${(it.consentTypes ?? []).join(', ')}\``);
     out.push(`- ${it.tagNote ? `Now: ${it.tagNote}.` : it.note}`);

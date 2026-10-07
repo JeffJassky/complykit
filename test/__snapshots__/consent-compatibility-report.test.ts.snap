@@ -171,7 +171,7 @@ The scan could not establish how these tools get onto the page, so it cannot say
 ### tracker.test
 
 - Change id: \`needs-a-look:6c0f3aab7bb9\`
-- **Classify first:** its purpose is not classified — this applies only if it tracks visitors.
+- **Waiting on:** deciding what tracker.test is (classify it in the report) — this applies only if it tracks visitors.
 - how tracker.test gets onto the page could not be traced
 
 Not counted: necessary / CDN / captcha / payments / consent tool — Cloudflare. Their purpose needs no consent, so nothing is listed for them; how they load is recorded in the evidence. Not counted in the line above.

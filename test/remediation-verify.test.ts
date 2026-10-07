@@ -237,7 +237,7 @@ describe('judgeSpotCheck', () => {
 
 describe('runVerify', () => {
   it('dispatches by check and refuses what it was not given', () => {
-    const install = r.tasks[0].verify;
+    const install = r.tasks.find((t) => t.kind === 'install')!.verify;
     expect(runVerify(install, { html: page([HEAD, GTAG]) }).result).toBe('pass');
     expect(runVerify(install, {}).result).toBe('cannot-verify');
     const gtm = r.tasks.find((t) => t.verify.check === 'gtm-tag-consent')!.verify;

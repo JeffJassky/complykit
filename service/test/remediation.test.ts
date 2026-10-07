@@ -97,6 +97,29 @@ describe('GET /api/sites/:domain/remediation', () => {
   });
 });
 
+describe('decisions (classify tasks) in the same list', () => {
+  it('a decision’s status is its tool’s classification in the workspace — never a task:change entry; it counts on the sites list; Verify refuses it', async () => {
+    const s = await startService();
+    const classKey = 'class:tool-0123456789abcdef0123456789abcdef';
+    const decision = task('classify:111111111111', 0, { check: 'manual', method: 'manual', reason: 'a decision' }, { classKey });
+    const blocked = task('rewrite-tag:222222222222', 2, TASKS[1].verify, { classifyFirst: true, waitingOn: [decision.id] });
+    await request(s.app)
+      .patch('/api/sites/example.com/workspace')
+      .send({ config: { value: { config: {}, snippet: '', changeList: '', notes: [], tasks: [decision, TASKS[0], blocked] }, runId: 'run-a' }, entries: { 'task:change:classify:111111111111': { value: { status: 'verified' } } } })
+      .expect(200);
+    const get = async () => (await request(s.app).get('/api/sites/example.com/remediation').expect(200)).body as RemediationResponse;
+    expect((await get()).tasks.map((t) => [t.id, t.status])).toEqual([['classify:111111111111', 'todo'], ['install', 'todo'], ['rewrite-tag:222222222222', 'todo']]);
+    const refused = await request(s.app).post(`/api/sites/example.com/remediation/${encodeURIComponent(decision.id)}/verify`).expect(409);
+    expect(refused.body.error).toMatch(/decision/);
+    await request(s.app).patch('/api/sites/example.com/workspace').send({ entries: { [classKey]: { value: { category: 'analytics', categoryChosen: true } } } }).expect(200);
+    const after = await get();
+    expect(after.tasks[0].status).toBe('verified');
+    expect(after.totals).toMatchObject({ total: 3, verified: 1, required: 3 });
+    const sites = (await request(s.app).get('/api/sites').expect(200)).body as { sites: Array<{ domain: string; checklist?: { verified: number; required: number } }> };
+    expect(sites.sites.find((x) => x.domain === 'example.com')?.checklist).toMatchObject({ verified: 1, required: 3 });
+  });
+});
+
 describe('POST /api/sites/:domain/remediation/:id/verify', () => {
   it('pass → verified, stored by "verify" with lastVerify; fail → failed, keeping the owner’s note', async () => {
     const s = await seeded();

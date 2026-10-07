@@ -23,7 +23,7 @@ category and control the way the report does, and writes:
                            built client (the folder to upload; skipped with a note if the
                            client is not built)
   generator-notes.md       what was refused, what to check before deploying
-  remediation-tasks.json   the checklist ("Make these changes"); complykit report
+  remediation-tasks.json   the to-do list ("Your to-do list"); complykit report
                            --format consent-html on the run shows it
 
   --workspace <file>       the site's workspace JSON (GET /api/sites/<domain>/workspace):

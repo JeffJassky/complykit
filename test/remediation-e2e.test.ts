@@ -50,8 +50,9 @@ const suite = missing.length ? describe.skip : describe;
 
 const SCAN_MS = 4 * 60_000;
 
-/** The checklist for the fixture storefront, in order (one optional item last). */
+/** The to-do list for the fixture storefront, in order: the decision (the team classified the widget: done), then the changes (one optional item last). */
 const E2E_TITLES = [
+  'Decide: what is e2e-widgets.test?',
   'Install the complykit consent tool',
   'Remove your old consent banner (OneTrust)',
   'Hold the Google Tag Manager / gtag.js script until consent',
@@ -163,8 +164,10 @@ suite('remediation flow, end to end (real CLI, service, browser, fixture site)',
       // --- 5. The checklist ---------------------------------------------------------
       let tasks = await remediation();
       const kinds = tasks.map((t) => t.kind);
-      expect(tasks[0].id).toBe('install');
-      expect(tasks[1].kind).toBe('remove-existing-tool');
+      expect(tasks[0].kind).toBe('classify');
+      expect(tasks[0].status).toBe('verified'); // decided: the widget was classified above
+      expect(tasks[1].id).toBe('install');
+      expect(tasks[2].kind).toBe('remove-existing-tool');
       expect(kinds).toContain('rewrite-tag');
       expect(kinds).toContain('remove-leak');
       // Short and unambiguous: what another task already fixes is folded into it, not listed again.
@@ -173,7 +176,7 @@ suite('remediation flow, end to end (real CLI, service, browser, fixture site)',
       expect(kinds).not.toContain('call-consent-api');
       expect(kinds).not.toContain('confirm-in-browser'); // every folded tool has a static check (its tag)
       expect(tasks.map((t) => t.title)).toEqual(E2E_TITLES);
-      expect(tasks[0].alsoFixes?.join(' ')).toMatch(/Telling Google Analytics 4 the visitor’s choice/);
+      expect(tasks[1].alsoFixes?.join(' ')).toMatch(/Telling Google Analytics 4 the visitor’s choice/);
       const ga = tasks.find((t) => t.kind === 'rewrite-tag' && t.partyIds.includes('google.analytics'))!;
       expect(ga.aliases?.some((a) => a.startsWith('behavior-mismatch:'))).toBe(true);
       // The tool sets Google's default (its google-consent-mode adapter): nothing to paste.
@@ -201,7 +204,7 @@ suite('remediation flow, end to end (real CLI, service, browser, fixture site)',
       expect(report2).toContain(`data-rem-config-at="${(await api<SiteWorkspace>('GET', `/api/sites/${SITE}/workspace`)).body.config!.at}"`);
 
       // --- 6. Verify the install before it is done: fail -----------------------------
-      const install = tasks[0];
+      const install = tasks.find((t) => t.id === 'install')!;
       const before = await verify(install);
       expect(before.outcome.result).toBe('fail');
       expect(before.task.status).toBe('failed');
@@ -243,7 +246,7 @@ suite('remediation flow, end to end (real CLI, service, browser, fixture site)',
 
       // --- 11. The rest: what Verify can check (the Consent Mode default comes with the tool;
       // spot checks reject then accept on the page), the rest marked done by the owner. ---
-      for (const t of tasks.filter((x) => !x.optional && !['install', 'remove-existing-tool', 'rewrite-tag', 'remove-leak'].includes(x.kind))) {
+      for (const t of tasks.filter((x) => !x.optional && !['classify', 'install', 'remove-existing-tool', 'rewrite-tag', 'remove-leak'].includes(x.kind))) {
         if (t.verify.method === 'manual') {
           expect((await api('PATCH', `/api/sites/${SITE}/workspace`, { by: 'e2e', entries: { [`task:change:${t.id}`]: { value: { status: 'done-unverified', note: 'decided with counsel' } } } })).status).toBe(200);
         } else {
@@ -253,7 +256,7 @@ suite('remediation flow, end to end (real CLI, service, browser, fixture site)',
 
       // --- 12. Statuses persisted (workspace entries, not the tasks), progress on the sites list ---
       tasks = await remediation();
-      const required = tasks.filter((t) => !t.optional && !t.classifyFirst);
+      const required = tasks.filter((t) => !t.optional);
       for (const t of required) expect(['verified', 'done-unverified'], `${t.id} is ${t.status}`).toContain(t.status);
       expect(tasks.find((t) => t.id === 'install')!.lastVerify?.result).toBe('pass');
       const row = (await api<SitesResponse>('GET', '/api/sites')).body.sites.find((s) => s.domain === SITE)!;

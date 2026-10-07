@@ -4,12 +4,13 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { generateConsentConfig } from '../src/consent-generator.js';
 import { buildConsentReportModel, renderConsentHtml, containsBannedVocabulary, renderRemediationHtml, remediationFromWorkspace, parseRemediationTasks, taskAnchor } from '../src/report/index.js';
+import { REMEDIATION_CSS } from '../src/report/consent-remediation.js';
 import { reconcileCompatibility } from '../src/consent-compatibility.js';
 import { remediationTaskKey } from '../src/record/index.js';
 import { readRunRemediation, REMEDIATION_TASKS_FILE } from '../src/cli/remediation-input.js';
 import { compatibilityEvaluation } from './fixtures/compatibility-report.js';
 
-// R3: the report's "Make these changes" section (plans/remediation-flow.md §6).
+// R3: the report's "Your to-do list" section (plans/remediation-flow.md §6).
 
 const NOW = '2026-10-06T12:00:00.000Z';
 const gen = () => generateConsentConfig(compatibilityEvaluation(), { complykitVersion: '0.0.0-test', now: NOW });
@@ -43,16 +44,18 @@ describe('renderRemediationHtml', () => {
   it('without a generated config: the prompt to generate it, no checklist', () => {
     const html = renderRemediationHtml(undefined);
     expect(html).toContain('id="remediation"');
-    expect(html).toContain('Make these changes');
+    expect(html).toContain('Your to-do list');
     expect(html).toContain('Generate the consent tool config to get your checklist');
     expect(html).toContain('data-rem-generate');
     expect(html).not.toContain('data-remediation-id');
   });
 
-  it('a numbered checklist, install first; each card has why, steps, copyable markup, pages and status', () => {
+  it('one numbered list: the decisions, then install; each card has why, steps, copyable markup, pages and status', () => {
     const html = renderRemediationHtml({ tasks: r.tasks, source: 'run', configAt: NOW, runId: 'run-1' });
     const ids = [...html.matchAll(/data-remediation-id="([^"]+)"/g)].map((m) => m[1]);
-    expect(ids[0]).toBe('install');
+    expect(ids[0]).toMatch(/^classify:/);
+    expect(ids[1]).toBe('install');
+    expect(html.match(/<ol class="ck-rem-list">/g)).toHaveLength(1); // no optional items in this fixture: one list
     expect(new Set(ids).size).toBe(r.tasks.length);
     expect(html).toContain(`id="${taskAnchor('install')}"`);
     expect(html).toContain('<ol class="ck-task-steps">');
@@ -63,7 +66,7 @@ describe('renderRemediationHtml', () => {
     expect(html).toContain('data-rem-verify');
     expect(html).toContain('Download install bundle (.zip)');
     expect(html).toContain('>To do<');
-    expect(html).toMatch(/0 of \d+ verified/);
+    expect(html).toContain(`<strong>0 of ${r.tasks.length} done</strong>`);
     expect(html).toContain('run <code>run-1</code>');
     // The install snippet is escaped: no live <script> from task data.
     expect(html).not.toMatch(/<pre data-rem-code><script/);
@@ -84,31 +87,31 @@ describe('renderRemediationHtml', () => {
     expect(section.tasks.find((t) => t.id === leak.id)!.status).toBe('failed');
   });
 
-  it('manual tasks have no Verify button and say why; classify-first and optional tasks are grouped last', () => {
+  it('manual tasks have no Verify button and say why; only optional tasks are grouped last', () => {
     const html = renderRemediationHtml({ tasks: r.tasks, source: 'run' });
-    const manual = r.tasks.find((t) => t.verify.method === 'manual');
+    const manual = r.tasks.find((t) => t.verify.method === 'manual' && t.kind !== 'classify'); // a decision is not a change: its own card (below)
     if (manual) {
       const card = html.slice(html.indexOf(`data-remediation-id="${manual.id}"`));
       const one = card.slice(0, card.indexOf('</li>\n'));
       expect(one).not.toContain('data-rem-verify');
       expect(one).toContain('Can’t be checked automatically');
     }
-    const later = r.tasks.filter((t) => t.optional || t.classifyFirst);
+    const later = r.tasks.filter((t) => t.optional);
     if (later.length) {
       const group = html.slice(html.indexOf('ck-rem-later'));
       for (const t of later) expect(group).toContain(`data-remediation-id="${t.id}"`);
     }
   });
 
-  it('status labels: verified, failed, marked done, cannot verify — and progress counts verified only', () => {
+  it('status labels: verified, failed, marked done, cannot verify — and progress counts done (verified + decided) only', () => {
     const tasks = r.tasks.map((t, i) => ({ ...t, status: (['verified', 'done-unverified', 'failed', 'cannot-verify'] as const)[i % 4] }));
     const html = renderRemediationHtml({ tasks, source: 'run' });
     expect(html).toContain('Verified ✓');
     expect(html).toContain('Marked done');
     expect(html).toContain('Failed ✗');
     expect(html).toContain('Can’t verify automatically');
-    const required = tasks.filter((t) => !t.optional && !t.classifyFirst);
-    expect(html).toContain(`${required.filter((t) => t.status === 'verified').length} of ${required.length} verified`);
+    const required = tasks.filter((t) => !t.optional);
+    expect(html).toContain(`${required.filter((t) => t.status === 'verified').length} of ${required.length} done`);
   });
 
   it('the consent report places it after the scope box, links it first in the nav', () => {
@@ -117,8 +120,57 @@ describe('renderRemediationHtml', () => {
     const html = renderConsentHtml(m);
     expect(html.indexOf('id="remediation"')).toBeGreaterThan(html.indexOf('ck-scope') > 0 ? html.indexOf('ck-scope') : 0);
     expect(html.indexOf('id="remediation"')).toBeLessThan(html.indexOf('id="behavior-matrix"'));
-    expect(html).toContain('<a href="#remediation">Make these changes</a>');
+    expect(html).toContain('<a href="#remediation">Your to-do list</a>');
+    expect(html).toContain('<a href="#report-workspace">Saved progress</a>');
     expect(containsBannedVocabulary(html.replace(/<script[\s\S]*?<\/script>/g, ''))).toBe(false);
+  });
+});
+
+describe('decisions in the list (classify)', () => {
+  const r = gen();
+  const decision = r.tasks.find((t) => t.kind === 'classify')!;
+  const blocked = r.tasks.find((t) => t.waitingOn?.includes(decision.id))!;
+  const cardOf = (html: string, id: string): string => html.slice(html.indexOf(`data-remediation-id="${id}"`)).split('</li>\n')[0];
+
+  it('a decision card: “To decide”, a button to the tool’s row in the grid, what it unblocks; no done / verify buttons', () => {
+    const m = model();
+    m.remediation = { tasks: r.tasks, source: 'run' };
+    const html = renderRemediationHtml(m.remediation, m);
+    const card = cardOf(html, decision.id);
+    expect(card).toContain('data-task-kind="classify"');
+    expect(card).toContain(`data-rem-class-key="${decision.classKey!.replace(/^class:/, '')}"`);
+    expect(card).toContain('>To decide<');
+    expect(card).toContain('Decide: what is tracker.test?');
+    const row = m.behaviorMatrix!.rows.findIndex((x) => x.kind === 'tool' && x.partyId === 'unknown:tracker.test');
+    expect(row).toBeGreaterThanOrEqual(0);
+    expect(card).toContain(`data-matrix-select="${row}:0">Classify tracker.test in the grid</button>`);
+    expect(card).toContain(`<strong>Unblocks:</strong> <a href="#${taskAnchor(blocked.id)}">`);
+    expect(card).not.toContain('data-rem-done');
+    expect(card).not.toContain('data-rem-verify');
+    // The key the card reads is the one the grid's classify form writes (the tool card's data-class-key).
+    expect(renderConsentHtml(m)).toContain(`data-class-key="${decision.classKey!.replace(/^class:/, '')}"`);
+  });
+
+  it('a change waiting on it says “Waiting on” (not a “classify first” of its own) and hides its actions until the decision is made', () => {
+    const html = renderRemediationHtml({ tasks: r.tasks, source: 'run' });
+    const card = cardOf(html, blocked.id);
+    expect(card).toContain('data-rem-blocked="true"');
+    expect(card).toContain(`data-rem-waiting="${decision.id}"`);
+    expect(card).toContain('<strong>Waiting on:</strong> your decision on what <a href="#' + taskAnchor(decision.id) + '">tracker.test</a> is (above).');
+    expect(card).not.toMatch(/Classify first/);
+    expect(REMEDIATION_CSS).toContain('.ck-task[data-rem-blocked=true] .ck-task-actions{display:none}');
+  });
+
+  it('decided (the workspace holds a purpose): “Decided ✓”, counted done; the change no longer waits', () => {
+    const ws = { entries: { [decision.classKey!]: { value: { category: 'analytics', categoryChosen: true } } }, config: { value: { tasks: r.tasks }, at: NOW } };
+    const s = remediationFromWorkspace(ws)!;
+    expect(s.tasks.find((t) => t.id === decision.id)!.status).toBe('verified');
+    const html = renderRemediationHtml(s);
+    expect(cardOf(html, decision.id)).toContain('>Decided ✓<');
+    expect(html).toContain(`<strong>1 of ${r.tasks.length} done</strong>`);
+    const card = cardOf(html, blocked.id);
+    expect(card).not.toContain('data-rem-blocked="true"');
+    expect(card).toMatch(/<p class="ck-task-waiting" data-rem-waiting="[^"]+" hidden>/);
   });
 });
 
@@ -130,9 +182,10 @@ describe('where the checklist comes from', () => {
     const s = remediationFromWorkspace(ws)!;
     expect(s.source).toBe('workspace');
     expect(s.runId).toBe('run-9');
-    expect(s.tasks[0].status).toBe('verified');
-    expect(s.tasks[0].lastVerify?.message).toBe('ok');
-    expect(s.tasks.slice(1).every((t) => t.status === 'todo')).toBe(true);
+    const install = s.tasks.find((t) => t.id === 'install')!;
+    expect(install.status).toBe('verified');
+    expect(install.lastVerify?.message).toBe('ok');
+    expect(s.tasks.filter((t) => t !== install).every((t) => t.status === 'todo')).toBe(true);
     expect(remediationFromWorkspace({ entries: {}, config: { value: { config: {} } } })).toBeUndefined();
     expect(parseRemediationTasks([{ id: 'nope' }, ...r.tasks]).length).toBe(r.tasks.length);
   });

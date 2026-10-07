@@ -1,4 +1,4 @@
-import type { JobSummary, RemediationStatus, RemediationTask, RemediationTaskValue, SiteWorkspace } from '../../shared/api';
+import { classificationDecided, type JobSummary, type RemediationStatus, type RemediationTask, type RemediationTaskValue, type SiteWorkspace } from '../../shared/api';
 
 // The site page's checklist (R3): the latest generated config's tasks
 // (`config.value.tasks`) with each one's status from its `task:change:<id>`
@@ -33,6 +33,11 @@ export function checklistFromWorkspace(ws: SiteWorkspace): RemediationTask[] {
   const tasks = raw.filter((t): t is RemediationTask => isObject(t) && typeof t.id === 'string' && typeof t.title === 'string' && isObject(t.verify));
   return tasks
     .map((t) => {
+      // A decision: decided when the workspace holds a purpose for the tool (its class: entry), nothing else.
+      if (t.classKey) {
+        const { lastVerify: _l, note: _n, ...rest } = t;
+        return { ...rest, status: classificationDecided(ws.entries[t.classKey]?.value) ? ('verified' as const) : ('todo' as const) };
+      }
       // Own entry, else one stored under an alias (an item folded into this task; a carried
       // pass reads as "marked done" unless this task's own check is a spot check too).
       const entry = ws.entries[TASK_CHANGE_PREFIX + t.id] ?? (t.aliases ?? []).map((a) => ws.entries[TASK_CHANGE_PREFIX + a]).find((e) => e && readTaskValue(e.value));
@@ -46,9 +51,18 @@ export function checklistFromWorkspace(ws: SiteWorkspace): RemediationTask[] {
     .sort((a, b) => a.order - b.order);
 }
 
-/** Required = not optional and not "classify first"; progress counts `verified` only. */
+/** A decision's status reads as one. */
+export const DECISION_LABEL: Record<'todo' | 'verified', string> = { todo: 'To decide', verified: 'Decided ✓' };
+export const taskStatusLabel = (t: Pick<RemediationTask, 'kind' | 'status'>): string => (t.kind === 'classify' ? DECISION_LABEL[t.status === 'verified' ? 'verified' : 'todo'] : STATUS_LABEL[t.status]);
+
+/** The decisions a task waits on that are not made yet (in list order). */
+export function openDecisions(t: RemediationTask, tasks: RemediationTask[]): RemediationTask[] {
+  return (t.waitingOn ?? []).map((id) => tasks.find((x) => x.id === id)).filter((d): d is RemediationTask => !!d && d.status !== 'verified');
+}
+
+/** Required = not optional (decisions and the changes waiting on them included); `verified` = done: checks passed and decisions made. Marked-done is counted apart. */
 export function checklistProgress(tasks: RemediationTask[]): { required: number; verified: number; doneUnverified: number; failed: number } {
-  const req = tasks.filter((t) => !t.optional && !t.classifyFirst);
+  const req = tasks.filter((t) => !t.optional);
   return {
     required: req.length,
     verified: req.filter((t) => t.status === 'verified').length,
@@ -68,5 +82,8 @@ export function reportChecklistHref(ws: SiteWorkspace, jobs: Record<string, JobS
   }
   return undefined;
 }
+
+/** A task's card in the report (consent-remediation.ts taskAnchor). */
+export const reportTaskHref = (checklistHref: string, id: string): string => checklistHref.replace(/#.*$/, '') + '#task-' + id.replace(/[^a-zA-Z0-9_-]/g, '-');
 
 export const installZipHref = (domain: string): string => `/api/sites/${encodeURIComponent(domain)}/install.zip`;

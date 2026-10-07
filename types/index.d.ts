@@ -624,6 +624,8 @@ export type TimelineEvent =
       requiredFields: string[];
       confirmation?: string;
       landedUrl?: string;
+      /** The scan used the opt-out control (never a form asking for personal data). */
+      performed?: boolean;
       pageIndex: number;
     }
   | { type: 'note'; t: number; text: string; pageIndex: number }
@@ -766,6 +768,8 @@ export interface TimelineSnapshot {
   dns: Array<{ host: string; cname: string[] }>;
   markers?: { email: string; text: string; clickIds: Record<string, string> };
   notTested: string[];
+  /** Where the visit's time went: one row per step path ("land", "browse.page.navigate"), repeats aggregated (count, total ms, max ms), slowest first; open = still running when recorded. Absent = not recorded. */
+  steps?: Array<{ step: string; count: number; ms: number; maxMs: number; open?: boolean }>;
   evidence: { har?: string; timeline?: string };
 }
 export interface Timeline {
@@ -946,6 +950,8 @@ export interface ScenarioSummary {
   durationMs?: number;
   banner?: { found: boolean; cmp?: string; shownAtMs?: number };
   choice?: { kind: string; ok: boolean; method: string };
+  /** The opt-out link walk on this scenario's visit, when one ran: why an opt-out was or was not completed. */
+  optOutWalk?: { found: boolean; linkText?: string; requiredFields: string[]; performed?: boolean };
   consentTool?: ConsentToolRecord;
   /** complykit's own tool as this scenario's landing exposed it (D10). */
   complykit?: ComplykitToolSnapshot;
@@ -969,7 +975,8 @@ export interface BehaviorMatrixCell {
 }
 export interface BehaviorMatrix {
   version:1;comparison:string;
-  columns:Array<{id:string;location:string;scenario:ScenarioId;label:string;locationLabel:string}>;
+  /** `unavailable`: the column's visitor action did not run or its choice did not succeed — one gap for the whole column; its cells are 'not-tested'. */
+  columns:Array<{id:string;location:string;scenario:ScenarioId;label:string;locationLabel:string;unavailable?:{reason:string}}>;
   rows:Array<{id:string;kind:'tool'|'storage';label:string;tool:string;partyId:string;storageKind?:string;categories:string[];purposeCategories?:string[];categorySource:string;link:string;cells:BehaviorMatrixCell[]}>;
 }
 export interface BehaviorObservation {
@@ -1368,6 +1375,8 @@ export interface GridCell {
   counts: Record<FindingKind, number>;
   banner?: string;
   choice?: string;
+  /** Why the visitor choice this scenario depends on was not completed, in the owner's words (absent = completed or no choice). */
+  choiceGap?: string;
   /** Visits that completed (1 = a single run; 2 = plus the throttled pass). Absent = not recorded. */
   runs?: number;
 }
@@ -1657,7 +1666,8 @@ export interface ElementSignature {
   dataUrl?: boolean;
 }
 export function elementSignatureOf(f: Pick<MarkupFinding, 'kind' | 'context' | 'url' | 'inline' | 'match' | 'ids' | 'dataUrl' | 'matchedBy'>): ElementSignature;
-export type RemediationTaskKind = 'install' | 'remove-existing-tool' | CompatibilityChangeKind | 'confirm-in-browser';
+/** 'classify': a decision (what an unrecognized tool is for), done when the workspace holds its classification. */
+export type RemediationTaskKind = 'classify' | 'install' | 'remove-existing-tool' | CompatibilityChangeKind | 'confirm-in-browser';
 export type RemediationVerifyMethod = 'static' | 'browser' | 'manual';
 export type RemediationVerifySpec =
   | { check: 'install'; method: 'static'; page: string; configHash: string; scriptSrc: string; elementId: string }
@@ -1705,6 +1715,10 @@ export interface RemediationTask {
   /** A context-purpose tool: applies only where it is not strictly needed. */
   optional: boolean;
   classifyFirst?: boolean;
+  /** A 'classify' task: the workspace key (class:<id>) whose classification decides it ('verified' = decided). */
+  classKey?: string;
+  /** The 'classify' tasks this change waits on. */
+  waitingOn?: string[];
   notes: string[];
   guide?: { label: string; href: string };
   /** Ids of change-list items folded into this task (their stored status is still found: resolveRemediationTaskValue). */
@@ -1728,7 +1742,9 @@ export function remediationTaskKey(id: string): string;
 export function readRemediationTaskValue(value: unknown): RemediationTaskValue | undefined;
 export function isRemediationDone(status: RemediationStatus): boolean;
 /** The task's own task:change:<id> value, else the first stored under one of its aliases (a carried `verified` reads as done-unverified unless the task's own check is a spot check). */
-export function resolveRemediationTaskValue(task: { id: string; aliases?: string[]; verify: { check: string } }, entries: Record<string, { value: unknown } | undefined>): RemediationTaskValue | undefined;
+export function resolveRemediationTaskValue(task: { id: string; aliases?: string[]; verify: { check: string }; classKey?: string }, entries: Record<string, { value: unknown } | undefined>): RemediationTaskValue | undefined;
+/** A classification value that decides a 'classify' task: a chosen purpose other than "Other". */
+export function classificationDecided(value: unknown): boolean;
 export interface RemediationSourceNote {
   code: string;
   message: string;

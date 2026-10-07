@@ -2,14 +2,19 @@ import { RemediationTask, resolveRemediationTaskValue, type RemediationStatus } 
 import { escapeHtml as esc, safeHref } from './human.js';
 import { shortPage } from './consent-compatibility.js';
 
-// "Make these changes" — the guided checklist (plans/remediation-flow.md §6, R3).
-// A numbered list of the generated config's tasks, install first: plain title,
-// one-line why, numbered steps, the markup to paste (with a copy button) and
-// what it looks like now, the pages, a guide link, and a status the owner sets
-// ("I've made this change") or a Verify sets (service only). Pure over
-// RemediationTask[]; the status overlay and the buttons are REMEDIATION_JS,
-// which saves through the report workbench's storage (workspace.ts: the site
-// workspace on the service, localStorage offline) under task:change:<id>.
+// "Your to-do list" — the guided checklist (plans/remediation-flow.md §6, R3).
+// ONE numbered list of the generated config's tasks: the decisions first
+// (what an unrecognized tool is for — kind 'classify'), then the install and
+// the changes. A change: plain title, one-line why, numbered steps, the markup
+// to paste (with a copy button) and what it looks like now, the pages, a guide
+// link, and a status the owner sets ("I've made this change") or a Verify sets
+// (service only). A decision: a button to its classify control in the grid; its
+// status is whether the workbench holds a purpose for the tool (class:<key>),
+// live as the owner classifies. A change that waits on a decision says so
+// ("Waiting on: …") until it is made. Pure over RemediationTask[]; the status
+// overlay and the buttons are REMEDIATION_JS, which saves through the report
+// workbench's storage (workspace.ts: the site workspace on the service,
+// localStorage offline) under task:change:<id>.
 //
 // Wording: a Verify pass means the fetched page (or container) carries the
 // change — never that the site is compliant; the rescan shows behavior.
@@ -68,6 +73,14 @@ export const REMEDIATION_STATUS_LABEL: Record<RemediationStatus, string> = {
   'cannot-verify': 'Can’t verify automatically',
 };
 const STATUS_TONE: Record<RemediationStatus, string> = { todo: 'neutral', 'done-unverified': 'amber', verified: 'green', failed: 'red', 'cannot-verify': 'amber' };
+/** A decision reads as one: "To decide" / "Decided ✓" (its status is 'verified' once the workspace holds a purpose). */
+export const DECISION_STATUS_LABEL = { todo: 'To decide', verified: 'Decided ✓' } as const;
+const statusLabel = (t: RemediationTask): string => (t.kind === 'classify' ? (t.status === 'verified' ? DECISION_STATUS_LABEL.verified : DECISION_STATUS_LABEL.todo) : REMEDIATION_STATUS_LABEL[t.status]);
+
+/** Required tasks — everything but the optional (context-purpose) ones; decisions and the changes waiting on them included. */
+export const isRequiredTask = (t: Pick<RemediationTask, 'optional'>): boolean => !t.optional;
+/** Done for the progress count: a passed check, or a decision made. "Marked done" is counted apart, never in it. */
+export const isTaskDone = (t: Pick<RemediationTask, 'status'>): boolean => t.status === 'verified';
 
 /** The element id of a task card (ids carry a colon). */
 export const taskAnchor = (id: string): string => `task-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
@@ -87,19 +100,49 @@ function stepHtml(t: RemediationTask, text: string, i: number): string {
   return `<span data-rem-surface="service" hidden>${esc(v.service)}</span><span data-rem-surface="offline">${esc(v.offline)}</span>`;
 }
 
-function card(t: RemediationTask, matrixRow: (partyId: string) => number): string {
+/** A decision: what an unrecognized tool is for. Its control is the grid's classify form (the tool's row). */
+function decisionCard(t: RemediationTask, matrixRow: (partyId: string) => number, unblocks: RemediationTask[]): string {
+  const anchor = taskAnchor(t.id);
+  const row = t.partyIds[0] !== undefined ? matrixRow(t.partyIds[0]) : -1;
+  const key = (t.classKey ?? '').replace(/^class:/, '');
+  const open = row >= 0 ? `<button type="button" class="ck-link-button" data-matrix-select="${row}:0">Classify ${esc(t.tools[0] ?? 'it')} in the grid</button>` : '<a href="#behavior-matrix">Classify it in the grid</a>';
+  return `<li class="ck-task ck-decision" id="${esc(anchor)}" data-remediation-id="${esc(t.id)}" data-task-kind="classify" data-rem-class-key="${esc(key)}" data-verify-method="${esc(t.verify.method)}" data-status="${esc(t.status)}" data-rem-base="${attrJson({ status: t.status })}">
+<div class="ck-task-head"><h3>${esc(t.title)}</h3><span class="human-status ck-pill" data-rem-pill data-tone="${STATUS_TONE[t.status]}">${esc(statusLabel(t))}</span></div>
+<p class="ck-task-why">${esc(t.summary)}</p>
+${unblocks.length ? `<div class="ck-task-also"><strong>Unblocks:</strong>${unblocks.length === 1 ? ` <a href="#${esc(taskAnchor(unblocks[0].id))}">${esc(unblocks[0].title)}</a>` : `<ul>${unblocks.map((u) => `<li><a href="#${esc(taskAnchor(u.id))}">${esc(u.title)}</a></li>`).join('')}</ul>`}</div>` : ''}
+<ol class="ck-task-steps">${t.steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>
+<div class="ck-task-actions">${open}</div>
+<p class="human-muted ck-task-result" data-rem-decision-note role="status">${t.status === 'verified' ? 'Decided: your team’s classification is saved for this site.' : ''}</p>
+</li>
+`;
+}
+
+/** "Waiting on: …" — the decisions a change waits on; the script hides it once they are made. */
+function waitingHtml(t: RemediationTask, byId: Map<string, RemediationTask>): string {
+  const ds = (t.waitingOn ?? []).map((id) => byId.get(id)).filter((d): d is RemediationTask => !!d);
+  if (!ds.length) return '';
+  const open = ds.filter((d) => d.status !== 'verified');
+  const names = ds.map((d) => `<a href="#${esc(taskAnchor(d.id))}">${esc(d.tools[0] ?? d.title)}</a>`).join(', ');
+  return `<p class="ck-task-waiting" data-rem-waiting="${esc(ds.map((d) => d.id).join(' '))}"${open.length ? '' : ' hidden'}><strong>Waiting on:</strong> your decision on what ${names} ${ds.length === 1 ? 'is' : 'are'} (above). This change applies only if ${ds.length === 1 ? 'it tracks' : 'they track'} visitors.</p>
+<p class="ck-task-waiting" data-rem-unblocked hidden><strong>Decided.</strong> Press “Update report with my classifications” to recompute this change from the answer.</p>`;
+}
+
+function card(t: RemediationTask, matrixRow: (partyId: string) => number, byId: Map<string, RemediationTask> = new Map()): string {
   const anchor = taskAnchor(t.id);
   const base = { status: t.status, ...(t.lastVerify ? { lastVerify: t.lastVerify } : {}) };
   const pages = t.pages.length
     ? `<p class="ck-task-pages"><strong>${t.pages.length === 1 ? 'Page' : 'Pages'}:</strong> ${t.pages.map((p) => `<a href="${esc(safeHref(p))}">${esc(shortPage(p))}</a>`).join(', ')}</p>`
     : '';
-  const row = t.classifyFirst && t.partyIds[0] !== undefined ? matrixRow(t.partyIds[0]) : -1;
-  const classify = t.classifyFirst
-    ? `<p class="ck-task-classify"><strong>Classify first:</strong> this applies only if ${esc(t.tools.join(', ') || 'the tool')} tracks visitors. ${row >= 0 ? `<button type="button" class="ck-link-button" data-matrix-select="${row}:0">Open ${esc(t.tools[0] ?? 'it')} in the grid</button>` : '<a href="#behavior-matrix">Classify it in the grid</a>'}; skip this task if it does not.</p>`
-    : '';
+  // A checklist from before decisions were tasks (classifyFirst, no waitingOn): the old pointer to the grid.
+  const row = t.classifyFirst && !t.waitingOn?.length && t.partyIds[0] !== undefined ? matrixRow(t.partyIds[0]) : -1;
+  const classify = t.waitingOn?.length
+    ? waitingHtml(t, byId)
+    : t.classifyFirst
+      ? `<p class="ck-task-waiting"><strong>Waiting on:</strong> classifying ${esc(t.tools.join(', ') || 'the tool')} — this applies only if it tracks visitors. ${row >= 0 ? `<button type="button" class="ck-link-button" data-matrix-select="${row}:0">Open ${esc(t.tools[0] ?? 'it')} in the grid</button>` : '<a href="#behavior-matrix">Classify it in the grid</a>'}</p>`
+      : '';
   const manual = t.verify.method === 'manual' ? `<p class="human-muted" data-rem-manual>Can’t be checked automatically: ${esc(t.verify.reason)}. Mark it done when it’s made; the rescan decides.</p>` : '';
   const also = t.alsoFixes?.length ? `<div class="ck-task-also"><strong>This also fixes:</strong>${t.alsoFixes.length === 1 ? ` ${esc(t.alsoFixes[0])}` : `<ul>${t.alsoFixes.map((a) => `<li>${esc(a)}</li>`).join('')}</ul>`}</div>` : '';
-  return `<li class="ck-task" id="${esc(anchor)}" data-remediation-id="${esc(t.id)}"${t.aliases?.length ? ` data-rem-aliases="${esc(t.aliases.join(' '))}"` : ''} data-task-kind="${esc(t.kind)}" data-verify-method="${esc(t.verify.method)}" data-status="${esc(t.status)}" data-rem-base="${attrJson(base)}"${t.optional ? ' data-optional="true"' : ''}>
+  return `<li class="ck-task" id="${esc(anchor)}" data-remediation-id="${esc(t.id)}"${t.aliases?.length ? ` data-rem-aliases="${esc(t.aliases.join(' '))}"` : ''} data-task-kind="${esc(t.kind)}" data-verify-method="${esc(t.verify.method)}" data-status="${esc(t.status)}" data-rem-base="${attrJson(base)}"${t.optional ? ' data-optional="true"' : ''}${t.waitingOn?.length && t.waitingOn.some((id) => byId.get(id)?.status !== 'verified') ? ' data-rem-blocked="true"' : ''}>
 <div class="ck-task-head"><h3>${esc(t.title)}</h3><span class="human-status ck-pill" data-rem-pill data-tone="${STATUS_TONE[t.status]}">${esc(REMEDIATION_STATUS_LABEL[t.status])}</span></div>
 <p class="ck-task-why">${esc(t.summary)}</p>
 ${also}
@@ -114,7 +157,8 @@ ${manual}
 <div class="ck-task-actions"><button type="button" data-rem-done aria-pressed="${t.status === 'done-unverified'}">I’ve made this change</button>${t.verify.method !== 'manual' ? '<button type="button" data-rem-verify hidden>Verify</button>' : ''}${t.kind === 'install' ? '<a class="ck-zip" data-rem-zip hidden download>Download install bundle (.zip)</a>' : ''}</div>
 <div class="ck-task-result" data-rem-result role="status" aria-live="polite">${lastVerifyHtml(t)}</div>
 <details class="human-details ck-task-note"><summary>Note</summary><div><label>Note for your team <textarea data-rem-note rows="2" maxlength="4000" placeholder="Who made the change, when, or why it is skipped"></textarea></label></div></details>
-</li>`;
+</li>
+`;
 }
 
 /** The last step: the rescan. The button is the service's (POST /api/sites/:domain/rescan); offline, the command. Never a verdict. */
@@ -140,7 +184,7 @@ export function renderRemediationHtml(section: RemediationSection | undefined, m
   const tasks = section?.tasks ?? [];
   if (!tasks.length) {
     return `<section id="remediation" class="ck-rem" aria-labelledby="remediation-title" data-remediation-empty data-rem-config-at="${esc(section?.configAt ?? '')}">
-<h2 id="remediation-title" class="human-section-title">Make these changes</h2>
+<h2 id="remediation-title" class="human-section-title">Your to-do list</h2>
 <div class="ck-rem-stale" data-rem-stale hidden role="status"><p><strong>The checklist was regenerated after this report was rendered.</strong> <span data-rem-stale-at></span></p><p><button type="button" data-rem-refresh>Show the new checklist</button> <span data-rem-refresh-status role="status"></span></p></div>
 <p>Generate the consent tool config to get your checklist: the exact changes to make, in order, each with a way to check it.</p>
 <p data-rem-generate-offline class="human-muted">Run <code>complykit consent-config &lt;run-dir&gt;</code>, then <code>complykit report --format consent-html</code> again; or open this report from the complykit service and generate it there.</p>
@@ -150,19 +194,22 @@ export function renderRemediationHtml(section: RemediationSection | undefined, m
   }
   const rows = m?.behaviorMatrix?.rows ?? [];
   const matrixRow = (partyId: string): number => rows.findIndex((r) => r.kind === 'tool' && r.partyId === partyId);
-  const required = tasks.filter((t) => !t.optional && !t.classifyFirst);
-  const later = tasks.filter((t) => t.optional || t.classifyFirst);
-  const verified = required.filter((t) => t.status === 'verified').length;
+  const required = tasks.filter(isRequiredTask);
+  const later = tasks.filter((t) => !isRequiredTask(t));
+  const done = required.filter(isTaskDone).length;
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const item = (t: RemediationTask): string => (t.kind === 'classify' ? decisionCard(t, matrixRow, tasks.filter((x) => x.waitingOn?.includes(t.id))) : card(t, matrixRow, byId));
+  const decisions = required.filter((t) => t.kind === 'classify').length;
   const from = section?.configAt ? `Generated ${esc(section.configAt.slice(0, 16).replace('T', ' '))} UTC${section.runId ? ` from run <code>${esc(section.runId)}</code>` : ''}. ` : '';
   return `<section id="remediation" class="ck-rem" aria-labelledby="remediation-title" data-remediation-source="${esc(section?.source ?? 'run')}" data-rem-config-at="${esc(section?.configAt ?? '')}">
-<h2 id="remediation-title" class="human-section-title">Make these changes</h2>
+<h2 id="remediation-title" class="human-section-title">Your to-do list</h2>
 <div class="ck-rem-stale" data-rem-stale hidden role="status"><p><strong>The checklist was regenerated after this report was rendered.</strong> <span data-rem-stale-at></span></p><p><button type="button" data-rem-refresh>Show the new checklist</button> <span data-rem-refresh-status role="status"></span></p></div>
-<p>Do these in order — the install comes first, everything else relies on it. Each change says what to edit, where, and how to check it.</p>
-<div class="ck-rem-progress"><progress data-rem-progress max="${required.length}" value="${verified}" aria-label="Changes verified"></progress><p data-rem-progress-text role="status"><strong>${verified} of ${required.length} verified</strong></p><p class="human-muted" data-rem-progress-more></p></div>
+<p>Do these in order. ${decisions ? 'The decisions come first — what each unrecognized tool is for decides which changes apply and what the generated config says — then the install, which everything else relies on.' : 'The install comes first, everything else relies on it.'} Each change says what to edit, where, and how to check it.</p>
+<div class="ck-rem-progress"><progress data-rem-progress max="${required.length}" value="${done}" aria-label="To-do items done"></progress><p data-rem-progress-text role="status"><strong>${done} of ${required.length} done</strong></p><p class="human-muted" data-rem-progress-more></p></div>
 <p class="human-muted" data-rem-offline>Verify needs the complykit service (open this report from it). Here you can mark changes done; that is saved in this browser.</p>
-<ol class="ck-rem-list">${required.map((t) => card(t, matrixRow)).join('')}</ol>
-${later.length ? `<details class="human-details ck-rem-later"><summary>Only if they apply (${later.length}): chat, embeds, fonts and tools to classify first</summary><div><p class="human-muted">Not counted in the progress above. Each says when it applies.</p><ol class="ck-rem-list">${later.map((t) => card(t, matrixRow)).join('')}</ol></div></details>` : ''}
-<p class="human-muted">${from}“Verified” means the page we fetched carries the change. What visitors’ browsers actually do is shown by a rescan — run it once every change is made.</p>
+<ol class="ck-rem-list">${required.map(item).join('')}</ol>
+${later.length ? `<details class="human-details ck-rem-later"><summary>Only if they apply (${later.length}): chat, embeds and fonts</summary><div><p class="human-muted">Not counted in the progress above. Each applies only where the tool is not strictly needed.</p><ol class="ck-rem-list">${later.map(item).join('')}</ol></div></details>` : ''}
+<p class="human-muted">${from}“Done” counts verified changes and decisions made; a change you marked done is counted apart until Verify passes. “Verified” means the page we fetched carries the change. What visitors’ browsers actually do is shown by a rescan — run it once every change is made.</p>
 ${rescanHtml()}
 </section>`;
 }
@@ -178,6 +225,7 @@ export const REMEDIATION_CSS = `.ck-rem{margin:24px 0;padding:18px;border:1px so
 .ck-task-result:empty{display:none}.ck-checking::before{content:'';display:inline-block;width:12px;height:12px;margin-right:8px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:ck-spin 1s linear infinite;vertical-align:-1px}@keyframes ck-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.ck-checking::before{animation:none}}.ck-task-result{font-size:14px}.ck-task-evidence code{overflow-wrap:anywhere}.ck-link-button{padding:2px 6px}.ck-task-note textarea{width:100%;font:inherit;padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
 .ck-rem-stale{margin:10px 0;padding:10px 12px;border:2px solid var(--work-amber,#805100);border-radius:8px;background:var(--work-amber-bg,#fff7db)}.ck-rem-stale[hidden],.ck-rem [hidden]{display:none!important}.ck-rem-stale p{margin:4px 0}.ck-rem-rescan{margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}.ck-rem-rescan h3{margin:0 0 6px;font-size:17px}.ck-rescan-options{border:0;margin:8px 0;padding:0}.ck-rescan-options legend{font-weight:600;padding:0}.ck-rescan-options label{display:block;margin:4px 0}.ck-rescan-follow progress{width:100%;height:10px}
 .ck-task :focus-visible,.ck-rem :focus-visible{outline:2px solid var(--accent);outline-offset:2px}.ck-change-task{display:inline-block;margin-top:4px;font-size:13px}
+.ck-decision{border-left-style:dashed}.ck-decision[data-status=verified]{border-left-style:solid}.ck-task-waiting{margin:6px 0;padding:6px 10px;border-radius:6px;background:var(--work-amber-bg,#fff7db);font-size:14px}.ck-task[data-rem-blocked=true] .ck-task-actions{display:none}.ck-task[data-rem-blocked=true]>h3,.ck-task[data-rem-blocked=true] .ck-task-head h3{color:var(--muted)}
 @media print{.ck-task-actions,.ck-task-note,[data-rem-copy],[data-rem-rescan-service],[data-rem-stale]{display:none!important}}`;
 
 // The overlay: status from the workbench storage (window.ComplyKitWorkspace),
@@ -185,6 +233,7 @@ export const REMEDIATION_CSS = `.ck-rem{margin:24px 0;padding:18px;border:1px so
 // Re-runs on every workbench update and when the section is replaced.
 export const REMEDIATION_JS = String.raw`(function(){
 var LABEL={todo:'To do','done-unverified':'Marked done',verified:'Verified ✓',failed:'Failed ✗','cannot-verify':'Can’t verify automatically'};
+var DECISION={todo:'To decide',verified:'Decided ✓'};
 var TONE={todo:'neutral','done-unverified':'amber',verified:'green',failed:'red','cannot-verify':'amber'};
 var RESULT={pass:'verified',fail:'failed','cannot-verify':'cannot-verify'};
 // The service block sits after this script (just before the workbench config): read it on first use.
@@ -193,7 +242,11 @@ function findService(){if(looked)return service;var sc=document.getElementById('
 var busy={};
 function ws(){return window.ComplyKitWorkspace;}
 function base(el){try{return JSON.parse(el.dataset.remBase||'{}');}catch(e){return {};}}
-function value(el){var w=ws(),v=w&&w.remediation?w.remediation(el.dataset.remediationId):undefined;return v||base(el);}
+// A decision's status is the workbench's classification of its tool, live (the same rule as classificationDecided);
+// until the shared workspace has loaded, the rendered one.
+function decided(c){if(!c||typeof c!=='object'||c.categoryChosen===false)return false;return [c.category].concat(c.additionalCategories||[],c.categories||[]).some(function(x){return typeof x==='string'&&x!==''&&x!=='other'&&x!=='unknown';});}
+function decision(el){var w=ws();if(!w||!w.classification||(w.shared&&w.classificationStamps&&w.classificationStamps()===null))return base(el);return {status:decided(w.classification(el.dataset.remClassKey))?'verified':'todo'};}
+function value(el){if(el.dataset.taskKind==='classify')return decision(el);var w=ws(),v=w&&w.remediation?w.remediation(el.dataset.remediationId):undefined;return v||base(el);}
 function siteApi(){return service.workspace.replace(/\/workspace$/,'');}
 function setValue(el,v,remote){var w=ws();if(w&&w.setRemediation)w.setRemediation(el.dataset.remediationId,v,remote);else{el.dataset.remBase=JSON.stringify(v);render();}}
 function resultInto(box,lv,error){
@@ -214,7 +267,8 @@ function render(){
   sec.querySelectorAll('[data-remediation-id]').forEach(function(el){
     var v=value(el),s=LABEL[v.status]?v.status:'todo',id=el.dataset.remediationId;
     el.dataset.status=s;
-    var pill=el.querySelector('[data-rem-pill]');pill.textContent=LABEL[s];pill.dataset.tone=TONE[s];
+    var pill=el.querySelector('[data-rem-pill]');pill.textContent=el.dataset.taskKind==='classify'?DECISION[s==='verified'?'verified':'todo']:LABEL[s];pill.dataset.tone=TONE[s];
+    var dn=el.querySelector('[data-rem-decision-note]');if(dn)dn.textContent=s==='verified'?(base(el).status==='verified'?'Decided: your team’s classification is saved for this site.':'Decided. Press “Update report with my classifications” to recompute the changes that wait on it.'):'';
     var d=el.querySelector('[data-rem-done]');if(d){d.hidden=s==='verified';d.setAttribute('aria-pressed',s==='done-unverified'?'true':'false');d.textContent=s==='done-unverified'?'Undo “made this change”':'I’ve made this change';}
     var vb=el.querySelector('[data-rem-verify]');if(vb){vb.hidden=!service;vb.disabled=anyBusy;vb.setAttribute('aria-busy',busy[id]?'true':'false');vb.textContent=busy[id]?'Checking the live page…':s==='verified'||s==='failed'||s==='cannot-verify'?'Verify again':'Verify';}
     var zip=el.querySelector('[data-rem-zip]');if(zip){zip.hidden=!service;if(service)zip.href=siteApi()+'/install.zip';}
@@ -223,9 +277,15 @@ function render(){
     var note=el.querySelector('[data-rem-note]');if(note&&document.activeElement!==note)note.value=v.note||'';
     if(el.dataset.optional!=='true'&&!el.closest('.ck-rem-later')){req++;if(s==='verified')ver++;else if(s==='done-unverified')done++;else if(s==='failed')failed++;else if(s==='cannot-verify')cannot++;}
   });
+  // A change waiting on decisions: "Waiting on: …" until they are made; made here but not yet applied → say to update the report.
+  sec.querySelectorAll('[data-rem-waiting]').forEach(function(w){
+    var card=w.closest('[data-remediation-id]'),ids=w.dataset.remWaiting.split(' '),open=false,fresh=false;
+    ids.forEach(function(id){var q=window.CSS&&CSS.escape?CSS.escape(id):id,d=sec.querySelector('[data-remediation-id="'+q+'"]');if(!d)return;if(value(d).status!=='verified')open=true;else if(base(d).status!=='verified')fresh=true;});
+    w.hidden=!open;var u=card.querySelector('[data-rem-unblocked]');if(u)u.hidden=open||!fresh;card.dataset.remBlocked=open?'true':'false';
+  });
   var bar=sec.querySelector('[data-rem-progress]');if(bar){bar.max=Math.max(req,1);bar.value=ver;}
-  var t=sec.querySelector('[data-rem-progress-text]');if(t){t.textContent='';var st=document.createElement('strong');st.textContent=ver+' of '+req+' verified';t.appendChild(st);}
-  var more=sec.querySelector('[data-rem-progress-more]');if(more){var parts=[];if(done)parts.push(done+' marked done, not verified yet');if(failed)parts.push(failed+' failed');if(cannot)parts.push(cannot+' can’t be verified automatically');more.textContent=parts.join(' · ');}
+  var t=sec.querySelector('[data-rem-progress-text]');if(t){t.textContent='';var st=document.createElement('strong');st.textContent=ver+' of '+req+' done';t.appendChild(st);}
+  var more=sec.querySelector('[data-rem-progress-more]');if(more){var parts=[];if(done)parts.push(done+' more marked done, not verified yet');if(failed)parts.push(failed+' failed');if(cannot)parts.push(cannot+' can’t be verified automatically');more.textContent=parts.join(' · ');}
   // Each change-list item points at its task.
   // A folded item (a behavior mismatch, a vendor call) points at the task that fixes it (data-rem-aliases).
   document.querySelectorAll('#compatibility [data-change-id]').forEach(function(item){var id=item.dataset.changeId,q=window.CSS&&CSS.escape?CSS.escape(id):id,card=sec.querySelector('[data-remediation-id="'+q+'"]')||sec.querySelector('[data-rem-aliases~="'+q+'"]');if(!card||item.querySelector('.ck-change-task'))return;var a=document.createElement('a');a.className='ck-change-task';a.href='#'+card.id;a.textContent=card.dataset.remediationId===id?'In your checklist →':'Fixed by a task in your checklist →';item.appendChild(a);});

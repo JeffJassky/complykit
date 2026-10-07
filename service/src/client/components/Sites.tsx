@@ -4,7 +4,7 @@ import { formatAbsolute, formatRelative } from '../lib/format';
 import { api } from '../lib/api';
 import { configDownloads, configStoredOf, generatableRuns, generateErrorText, REPORT_REFRESH_FAILED, summarizeWorkspace } from '../lib/sites';
 import { PHASE_LABEL } from '../lib/format';
-import { checklistFromWorkspace, checklistProgress, installZipHref, reportChecklistHref, STATUS_LABEL, TASK_CHANGE_PREFIX } from '../lib/checklist';
+import { checklistFromWorkspace, checklistProgress, installZipHref, openDecisions, reportChecklistHref, reportTaskHref, taskStatusLabel, TASK_CHANGE_PREFIX } from '../lib/checklist';
 import { siteHref } from '../lib/useHashView';
 import { useNow } from '../lib/useNow';
 import { useReviewer } from '../lib/useKb';
@@ -61,7 +61,7 @@ export function SitesListView({ sites, now }: { sites: SiteSummary[]; now: numbe
               <dd data-testid="site-checklist">
                 {s.checklist ? (
                   <>
-                    {s.checklist.verified} of {s.checklist.required} verified
+                    {s.checklist.verified} of {s.checklist.required} done
                     {s.checklist.doneUnverified ? <small className="muted"> · {s.checklist.doneUnverified} marked done</small> : null}
                     {s.checklist.failed ? <small className="muted"> · {s.checklist.failed} failed</small> : null}
                   </>
@@ -172,16 +172,52 @@ export interface ChecklistState {
 
 const STATUS_PILL: Record<RemediationStatus, string> = { todo: 'pill-queued', 'done-unverified': 'pill-marked', verified: 'pill-done', failed: 'pill-failed', 'cannot-verify': 'pill-marked' };
 
-function ChecklistItem({ task, domain, state, onVerify, onMarkDone }: { task: RemediationTask; domain: string; state: ChecklistState; onVerify: (t: RemediationTask) => void; onMarkDone: (t: RemediationTask) => void }) {
-  const busy = state.verifying === task.id;
-  const error = state.errors?.[task.id];
+/** A decision (kind 'classify'): what an unrecognized tool is for. Made in the report (its classify control); done when the workspace holds a purpose. */
+function DecisionItem({ task, tasks, report }: { task: RemediationTask; tasks: RemediationTask[]; report?: string }) {
+  const unblocks = tasks.filter((t) => t.waitingOn?.includes(task.id));
   return (
-    <li className="checklist-item" data-task-id={task.id} data-status={task.status}>
+    <li className="checklist-item" data-task-id={task.id} data-task-kind="classify" data-status={task.status}>
       <div className="checklist-head">
         <strong className="checklist-title">{task.title}</strong>
-        <span className={`pill ${STATUS_PILL[task.status]}`}>{STATUS_LABEL[task.status]}</span>
+        <span className={`pill ${STATUS_PILL[task.status]}`}>{taskStatusLabel(task)}</span>
       </div>
       <p className="muted">{task.summary}</p>
+      {unblocks.length ? (
+        <div className="checklist-also" data-testid="unblocks">
+          <strong>Unblocks:</strong> {unblocks.map((u) => u.title).join(' · ')}
+        </div>
+      ) : null}
+      <div className="site-downloads">
+        {task.status === 'verified' ? (
+          <span className="muted">Decided — your team’s classification is saved for this site.</span>
+        ) : report ? (
+          <a className="btn btn-sm" href={reportTaskHref(report, task.id)}>
+            Classify it in the report
+          </a>
+        ) : (
+          <span className="muted">Classify it in the scan’s report (its grid), then press “Update report with my classifications”.</span>
+        )}
+      </div>
+    </li>
+  );
+}
+
+function ChecklistItem({ task, tasks, domain, state, onVerify, onMarkDone }: { task: RemediationTask; tasks: RemediationTask[]; domain: string; state: ChecklistState; onVerify: (t: RemediationTask) => void; onMarkDone: (t: RemediationTask) => void }) {
+  const busy = state.verifying === task.id;
+  const error = state.errors?.[task.id];
+  const waiting = openDecisions(task, tasks);
+  return (
+    <li className="checklist-item" data-task-id={task.id} data-status={task.status} data-blocked={waiting.length ? 'true' : undefined}>
+      <div className="checklist-head">
+        <strong className="checklist-title">{task.title}</strong>
+        <span className={`pill ${STATUS_PILL[task.status]}`}>{taskStatusLabel(task)}</span>
+      </div>
+      <p className="muted">{task.summary}</p>
+      {waiting.length ? (
+        <p className="checklist-waiting" data-testid="waiting-on">
+          <strong>Waiting on:</strong> your decision on what {waiting.map((d) => d.tools[0] ?? d.title).join(', ')} {waiting.length === 1 ? 'is' : 'are'} (above). This change applies only if {waiting.length === 1 ? 'it tracks' : 'they track'} visitors.
+        </p>
+      ) : null}
       {task.alsoFixes?.length ? (
         <div className="checklist-also" data-testid="also-fixes">
           <strong>This also fixes:</strong>{' '}
@@ -196,7 +232,7 @@ function ChecklistItem({ task, domain, state, onVerify, onMarkDone }: { task: Re
           )}
         </div>
       ) : null}
-      <div className="site-downloads">
+      {waiting.length ? null : <div className="site-downloads">
         {task.status !== 'verified' ? (
           <button type="button" className="btn btn-sm btn-secondary" aria-pressed={task.status === 'done-unverified'} disabled={state.saving === task.id} onClick={() => onMarkDone(task)}>
             {task.status === 'done-unverified' ? 'Undo “made this change”' : 'I’ve made this change'}
@@ -214,7 +250,7 @@ function ChecklistItem({ task, domain, state, onVerify, onMarkDone }: { task: Re
             Download install bundle (.zip)
           </a>
         ) : null}
-      </div>
+      </div>}
       {busy ? (
         <p className="muted" role="status">
           Checking the live page… a browser check can take up to a minute.
@@ -314,7 +350,7 @@ export function RescanPanel({
       <p className="hint">
         When every change is made, rescan. “Verified” means the page we fetched carries the change, not what visitors’ browsers do: the rescan’s report has the final word — its section <strong>“Your complykit consent tool: what it controls”</strong> says, per vendor,
         controlled, not controlled or not observed, for the pages and locations it visited.
-        {remaining ? ` ${remaining} required ${remaining === 1 ? 'change is' : 'changes are'} not verified or marked done yet; ${remaining === 1 ? 'it' : 'they'} will show up there.` : ''}
+        {remaining ? ` ${remaining} required ${remaining === 1 ? 'item is' : 'items are'} not done yet; ${remaining === 1 ? 'it' : 'they'} will show up there.` : ''}
       </p>
       {canRescan ? (
         <>
@@ -384,33 +420,35 @@ export function ChecklistPanel({
   const tasks = checklistFromWorkspace(workspace);
   const report = reportChecklistHref(workspace, jobs);
   const p = checklistProgress(tasks);
-  const required = tasks.filter((t) => !t.optional && !t.classifyFirst);
-  const later = tasks.filter((t) => t.optional || t.classifyFirst);
-  const item = (t: RemediationTask) => <ChecklistItem key={t.id} task={t} domain={workspace.domain} state={state} onVerify={onVerify} onMarkDone={onMarkDone} />;
+  // One list: the decisions (what an unrecognized tool is for) first, then the changes; optional (chat, embeds, fonts) folded at the end.
+  const required = tasks.filter((t) => !t.optional);
+  const later = tasks.filter((t) => t.optional);
+  const item = (t: RemediationTask) =>
+    t.kind === 'classify' ? <DecisionItem key={t.id} task={t} tasks={tasks} report={report} /> : <ChecklistItem key={t.id} task={t} tasks={tasks} domain={workspace.domain} state={state} onVerify={onVerify} onMarkDone={onMarkDone} />;
   return (
     <section className="panel" aria-labelledby="site-checklist">
       <h2 id="site-checklist" className="section-title">
-        Checklist
+        To-do list
       </h2>
       {tasks.length ? (
         <>
-          <progress className="checklist-progress" max={Math.max(p.required, 1)} value={p.verified} aria-label="Changes verified" />
+          <progress className="checklist-progress" max={Math.max(p.required, 1)} value={p.verified} aria-label="To-do items done" />
           <p data-testid="checklist-progress">
             <strong>
-              {p.verified} of {p.required} verified
+              {p.verified} of {p.required} done
             </strong>
-            {p.doneUnverified ? ` · ${p.doneUnverified} marked done, not verified yet` : ''}
+            {p.doneUnverified ? ` · ${p.doneUnverified} more marked done, not verified yet` : ''}
             {p.failed ? ` · ${p.failed} failed` : ''}
           </p>
           {report ? (
             <p>
-              <a href={report}>Open the checklist in the report</a> for the steps and the markup to paste.
+              <a href={report}>Open the to-do list in the report</a> for the steps, the markup to paste and the classify controls.
             </p>
           ) : null}
           <ol className="checklist">{required.map(item)}</ol>
           {later.length ? (
             <details className="checklist-later">
-              <summary>Only if they apply ({later.length})</summary>
+              <summary>Only if they apply ({later.length}): chat, embeds and fonts</summary>
               <ol className="checklist">{later.map(item)}</ol>
             </details>
           ) : null}
@@ -486,7 +524,7 @@ export function SitePageView({
             <dd data-testid="header-checklist">
               {tasks.length ? (
                 <strong>
-                  {progress.verified} of {progress.required} changes verified
+                  {progress.verified} of {progress.required} done
                 </strong>
               ) : (
                 <span className="muted">not generated yet</span>
@@ -501,7 +539,7 @@ export function SitePageView({
             <dt>Runs</dt>
             <dd>{runs.length}</dd>
           </div>
-          <div className="fact" title="The report workbench’s own to-dos (its “Checklist and saved progress” panel), not the changes above.">
+          <div className="fact" title="The report workbench’s own research notes (its “Saved progress” panel), not the to-do list above.">
             <dt>Report notes</dt>
             <dd data-testid="report-notes">
               {openTasks} open / {doneTasks} done

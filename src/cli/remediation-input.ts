@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseRemediationTasks, remediationFromWorkspace, type RemediationSection, type RemediationWorkspaceLike } from '../report/index.js';
 
-// Where the report's "Make these changes" checklist comes from (R3,
+// Where the report's "Your to-do list" checklist comes from (R3,
 // plans/remediation-flow.md §6): the site workspace's latest generated config
 // (`config.value.tasks`, the service / --workspace) wins; otherwise the run's
 // own generated output (`complykit consent-config <run-dir>` writes

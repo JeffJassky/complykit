@@ -188,7 +188,47 @@ suite('the report checklist on the service: generate, stale config, rescan', () 
     expect(res.status).toBe(200);
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await expect.poll(() => install.locator('[data-rem-pill]').textContent()).toBe('Verified ✓');
-    expect(await page.locator('[data-rem-progress-text]').textContent()).toMatch(/^1 of \d+ verified$/);
+    expect(await page.locator('[data-rem-progress-text]').textContent()).toMatch(/^1 of \d+ done$/);
+    expect(errors).toEqual([]);
+    await context.close();
+  });
+
+  it('one list: classifying a tool in the grid marks its decision done at once, unblocks the change waiting on it, and survives “Update report”', async () => {
+    const { reportUrl } = addJob(withTasks);
+    const context = await browser.newContext();
+    context.setDefaultTimeout(10000);
+    const page = await context.newPage();
+    const errors = await open(page, reportUrl);
+    const decisionTask = generated.tasks.find((t) => t.kind === 'classify')!;
+    const blockedTask = generated.tasks.find((t) => t.waitingOn?.includes(decisionTask.id))!;
+    const required = generated.tasks.filter((t) => !t.optional).length;
+    const decision = page.locator(`[data-remediation-id="${decisionTask.id}"]`);
+    const blocked = page.locator(`[data-remediation-id="${blockedTask.id}"]`);
+    // The decision is first in the one list; the change waiting on it says so and hides its buttons.
+    expect(await page.locator('#remediation .ck-rem-list > [data-remediation-id]').first().getAttribute('data-remediation-id')).toBe(decisionTask.id);
+    expect(await decision.locator('[data-rem-pill]').textContent()).toBe('To decide');
+    expect(await blocked.locator('[data-rem-waiting]').isVisible()).toBe(true);
+    expect(await blocked.locator('[data-rem-done]').isVisible()).toBe(false);
+    // (The site's workspace is shared with the tests above: count from what is already done.)
+    const before = Number(/^(\d+) of (\d+) done$/.exec((await page.locator('[data-rem-progress-text]').textContent()) ?? '')?.[1]);
+    expect(await page.locator('[data-rem-progress-text]').textContent()).toBe(`${before} of ${required} done`);
+    // Classify it from the decision's button: the grid's classify form for that tool.
+    await decision.locator('[data-matrix-select]').click();
+    const form = page.locator('#matrix-classification [data-class-form]');
+    await form.locator('select[name=category]').selectOption('analytics');
+    await form.locator('[data-class-apply]').click();
+    await expect.poll(() => decision.locator('[data-rem-pill]').textContent()).toBe('Decided ✓');
+    expect(await blocked.locator('[data-rem-waiting]').isVisible()).toBe(false);
+    expect(await blocked.locator('[data-rem-unblocked]').isVisible()).toBe(true);
+    expect(await blocked.locator('[data-rem-done]').isVisible()).toBe(true);
+    expect(await page.locator('[data-rem-progress-text]').textContent()).toBe(`${before + 1} of ${required} done`);
+    await expect.poll(() => page.locator('#work-storage-status').textContent()).toBe(SHARED);
+    expect(Object.keys((await workspace()).entries)).toContain(decisionTask.classKey);
+    // Update report: re-rendered from the saved scan; the decision reads done from the workspace.
+    await Promise.all([page.waitForEvent('load'), page.locator('#ck-rerender-button').click()]);
+    await expect.poll(() => page.locator('#rerendered').count()).toBe(1);
+    await expect.poll(() => page.locator(`[data-remediation-id="${decisionTask.id}"] [data-rem-pill]`).textContent()).toBe('Decided ✓');
+    expect(await page.locator(`[data-remediation-id="${blockedTask.id}"] [data-rem-waiting]`).isVisible()).toBe(false);
     expect(errors).toEqual([]);
     await context.close();
   });

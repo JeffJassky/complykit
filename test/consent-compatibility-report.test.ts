@@ -72,10 +72,10 @@ describe('compatibility report model (JSON)', () => {
     expect(r.groups.find((x) => x.id === 'platform')!.items[0].guide!.href).toBe('https://jeffjassky.github.io/complykit/guide/platform-shopify');
   });
 
-  it('unclassified tools say "classify first"', () => {
+  it('unclassified tools say what they wait on: the decision, named', () => {
     const u = r.rows.find((x) => x.partyId === 'unknown:tracker.test')!;
     expect(u.purpose).toBe('unclassified');
-    expect(u.whatToChange).toMatch(/^Classify first/);
+    expect(u.whatToChange).toMatch(/^Waiting on your decision: what is tracker\.test\? Then, if it tracks visitors: /);
     expect(r.groups.find((x) => x.id === 'needs-a-look')!.items[0].classifyFirst).toBe(true);
   });
 

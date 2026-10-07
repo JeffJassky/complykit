@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import type { Browser, Page } from 'playwright';
-import { findBanner, readoutConfirms, consentModeMismatch, findConfirmation, detectBlock } from '../src/collect/browser/evaluation/banner.js';
+import { findBanner, readoutConfirms, consentModeMismatch, findConfirmation, detectBlock, walkOptOutLink } from '../src/collect/browser/evaluation/banner.js';
 
 // Regressions from the 2026-10-03 field run: a storefront with no banner was
 // read as "banner showing" because a stray OK button matched, and a Shopify
@@ -90,5 +90,65 @@ suite('strict banner detection', () => {
   it('an off-screen or hidden banner does not count', async () => {
     await page.setContent('<div style="display:none">We use cookies <button>Accept</button></div>');
     expect(await findBanner(page)).toBeNull();
+  });
+});
+
+// Field run 2026-10-07: a Shopify opt-out page reported the footer newsletter
+// form (contact[email]) and the login form (customer[email]) as the opt-out's
+// required fields, and so never performed it. Only the control's own form (or
+// section) counts. Runs on an installed browser via COMPLYKIT_BROWSER_CHANNEL
+// when the Playwright Chromium build is absent.
+const walkChannel = process.env.COMPLYKIT_BROWSER_CHANNEL;
+const walkSuite = chromiumAvailable || walkChannel ? describe : describe.skip;
+walkSuite('opt-out link walk: required fields belong to the opt-out control', () => {
+  let browser: Browser;
+  const CHROME = `<header><form action="/account/login" method="post"><input type="email" name="customer[email]" required><input type="password" name="customer[password]" required><button type="submit">Sign in</button></form></header>`;
+  const FOOTER = `<footer><form action="/contact" method="post"><input type="email" name="contact[email]" required><button type="submit" aria-label="Subscribe">→</button></form><a href="/pages/data-sharing-opt-out">Your Privacy Choices</a></footer>`;
+  const pages: Record<string, string> = {
+    '/': `<!doctype html><title>Shop</title>${CHROME}<main><h1>Shop</h1></main>${FOOTER}`,
+    '/pages/data-sharing-opt-out': `<!doctype html><title>Opt out</title>${CHROME}<main><section><h1>Data sharing opt-out</h1>
+      <label><input type="checkbox" role="switch" aria-label="Opt out of data sharing" onchange="document.getElementById('s').textContent='Your preferences have been saved.'"> Opt out of data sharing</label>
+      <p id="s"></p></section></main>${FOOTER}`,
+    '/email-form': `<!doctype html><title>Shop</title>${CHROME}<main><h1>Shop</h1></main><footer><a href="/pages/request">Do Not Sell or Share My Personal Information</a></footer>`,
+    '/pages/request': `<!doctype html><title>Request</title><main><form action="/submit-request" method="post"><label>Email <input type="email" name="email" required></label><button type="submit">Submit request</button></form></main>`,
+  };
+  const posted: string[] = [];
+  async function open() {
+    const context = await browser.newContext();
+    await context.route('http://shop.test/**', (route) => {
+      const url = new URL(route.request().url());
+      if (route.request().method() === 'POST') posted.push(url.pathname);
+      return route.fulfill({ contentType: 'text/html', body: pages[url.pathname] ?? '<!doctype html><p>ok</p>' });
+    });
+    return { context, page: await context.newPage() };
+  }
+  beforeAll(async () => {
+    const { chromium } = await import('playwright');
+    browser = await chromium.launch(chromiumAvailable ? {} : { channel: walkChannel });
+  });
+  afterAll(async () => browser?.close());
+
+  it('a toggle opt-out is performed despite the footer newsletter and header login forms', async () => {
+    const { context, page } = await open();
+    await page.goto('http://shop.test/');
+    const walk = await walkOptOutLink(page, true);
+    expect(walk.found).toBe(true);
+    expect(walk.linkText).toBe('Your Privacy Choices');
+    expect(walk.requiredFields).toEqual([]);
+    expect(walk.performed).toBe(true);
+    expect(walk.confirmation).toMatch(/preferences have been saved/);
+    expect(posted).toEqual([]);
+    await context.close();
+  });
+
+  it('an opt-out form that itself requires an email is not submitted, and the field is reported', async () => {
+    const { context, page } = await open();
+    await page.goto('http://shop.test/email-form');
+    const walk = await walkOptOutLink(page, true);
+    expect(walk.found).toBe(true);
+    expect(walk.requiredFields).toEqual(['email']);
+    expect(walk.performed).toBe(false);
+    expect(posted).toEqual([]);
+    await context.close();
   });
 });

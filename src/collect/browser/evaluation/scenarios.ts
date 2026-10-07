@@ -42,6 +42,7 @@ import { watchMarkup } from './markup.js';
 import { readFirstLayer, readSecondLayer, readAfterChoice } from './banner-design.js';
 import { readComplykit, complykitRunning, complykitWithdraw } from './complykit.js';
 import { installLocalCopy, type LocalCopy } from './local-copy.js';
+import { StepTimer, step, topSteps, pathOf, formatSeconds } from './steps.js';
 import { BANNER_DESIGN_LABEL, BANNER_SECOND_LAYER_LABEL, BANNER_AFTER_CHOICE_LABEL } from '../../../record/index.js';
 
 // One scenario = one fresh browser context (a brand-new profile — nothing
@@ -123,6 +124,10 @@ class Visit {
   }
 
   async newPage(): Promise<Page> {
+    return step('new-page', () => this.openPage());
+  }
+
+  private async openPage(): Promise<Page> {
     this.page = await this.context.newPage();
     this.page.setDefaultTimeout(this.input.throttle ? 45000 : 15000);
     if (this.input.throttle) await this.throttlePage(this.page);
@@ -148,6 +153,10 @@ class Visit {
   }
 
   async shot(label: string): Promise<void> {
+    await step('shot', () => this.takeShot(label), label);
+  }
+
+  private async takeShot(label: string): Promise<void> {
     try {
       // JPEG: a viewport capture is ~100 KB instead of ~1 MB, so reports can inline it.
       const buf = await this.page.screenshot({ type: 'jpeg', quality: 70 });
@@ -168,7 +177,7 @@ class Visit {
         : kind === 'second'
           ? readSecondLayer(this.page, opts.open === true).then((data) => ({ label: BANNER_SECOND_LAYER_LABEL, data }))
           : readAfterChoice(this.page, opts.choice ?? 'accept').then((data) => ({ label: BANNER_AFTER_CHOICE_LABEL, data }));
-    const r = await withTimeout(read.catch(() => null), 15000, null);
+    const r = await step(`design-${kind}`, () => withTimeout(read.catch(() => null), 15000, null));
     if (!r) {
       this.designNotes.push(`banner design: ${kind === 'first' ? 'first layer' : kind === 'second' ? 'settings layer' : 'after-choice'} readout timed out — not tested`);
       return;
@@ -178,7 +187,7 @@ class Visit {
   }
 
   async readout(label: string): Promise<Record<string, unknown>> {
-    const data = await readConsentState(this.page);
+    const data = await step('readout', () => readConsentState(this.page), label);
     this.ev({ type: 'consent-readout', label, data });
     for (const r of siteReportedRegion(data)) this.siteReported.set(r.source, r);
     return data;
@@ -211,26 +220,35 @@ class Visit {
 
   /** Land on a URL and watch for the banner while dwelling. */
   async land(url: string, opts: { dwellMs?: number; expectBanner?: boolean } = {}): Promise<void> {
+    await step('land', () => this.landUntimed(url, opts), pathOf(url));
+  }
+
+  private async landUntimed(url: string, opts: { dwellMs?: number; expectBanner?: boolean }): Promise<void> {
     const since = Date.now();
     await navigate(this.page, this.cap, url, this.input.journey);
-    this.blocked = await detectBlock(this.page);
+    this.blocked = await step('detect-block', () => detectBlock(this.page));
     if (this.blocked) {
       this.ev({ type: 'note', text: `bot protection: ${this.blocked}` });
       throw new BlockedError(this.blocked);
     }
     const dwellMs = opts.dwellMs ?? this.input.journey.dwellMs;
     const wait = Math.min(this.input.bannerWaitMs, Math.max(dwellMs, 1500));
-    const popup = this.driver.available ? await this.driver.waitForPopup(wait, since) : null;
+    const popup = this.driver.available ? await step('banner-wait', () => this.driver.waitForPopup(wait, since)) : null;
     // autoconsent can report a popup that no visitor sees (a consent tool loaded
     // in a mode with nothing on screen) — require something visible.
     // …and give it a moment: some tools report the popup before it is painted
     // (Termly draws ~1–3s later).
     const visibleNow = async (): Promise<boolean> => (await bannerVisible(this.page)) || (await consentFrameVisible(this.page));
-    let seen = popup ? await visibleNow() : false;
-    for (let until = Date.now() + 5000; popup && !seen && Date.now() < until; ) {
-      await this.page.waitForTimeout(500);
-      seen = await visibleNow();
-    }
+    const seen = !popup
+      ? false
+      : await step('banner-visible', async () => {
+          let visible = await visibleNow();
+          for (let until = Date.now() + 5000; !visible && Date.now() < until; ) {
+            await this.page.waitForTimeout(500);
+            visible = await visibleNow();
+          }
+          return visible;
+        });
     if (popup && !seen) this.ev({ type: 'note', text: `consent tool detected (${popup.cmp}) but no banner is visible` });
     if (popup && seen) {
       this.bannerShown = true;
@@ -239,7 +257,7 @@ class Visit {
     } else {
       // A known tool's exact selectors name it (complykit, OneTrust, …); only a
       // text match is 'heuristic'.
-      const found = await findBanner(this.page);
+      const found = await step('find-banner', () => findBanner(this.page));
       if (found) {
         this.bannerShown = true;
         this.cmp = this.cmp ?? (found.via.startsWith('selector:') ? found.via.slice('selector:'.length) : 'heuristic');
@@ -251,8 +269,8 @@ class Visit {
     const elapsed = Date.now() - since;
     await dwell(this.page, this.cap, Math.max(0, dwellMs - elapsed));
     await this.readout('after-load');
-    await this.readDefaultConsentTool();
-    await this.readComplykitTool();
+    await step('default-tool', () => this.readDefaultConsentTool());
+    await step('complykit-tool', () => this.readComplykitTool());
     if (this.bannerShown) await this.shot('banner');
     // Banner design (F6): read once per location, in the scenario that never
     // touches the banner — the readouts are measurements only, no clicks.
@@ -264,7 +282,11 @@ class Visit {
 
   /** Poll the stored consent state until it stops contradicting `choice` (some
    *  platforms persist the choice through a network round-trip). */
-  private async settledReadout(choice: 'accept' | 'reject', budgetMs = 5000): Promise<{ data: Record<string, unknown>; confirmed: boolean | undefined; contradicts: boolean | undefined }> {
+  private settledReadout(choice: 'accept' | 'reject', budgetMs = 5000): Promise<{ data: Record<string, unknown>; confirmed: boolean | undefined; contradicts: boolean | undefined }> {
+    return step('settle', () => this.settle(choice, budgetMs));
+  }
+
+  private async settle(choice: 'accept' | 'reject', budgetMs: number): Promise<{ data: Record<string, unknown>; confirmed: boolean | undefined; contradicts: boolean | undefined }> {
     const until = Date.now() + budgetMs;
     for (;;) {
       const data = await readConsentState(this.page);
@@ -281,7 +303,11 @@ class Visit {
   }
 
   /** Accept or reject through autoconsent, else the heuristic; confirm by readout. */
-  async choose(choice: 'accept' | 'reject'): Promise<ChoiceEvent> {
+  choose(choice: 'accept' | 'reject'): Promise<ChoiceEvent> {
+    return step('choose', () => this.chooseUntimed(choice), choice);
+  }
+
+  private async chooseUntimed(choice: 'accept' | 'reject'): Promise<ChoiceEvent> {
     // Timed at the click: anything the choice itself triggers lands after it.
     const tClick = this.cap.now();
     let ok = false;
@@ -290,7 +316,7 @@ class Visit {
     const notes: string[] = [];
     let readout: { data: Record<string, unknown>; confirmed: boolean | undefined; contradicts: boolean | undefined } | undefined;
     // 1. A known consent tool's own buttons (exact selectors) — the most precise click.
-    const known = await findBanner(this.page);
+    const known = await step('find-banner', () => findBanner(this.page));
     const knownBtn = known?.via.startsWith('selector:') ? (choice === 'accept' ? known.accept : known.reject) : undefined;
     if (known && knownBtn && (await this.page.click(knownBtn, { timeout: 5000 }).then(() => true).catch(() => false))) {
       method = known.via;
@@ -309,7 +335,7 @@ class Visit {
     }
     // 2. autoconsent's rule for the detected tool.
     if (!ok && !ours && this.driver.available && this.driver.detectedCmp(this.page)) {
-      const res = await this.driver.act(this.page, choice === 'accept' ? 'optIn' : 'optOut');
+      const res = await step('autoconsent', () => this.driver.act(this.page, choice === 'accept' ? 'optIn' : 'optOut'));
       method = `autoconsent:${res?.cmp ?? this.driver.detectedCmp(this.page)}`;
       clicks = res?.clicks;
       if (res?.result) {
@@ -324,7 +350,7 @@ class Visit {
       }
     }
     if (!ok && !ours) {
-      const h = await heuristicChoice(this.page, choice);
+      const h = await step('heuristic', () => heuristicChoice(this.page, choice));
       if (h.clicked) {
         method = h.method;
         clicks = h.clicks;
@@ -351,7 +377,11 @@ class Visit {
   }
 }
 
-async function typeMarkers(v: Visit, markers: Markers): Promise<string[]> {
+function typeMarkers(v: Visit, markers: Markers): Promise<string[]> {
+  return step('type-markers', () => typeMarkersUntimed(v, markers));
+}
+
+async function typeMarkersUntimed(v: Visit, markers: Markers): Promise<string[]> {
   const notes: string[] = [];
   const typed = await v.page
     .evaluate(() => {
@@ -385,6 +415,13 @@ async function typeMarkers(v: Visit, markers: Markers): Promise<string[]> {
 }
 
 export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput> {
+  const trace = (s: string): void => input.trace?.(`${input.spec.id}/${input.scenario}: ${s}`);
+  // Per-step timing (steps.ts): always summarized on the snapshot; each step traced under COMPLYKIT_DEBUG.
+  const timer = new StepTimer({ trace: process.env.COMPLYKIT_DEBUG ? trace : undefined });
+  return timer.run(() => runTimedScenario(input, timer, trace));
+}
+
+async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (s: string) => void): Promise<ScenarioOutput> {
   const { browser, spec, scenario, journey } = input;
   const gpc = GPC_SCENARIOS.includes(scenario);
   const run = input.run ?? 1;
@@ -392,21 +429,24 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
   const harPath = path.join(input.evidenceDir, 'visit.har');
   const startedAt = new Date().toISOString();
 
-  const context = await browser.newContext({
-    ...contextOptionsFor(spec),
-    viewport: { width: 1280, height: 800 },
-    deviceScaleFactor: 1,
-    serviceWorkers: 'allow',
-    ...(gpc ? { extraHTTPHeaders: { 'Sec-GPC': '1' } } : {}),
-    ...(input.har ? { recordHar: { path: harPath, content: input.raw ? 'embed' : 'omit', mode: 'full' as const } } : {}),
+  const { context, cap, markupWatch, driver } = await step('setup', async () => {
+    const context = await browser.newContext({
+      ...contextOptionsFor(spec),
+      viewport: { width: 1280, height: 800 },
+      deviceScaleFactor: 1,
+      serviceWorkers: 'allow',
+      ...(gpc ? { extraHTTPHeaders: { 'Sec-GPC': '1' } } : {}),
+      ...(input.har ? { recordHar: { path: harPath, content: input.raw ? 'embed' : 'omit', mode: 'full' as const } } : {}),
+    });
+    // Local copy first: the rewritten documents are what every watcher below sees.
+    if (input.localCopy) await installLocalCopy(context, input.localCopy);
+    const cap = await startCapture(context);
+    const markupWatch = watchMarkup(context);
+    const driver = new AutoconsentDriver();
+    if (gpc) await context.addInitScript(GPC_SOURCE);
+    await driver.install(context);
+    return { context, cap, markupWatch, driver };
   });
-  // Local copy first: the rewritten documents are what every watcher below sees.
-  if (input.localCopy) await installLocalCopy(context, input.localCopy);
-  const cap = await startCapture(context);
-  const markupWatch = watchMarkup(context);
-  const driver = new AutoconsentDriver();
-  if (gpc) await context.addInitScript(GPC_SOURCE);
-  await driver.install(context);
   const v = new Visit(input, context, cap, driver);
   const notTested: string[] = [];
   // The journey searches the site once per scenario, with the same text marker the markers scenario types.
@@ -414,7 +454,6 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
   let status: ScenarioOutput['status'] = 'tested';
   let reason: string | undefined;
   const landing = input.targetUrl;
-  const trace = (s: string): void => input.trace?.(`${spec.id}/${scenario}: ${s}`);
 
   if (!driver.available) notTested.push('banner driver (@duckduckgo/autoconsent) not installed — heuristic banner detection only');
   if (gpc) notTested.push('navigator.globalPrivacyControl inside workers (init scripts do not run in workers; the Sec-GPC header is still sent)');
@@ -439,12 +478,12 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
       case 'gpc': {
         await v.land(landing);
         // A "signal honored" notice can be transient — read it on arrival too.
-        const onArrival = scenario === 'gpc' ? await findConfirmation(v.page) : undefined;
+        const onArrival = scenario === 'gpc' ? await step('confirmation', () => findConfirmation(v.page)) : undefined;
         await browse(v.page, cap, journey, landing, search);
         if (scenario === 'gpc') {
           // §7025(c)(6): is the processed signal displayed? Check the page, then the opt-out link's target.
-          const onPage = onArrival ?? (await findConfirmation(v.page));
-          const walk = onPage ? null : await walkOptOutLink(v.page, false);
+          const onPage = onArrival ?? (await step('confirmation', () => findConfirmation(v.page)));
+          const walk = onPage ? null : await step('opt-out-link', () => walkOptOutLink(v.page, false));
           v.ev({ type: 'consent-readout', label: 'gpc-acknowledgement', data: { found: Boolean(onPage ?? walk?.confirmation), text: onPage ?? walk?.confirmation, via: onPage ? 'page' : walk?.found ? 'opt-out-link' : 'none' } });
           if (walk?.found) await navigate(v.page, cap, landing, journey);
         }
@@ -463,7 +502,7 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
       }
       case 'opt-out-link': {
         await v.land(landing);
-        const walk = await walkOptOutLink(v.page, false);
+        const walk = await step('opt-out-link', () => walkOptOutLink(v.page, false));
         v.ev({ type: 'opt-out-walk', ...walk });
         await v.shot('opt-out-link');
         break;
@@ -475,7 +514,7 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
           if (!ev.ok) notTested.push(`banner reject failed (${ev.method}) — opted out by signal and link only`);
         }
         const tLink = cap.now();
-        const walk = await walkOptOutLink(v.page, true);
+        const walk = await step('opt-out-link', () => walkOptOutLink(v.page, true));
         v.ev({ type: 'opt-out-walk', ...walk });
         v.ev({ type: 'choice', choice: 'opt-out-link', ok: walk.performed === true, method: walk.performed ? 'link+control' : walk.found ? 'link' : 'none', note: walk.requiredFields.length ? `requires ${walk.requiredFields.join(', ')} — not submitted` : undefined }, tLink);
         await v.shot('after-opt-out');
@@ -499,7 +538,7 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
         }
         if (scenario === 'dismiss') {
           const t0 = cap.now();
-          const d = await dismissBanner(v.page);
+          const d = await step('dismiss', () => dismissBanner(v.page));
           v.ev({ type: 'choice', choice: 'dismiss', ok: d.ok, method: d.method }, t0);
           await v.shot('after-dismiss');
           if (!d.ok) {
@@ -517,7 +556,7 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
           // The settings layer's default toggles (F6), opened here because partial opens it anyway.
           await v.design('second', { open: true });
           const t0 = cap.now();
-          const p = await partialConsent(v.page);
+          const p = await step('partial', () => partialConsent(v.page));
           v.ev({ type: 'choice', choice: 'partial', ok: p.ok, method: p.method, note: 'analytics only' }, t0);
           await v.shot('after-partial');
           if (!p.ok) {
@@ -548,24 +587,24 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
           const ours = await complykitRunning(v.page);
           if (ours) {
             // Our own tool (D10): the Privacy choices control, then its settings' Reject all — exact hooks.
-            const w = await complykitWithdraw(v.page);
+            const w = await step('withdraw', () => complykitWithdraw(v.page));
             re = w.reopened;
             ok = w.ok;
             method = w.method;
           } else {
-            re = await reopenSettings(v.page);
+            re = await step('reopen', () => reopenSettings(v.page));
             method = `reopen:${re.method}`;
           }
           // Our tool: its exact hooks or its API only — never autoconsent or text matching (D10).
           if (re.ok && !ok && !ours) {
             await v.page.waitForTimeout(1200);
             tWithdraw = cap.now();
-            const viaDriver = driver.available ? await driver.act(v.page, 'optOut', 12000) : null;
+            const viaDriver = driver.available ? await step('autoconsent', () => driver.act(v.page, 'optOut', 12000)) : null;
             if (viaDriver?.result) {
               ok = true;
               method += `+autoconsent:${viaDriver.cmp}`;
             } else {
-              ok = await rejectInOpenSettings(v.page);
+              ok = await step('settings-reject', () => rejectInOpenSettings(v.page));
               method += ok ? '+settings-reject' : '';
             }
           }
@@ -636,6 +675,8 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
       status = 'not-tested';
       reason = `scenario exceeded its ${Math.round(budget / 1000)}s budget; evidence up to that point is kept`;
       trace(reason);
+      const open = timer.summary().filter((st) => st.open);
+      if (open.length) trace(`still running at the budget: ${open.map((st) => `${st.step} ${formatSeconds(st.ms)}`).join(', ')}`);
     }
   } catch (err) {
     status = 'not-tested';
@@ -647,19 +688,27 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
   }
 
   if (process.env.COMPLYKIT_DEBUG) trace('stage: stop');
-  const pages = context.pages();
-  const platformSignals = await collectPlatformSignals(pages);
-  const result = await cap.stop(pages);
-  // After the evidence snapshot: any re-fetch's cookies stay out of it.
-  const markup = await markupWatch.finish(cap.pages());
+  const { platformSignals, result, markup } = await step('teardown', async () => {
+    const pages = context.pages();
+    const platformSignals = await step('platform-signals', () => collectPlatformSignals(pages));
+    const result = await step('capture-stop', () => cap.stop(pages));
+    // After the evidence snapshot: any re-fetch's cookies stay out of it.
+    const markup = await step('markup', () => markupWatch.finish(cap.pages()));
+    return { platformSignals, result, markup };
+  });
   if (process.env.COMPLYKIT_DEBUG) trace('stage: close');
   const durationMs = Date.now() - cap.startEpoch;
   // Ad-heavy pages keep long-poll and streaming requests open, and closing the
   // context (which finalizes the HAR) waits on them — ten minutes, on one news
   // site. Stop new traffic, close the pages, and bound the close.
-  await withTimeout(context.route('**/*', (r) => r.abort().catch(() => {})), 2000, undefined);
-  for (const p of context.pages()) await withTimeout(p.close({ runBeforeUnload: false }), 5000, undefined);
-  const closed = await withTimeout(context.close().then(() => true), 60000, false);
+  // (After durationMs: the close is in the step summary, not the visit's duration.)
+  const closed = await step('close', async () => {
+    await step('route-abort', () => withTimeout(context.route('**/*', (r) => r.abort().catch(() => {})), 2000, undefined));
+    await step('page-close', async () => {
+      for (const p of context.pages()) await withTimeout(p.close({ runBeforeUnload: false }), 5000, undefined);
+    });
+    return step('context-close', () => withTimeout(context.close().then(() => true), 60000, false));
+  });
   if (!closed) notTested.push('HAR export may be incomplete: the browser context did not close within 60s');
   if (process.env.COMPLYKIT_DEBUG) trace('stage: closed');
   if (input.har && !input.raw) redactHarFile(harPath);
@@ -671,6 +720,7 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
     notTested.push('page-exit sends from cross-origin frames (recovered only for same-origin navigations)');
   }
 
+  const steps = timer.summary();
   const timeline: Timeline = {
     location: spec,
     verification: { ...input.verification, siteReported: [...v.siteReported.values()] },
@@ -694,13 +744,15 @@ export async function runScenario(input: ScenarioInput): Promise<ScenarioOutput>
       dns: [],
       markers: scenario === 'markers' ? input.markers : undefined,
       notTested: [...new Set([...notTested, ...(v.throttleFailed ? [v.throttleFailed] : [])])],
+      steps,
       evidence: {
         har: input.har && fs.existsSync(harPath) ? path.join(input.evidenceRel, 'visit.har') : undefined,
         timeline: path.join(input.evidenceRel, 'timeline.json'),
       },
     },
   };
-  trace(`${status}${reason ? ` (${reason})` : ''} — ${result.events.filter((e) => e.type === 'request').length} requests, ${result.cookies.length} cookies, ${Math.round(durationMs / 1000)}s`);
+  const top = topSteps(steps, 3);
+  trace(`${status}${reason ? ` (${reason})` : ''} — ${result.events.filter((e) => e.type === 'request').length} requests, ${result.cookies.length} cookies, ${Math.round(durationMs / 1000)}s${top ? ` (${top})` : ''}`);
   return { timeline, status, reason, screenshots: v.screenshots, siteReported: [...v.siteReported.values()] };
 }
 

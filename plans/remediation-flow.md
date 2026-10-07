@@ -20,9 +20,10 @@ The owner runs the service locally (`service/`), scans their site, and works one
    snippet, changeList, notes, tasks, scriptSrc }` — `tasks` is new: the checklist (§3).
    R2 makes this automatic after a classification changes, so the config, the change list
    and the checklist always reflect the latest classifications.
-4. **Follow the checklist.** The report (and the site page) shows the tasks in order:
-   install first, remove the old consent tool, then each change — with plain steps, the
-   before/after markup, and a **Verify** button per task.
+4. **Follow the to-do list.** The report (and the site page) shows ONE ordered list: the
+   decisions first ("Decide: what is getscrolly.com?" — one per tool the scan cannot
+   classify, §3), then install, remove the old consent tool, then each change — with plain
+   steps, the before/after markup, and a **Verify** button per task.
 5. **Verify one change.** Verify fetches *one thing* — the page the change is on, or the
    published GTM container — and runs the pure checker for that task (§5). Seconds, no
    browser, no full scan. Platform / API / behavior changes get a one-page browser spot
@@ -62,7 +63,7 @@ The checklist never promotes one to the other.
 
 ```
 id          '<kind>:<12 hex>' | 'install'          §4
-kind        'install' | 'remove-existing-tool' | CompatibilityChangeKind
+kind        'classify' | 'install' | 'remove-existing-tool' | CompatibilityChangeKind | 'confirm-in-browser'
 group       'install' | the change-list group id | 'other' (optional items)
 title, summary                                        one line each
 party?, tools[], partyIds[]
@@ -74,13 +75,17 @@ status      'todo' | 'done-unverified' | 'verified' | 'failed' | 'cannot-verify'
 lastVerify? { at, result, message, evidence[] }
 optional    context-purpose tools (chat, embeds, fonts): listed last, not required
 classifyFirst?, notes[], guide?, order
+classKey?   'classify' only: the workspace key class:<id> whose classification decides it
+waitingOn?  the 'classify' task ids a change waits on (its tools are all unclassified)
 ```
 
 Built by `buildRemediationTasks(generated, evaluation, { workspace?, kb? })` — pure. The
 generator calls it and returns `tasks`, so the service's stored `config.value.tasks` is
 the checklist; a stored value without `compatibility` still works (the report is rebuilt
-from the evaluation). Order (polish pass, 2026-10-07): **install** (always first, `id:
-'install'`), **remove the existing consent tool** (one per `existing-consent-tool`
+from the evaluation). Order (polish pass, 2026-10-07; decisions added the same day):
+**decisions** (`classify`, one per tool the change list could not classify — purpose
+`unclassified` — plus those the workspace already classified that the KB does not, so a
+made decision stays on the list, done), **install** (`id: 'install'`, first of the changes), **remove the existing consent tool** (one per `existing-consent-tool`
 generator note — an outside tool by its hosts, or a platform plugin by its asset-path
 fingerprint), a behavior mismatch no other task fixes, **tags to hold** (grouped by page,
 in document order), **leaks**, **GTM / tag manager**, **platform**, **consent defaults**,
@@ -101,6 +106,24 @@ folded: it stays, first after install. The Google Consent Mode default task says
 to paste — the complykit tool sets this; verify after installing" (no snippet) when the
 config's gtm section or its google-consent-mode adapter covers every expected signal
 (`toolConsentDefault`, the rule `verifyConsentDefault` applies); otherwise the paste steps.
+
+**Decisions in the same list (2026-10-07, after a field run: "two task lists").** A tool
+the scan cannot classify used to show up twice: as a classification in the workbench and
+as changes flagged "classify first", grouped apart. Now its decision is a task — `kind:
+'classify'`, id `classify:<hash of party>`, `verify` manual (nothing on the site to
+check), `classKey` the tool's `class:` key — placed before install: the answer decides
+which changes apply *and* what the generated config (so the install snippet, whose
+Verify checks the config hash) says. A change whose tools are all unclassified carries
+`waitingOn: [classify ids]` and shows "Waiting on: your decision on what X is" (its
+buttons hidden) instead of a "classify first" of its own; it stays required. A decision's
+status is **not** a `task:change:` entry: it is `verified` ("Decided ✓") when the
+workspace's `class:` entry holds a chosen purpose other than "Other"
+(`classificationDecided`; mirrored in the service and live in the report script, so the
+card flips the moment the owner classifies, before "Update report"), else `todo` ("To
+decide"). "Update report" regenerates the config from the run, which drops or keeps the
+waiting changes and keeps the decision, done. Progress is "N of M done": required = not
+optional (decisions and waiting changes included), done = `verified` (passed checks and
+made decisions); "marked done" is still counted apart.
 
 Status lives only in the workspace: `task:change:<id>` → `RemediationTaskValue
 { status, note?, lastVerify? }`. A task with no entry of its own reads the first entry
@@ -125,7 +148,7 @@ Line numbers and page URLs are never in it. Golden values are pinned in
 | configure-tag-manager | manager + party |
 | call-consent-api | party + api |
 | change-dns | the alias host, lower-case |
-| behavior-mismatch, accepted-exposure, needs-a-look, remove-existing-tool | the party |
+| behavior-mismatch, accepted-exposure, needs-a-look, remove-existing-tool, classify | the party |
 | install | constant `install`; the config hash lives in its verify spec |
 
 `ChangeItem.id` and `ChangeItem.signature` are set in `buildCompatibilityReport`; the
@@ -164,14 +187,17 @@ choiceMade, requests: [{url}], stores }] }`.
 ## 6. UI surfaces
 
 **Report checklist (R3).** A new section `#remediation` above the compatibility table
-(nav "Your checklist"), rendered from `config.value.tasks` when the service serves the
+(heading and nav "Your to-do list"; the workbench panel `#report-workspace` is "Saved
+progress" in the consent report, so there is one list), rendered from `config.value.tasks` when the service serves the
 report with a workspace (`<script id="ck-service">`); without the service (an exported
 report) it renders the tasks the run's generator output carries, read-only. Each task:
 number, title, status badge (verified / done, unverified / failed / cannot verify / to
 do), the steps, before/after `<pre>`, pages, notes, guide link, a **Verify** button
 (static and browser kinds) or "Mark done" (manual), the last verify message and
-evidence, a note field. Header: `remediationTotals` ("3 of 9 verified, 1 marked done,
-1 failed"), and the **Rescan** button enabled when every required task is verified or
+evidence, a note field. A decision (`classify`) card instead: "To decide" / "Decided ✓",
+a button that opens the tool's classify form in the grid, what it unblocks; no buttons of
+its own. Header: "3 of 9 done" (verified + decided), then "1 more marked done, not
+verified yet · 1 failed", and the **Rescan** button enabled when every required task is verified or
 done-unverified (it stays a button, never a verdict). Optional items collapsed under
 "Chat, embeds, fonts…". Every item in the compatibility change list links to its task
 by `data-change-id`.

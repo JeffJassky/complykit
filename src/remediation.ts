@@ -13,7 +13,7 @@ import { consentPluginPathPattern, DEFAULT_KB, type KnowledgeBase } from './regi
 import { buildConsentReportModel, DOCS_BASE, GTM_GUIDE, platformGuide, shortPage, type ChangeItem, type CompatibilityReport } from './report/index.js';
 import { reconcileRecord } from './consent-compatibility.js';
 import { toolConsentDefault } from './rules/remediation/verify.js';
-import type { WorkspaceSnapshot } from './site-workspace.js';
+import { classificationKey, type WorkspaceSnapshot } from './site-workspace.js';
 
 // The guided remediation checklist (plans/remediation-flow.md §3): the
 // generator's change list turned into tasks a non-developer can follow and a
@@ -21,10 +21,15 @@ import type { WorkspaceSnapshot } from './site-workspace.js';
 // evaluation and (optionally) the site workspace, which carries each task's
 // status under `task:change:<id>`.
 //
-// Order and folding: see "Folding and order" below — install first (everything
-// else depends on the tool being first in <head>), the old banner out, then the
-// tags, leaks, GTM, platform and defaults; a behavior mismatch or vendor call
-// that another task already fixes is folded into that task, not listed again.
+// One list: the decisions (what an unrecognized tool is for — 'classify') and
+// the changes, in the order an owner does them. See "Folding and order" below —
+// decisions first (each one decides whether the changes waiting on it apply,
+// and what the generated config — so the install snippet — says), then the
+// install (everything else depends on the tool being first in <head>), the old
+// banner out, then the tags, leaks, GTM, platform and defaults; a behavior
+// mismatch or vendor call that another task already fixes is folded into that
+// task, not listed again. A change whose tools are all unclassified names the
+// decision it waits on (`waitingOn`) instead of a "classify first" of its own.
 //
 // Verify method per kind (what a single fetch can and cannot prove):
 //   static   install, rewrite-tag, remove-leak, set-consent-default (Google),
@@ -35,6 +40,8 @@ import type { WorkspaceSnapshot } from './site-workspace.js';
 //            reject then accept
 //   manual   change-dns, accepted-exposure, needs-a-look, and any item whose
 //            element the scan could not locate
+//   (none)   classify — a decision, not a change: done when the site workspace
+//            holds a purpose for the tool (resolveRemediationTaskValue)
 
 /** The config in the generated head snippet, escaped so no "<" survives (neither "</script" nor "<!--" can appear). */
 export function scriptJson(value: unknown): string {
@@ -404,12 +411,13 @@ export function removeExistingToolTasks(ev: TrackingEvaluation, notes: Remediati
 // checks the tool itself (a static check, or a spot check of that tool), one
 // "Confirm in the browser" task per tool keeps that check, near the end.
 //
-// Order: install → remove the old banner → (a mismatch nothing fixes) → tags
+// Order: decisions (classify) → install → remove the old banner → (a mismatch nothing fixes) → tags
 // to hold (by page, in document order) → leaks → GTM / tag manager →
 // platform → consent defaults → vendor calls → DNS → find what loads →
 // decisions → confirm in the browser → optional items (same order).
 
 const RANK: Record<RemediationTask['kind'], number> = {
+  classify: -1,
   install: 0,
   'remove-existing-tool': 1,
   'behavior-mismatch': 2,
@@ -476,11 +484,56 @@ function disambiguate(slots: Slot[]): void {
 }
 
 /**
- * The checklist: install, remove the old banner, then one task per change
- * that is separate work, in the order an owner does them (see "Folding and
- * order" above); optional items last. Status and the last verify result come
- * from the workspace when given (a folded item's stored status is found
- * through the task's aliases).
+ * The tools a person must classify: unrecognized ones whose purpose the change
+ * list could not decide (purpose 'unclassified'), and those the site workspace
+ * already classified that the knowledge base does not (so the decision stays
+ * on the list, done, after the report is re-rendered with it).
+ */
+function classifySubjects(report: CompatibilityReport, ev: TrackingEvaluation, kb: KnowledgeBase): Array<{ partyId: string; label: string; domain: string }> {
+  const out = new Map<string, { partyId: string; label: string; domain: string }>();
+  const known = (id: string): boolean => (kb.entries.find((e) => e.id === id)?.categories ?? []).some((c) => String(c) !== 'unknown');
+  const add = (partyId: string, label?: string): void => {
+    const p = ev.inventory.find((x) => x.partyId === partyId);
+    if (!p || out.has(partyId)) return;
+    out.set(partyId, { partyId, label: label ?? p.label, domain: p.domain });
+  };
+  for (const r of report.rows) if (r.purpose === 'unclassified') add(r.partyId, r.label);
+  for (const c of ev.siteWorkspace?.classifications ?? []) if (c.kind === 'tool' && !known(c.partyId)) add(c.partyId);
+  return [...out.values()];
+}
+
+function classifyTask(s: { partyId: string; label: string; domain: string }, blocked: number): Draft {
+  return {
+    id: changeId({ kind: 'classify', partyId: s.partyId }),
+    kind: 'classify',
+    group: 'classify',
+    title: `Decide: what is ${s.label}?`,
+    summary: `The scan does not recognize it, so it cannot tell whether it needs consent.${blocked ? ` ${blocked === 1 ? 'One change below waits' : `${blocked} changes below wait`} on this answer.` : ''}`,
+    party: s.partyId,
+    tools: [s.label],
+    partyIds: [s.partyId],
+    steps: [
+      `Find out what ${s.label} does on your site (it loads from ${s.domain}): ask whoever added it, or look it up.`,
+      'Open it in the report’s grid, choose its main purpose — Necessary, Functional, Analytics, Performance or Advertisement — and press “Use this classification”. “Other” does not decide it.',
+      'Press “Update report with my classifications”: the changes waiting on this answer are recomputed — kept if it tracks visitors, dropped if it does not.',
+    ],
+    pages: [],
+    verify: manual('a decision recorded in the report, not a change to the site: it is done once the site’s workspace holds a purpose for it'),
+    optional: false,
+    classKey: classificationKey({ kind: 'tool', partyId: s.partyId, domain: s.domain, recognized: false }),
+    notes: [],
+    aliases: [],
+    alsoFixes: [],
+  };
+}
+
+/**
+ * The to-do list: the decisions (classify), install, remove the old banner,
+ * then one task per change that is separate work, in the order an owner does
+ * them (see "Folding and order" above); optional items last. Status and the
+ * last verify result come from the workspace when given (a folded item's
+ * stored status is found through the task's aliases; a decision's status is
+ * whether the workspace holds its classification).
  */
 export function buildRemediationTasks(generated: RemediationSource, evaluation: TrackingEvaluation, opts: BuildRemediationTasksOptions = {}): RemediationTask[] {
   const kb = opts.kb ?? DEFAULT_KB;
@@ -557,6 +610,20 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
     }
   }
   const kept = slots.filter((s) => !s.folded);
+  // --- decisions -----------------------------------------------------------------------
+  // One per tool to classify; a change whose tools are all unclassified waits on them.
+  const subjects = classifySubjects(report, evaluation, kb);
+  const decisionOf = new Map(subjects.map((x) => [x.partyId, changeId({ kind: 'classify', partyId: x.partyId })]));
+  for (const s of kept) {
+    if (!s.task.classifyFirst) continue;
+    const ids = s.task.partyIds.map((id) => decisionOf.get(id)).filter((x): x is string => !!x);
+    if (ids.length) s.task.waitingOn = [...new Set(ids)];
+  }
+  const decisions = subjects.map((x, i): Slot => {
+    const id = decisionOf.get(x.partyId)!;
+    return { task: classifyTask(x, kept.filter((k) => k.task.waitingOn?.includes(id)).length), seq: -subjects.length + i };
+  });
+  kept.push(...decisions);
   for (const [party, c] of confirm) {
     const tools = list(c.from.tools);
     const spec = c.from.verify;

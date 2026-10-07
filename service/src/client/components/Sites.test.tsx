@@ -226,15 +226,16 @@ describe('site checklist', () => {
     const jobs = { 'job-2': job('job-2') };
     expect(reportChecklistHref(withTasks, jobs)).toBe('/reports/job-2/consent/consent-report.html#remediation');
     const html = renderToStaticMarkup(<ChecklistPanel workspace={withTasks} jobs={jobs} />);
-    expect(html).toContain('1 of 3 verified');
-    expect(html).toContain('1 marked done, not verified yet');
+    expect(html).toContain('1 of 3 done');
+    expect(html).toContain('1 more marked done, not verified yet');
     expect(html).toContain('Verified ✓');
     expect(html).toContain('Marked done');
     expect(html).toContain('The served HTML carries the change.');
     expect(html).toContain('href="/api/sites/example-shop.test/install.zip"');
     expect(html).toContain('href="/reports/job-2/consent/consent-report.html#remediation"');
     expect(html).toContain('Can’t be checked automatically');
-    expect(html).toContain('Only if they apply (1)');
+    expect(html).toContain('Only if they apply (1): chat, embeds and fonts');
+    expect(html).toContain('>To-do list</h2>');
     expect(html.match(/>Verify( again)?</g)?.length).toBe(3); // install, rewrite, optional rewrite — not the manual one
     expect(html).not.toMatch(/compliant/i);
   });
@@ -262,7 +263,7 @@ describe('site checklist', () => {
     const page = renderToStaticMarkup(<SitePageView workspace={withTasks} jobs={null} now={NOW} />);
     expect(page).toContain('id="site-checklist"');
     // The header leads with checklist progress, before the report notes.
-    expect(page).toMatch(/data-testid="header-checklist"><strong>1 of 3 changes verified<\/strong>/);
+    expect(page).toMatch(/data-testid="header-checklist"><strong>1 of 3 done<\/strong>/);
     expect(page.indexOf('header-checklist')).toBeLessThan(page.indexOf('report-notes'));
   });
 });
@@ -284,10 +285,51 @@ describe('checklist api calls', () => {
   });
 });
 
+describe('decisions in the same list (classify)', () => {
+  const classKey = 'class:tool-0123456789abcdef0123456789abcdef';
+  const decisionTask = task('classify:111111111111', 0, { kind: 'classify', group: 'classify', title: 'Decide: what is getscrolly.com?', tools: ['getscrolly.com'], partyIds: ['unknown:getscrolly.com'], classKey, verify: { check: 'manual', method: 'manual' }, pages: [] });
+  const blockedTask = task('rewrite-tag:222222222222', 2, { title: 'Hold the getscrolly.com tag until consent', partyIds: ['unknown:getscrolly.com'], classifyFirst: true, waitingOn: ['classify:111111111111'] });
+  const ws = (entries: SiteWorkspace['entries'] = {}): SiteWorkspace => ({ ...workspace, entries, config: { value: { tasks: [blockedTask, task('install', 1), decisionTask] }, at: at(2), runId: 'run-2' } });
+
+  it('one ordered list: the decision first, then install, then the change that waits on it — counted in the progress', () => {
+    const tasks = checklistFromWorkspace(ws());
+    expect(tasks.map((t) => t.id)).toEqual(['classify:111111111111', 'install', 'rewrite-tag:222222222222']);
+    expect(checklistProgress(tasks)).toEqual({ required: 3, verified: 0, doneUnverified: 0, failed: 0 });
+    const jobs = { 'job-2': job('job-2') };
+    const html = renderToStaticMarkup(<ChecklistPanel workspace={ws()} jobs={jobs} />);
+    expect(html.match(/<ol class="checklist">/g)).toHaveLength(1);
+    expect(html).toContain('0 of 3 done');
+    expect(html).toContain('To decide');
+    expect(html).toContain('href="/reports/job-2/consent/consent-report.html#task-classify-111111111111"');
+    expect(html).toContain('<strong>Unblocks:</strong> Hold the getscrolly.com tag until consent');
+    expect(html).toContain('<strong>Waiting on:</strong> your decision on what getscrolly.com is (above).');
+    expect(html).not.toMatch(/Classify first/);
+    // The waiting change offers no buttons yet; the decision has none (it is made in the report).
+    const blocked = html.slice(html.indexOf('data-task-id="rewrite-tag:222222222222"'));
+    expect(blocked).not.toContain('I’ve made this change');
+    expect(html.slice(html.indexOf('data-task-id="classify:111111111111"'), html.indexOf('data-task-id="install"'))).not.toMatch(/>Verify<|made this change/);
+  });
+
+  it('decided when the workspace holds a purpose for the tool (not “Other”, not a suggestion; never a task:change entry): Decided ✓, counted, the change unblocked', () => {
+    const decided = (value: unknown, extra: SiteWorkspace['entries'] = {}) => checklistFromWorkspace(ws({ [classKey]: { value, at: at(1) }, ...extra }))[0].status;
+    expect(decided({ category: 'analytics', categoryChosen: true })).toBe('verified');
+    expect(decided({ category: 'other', categoryChosen: true })).toBe('todo');
+    expect(decided({ category: 'analytics', categoryChosen: false })).toBe('todo');
+    expect(decided(null, { 'task:change:classify:111111111111': { value: { status: 'verified' }, at: at(1) } })).toBe('todo');
+    const done = ws({ [classKey]: { value: { category: 'analytics', categoryChosen: true }, at: at(1) } });
+    expect(checklistProgress(checklistFromWorkspace(done))).toMatchObject({ required: 3, verified: 1 });
+    const html = renderToStaticMarkup(<ChecklistPanel workspace={done} jobs={null} />);
+    expect(html).toContain('Decided ✓');
+    expect(html).toContain('1 of 3 done');
+    expect(html).not.toContain('Waiting on:');
+    expect(html.slice(html.indexOf('data-task-id="rewrite-tag:222222222222"'))).toContain('I’ve made this change');
+  });
+});
+
 describe('rescan and progress on the sites list', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('a site row shows N of M verified once a checklist exists, a dash before', () => {
+  it('a site row shows N of M done once a checklist exists, a dash before', () => {
     const html = renderToStaticMarkup(
       <SitesListView
         now={NOW}
@@ -297,7 +339,7 @@ describe('rescan and progress on the sites list', () => {
         ]}
       />,
     );
-    expect(html).toContain('2 of 5 verified');
+    expect(html).toContain('2 of 5 done');
     expect(html).toContain('1 marked done');
     expect(html).toContain('1 failed');
     expect(html.match(/data-testid="site-checklist"/g)?.length).toBe(2);
@@ -308,7 +350,7 @@ describe('rescan and progress on the sites list', () => {
     const html = renderToStaticMarkup(<ChecklistPanel workspace={withTasks} jobs={null} />);
     expect(html).toContain('Last step: rescan the site');
     expect(html).toContain('Your complykit consent tool: what it controls');
-    expect(html).toContain('1 required change is not verified or marked done yet');
+    expect(html).toContain('1 required item is not done yet');
     expect(html).toContain('>Rescan site<');
     const started = renderToStaticMarkup(<ChecklistPanel workspace={withTasks} jobs={null} rescan={{ started: { jobId: 'j9', url: 'https://example-shop.test/', quick: true } }} />);
     expect(started).toContain('Rescanning https://example-shop.test/ (quick)… starting');
@@ -406,10 +448,10 @@ describe('the site page stays current (verifies done elsewhere)', () => {
 
   it('a re-read with statuses stored elsewhere shows them: To do → Verified, and the rescan’s “not verified” count drops', () => {
     const before = renderToStaticMarkup(<ChecklistPanel workspace={withTasks} jobs={null} />);
-    expect(before).toContain('1 of 3 verified');
+    expect(before).toContain('1 of 3 done');
     const after: SiteWorkspace = { ...withTasks, entries: { ...withTasks.entries, 'task:change:rewrite-tag:aaaaaaaaaaaa': { value: { status: 'verified' }, at: at(0) }, 'task:change:accepted-exposure:bbbbbbbbbbbb': { value: { status: 'done-unverified' }, at: at(0) } } };
     const html = renderToStaticMarkup(<ChecklistPanel workspace={after} jobs={null} />);
-    expect(html).toContain('2 of 3 verified');
-    expect(html).not.toMatch(/required changes? (is|are) not verified/);
+    expect(html).toContain('2 of 3 done');
+    expect(html).not.toMatch(/required items? (is|are) not done/);
   });
 });

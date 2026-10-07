@@ -388,6 +388,10 @@ export interface RemediationTask {
   note?: string;
   optional: boolean;
   classifyFirst?: boolean;
+  /** A 'classify' task (a decision: what an unrecognized tool is for): the workspace key (`class:<id>`) whose classification decides it. Its status is 'verified' ("Decided") when that entry holds a purpose (classificationDecided), else 'todo' — never a task:change:<id> entry. */
+  classKey?: string;
+  /** The 'classify' tasks this change waits on. */
+  waitingOn?: string[];
   notes: string[];
   guide?: { label: string; href: string };
   /** Ids of change-list items folded into this task (a behavior mismatch, a vendor call, an exposure): a status stored under one is still found. */
@@ -397,6 +401,19 @@ export interface RemediationTask {
   /** Steps whose wording depends on the surface: each replaces steps[step] here (`service`) or in a report file / the CLI (`offline`). */
   stepVariants?: Array<{ step: number; service: string; offline: string }>;
   order: number;
+}
+
+/**
+ * A classification value that decides a 'classify' task: a purpose the person
+ * chose (not a pre-filled suggestion), other than "Other" — complykit's
+ * classificationDecided (src/record/remediation.ts), mirrored.
+ */
+export function classificationDecided(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  if (v.categoryChosen === false) return false;
+  const all = [v.category, ...(Array.isArray(v.additionalCategories) ? v.additionalCategories : []), ...(Array.isArray(v.categories) ? v.categories : [])];
+  return all.some((c) => typeof c === 'string' && c !== '' && c !== 'other' && c !== 'unknown');
 }
 
 export interface RemediationTotals {
@@ -531,7 +548,7 @@ export interface SiteSummary {
   runs: number;
   lastRunAt?: string;
   configAt?: string;
-  /** Checklist progress over the required tasks (not optional, not classify-first), as the report and site page count it. Absent before a config with tasks exists. */
+  /** To-do list progress over the required tasks (not optional; decisions and the changes waiting on them included), as the report and site page count it: `verified` = done (checks passed + decisions made). Absent before a config with tasks exists. */
   checklist?: { verified: number; required: number; doneUnverified: number; failed: number };
 }
 

@@ -575,6 +575,9 @@ export async function findConfirmation(page: Page): Promise<string | undefined> 
  * Find the opt-out link and walk it: count steps and required personal fields,
  * read any confirmation. With `perform`, click a plain opt-out control (button
  * or toggle) — never submit a form that asks for personal information.
+ * Required fields are counted only when they belong to the control (its form,
+ * or its section for a formless control): a footer newsletter signup or a
+ * header login form on the same page is not the opt-out's requirement.
  */
 export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptOutWalk> {
   const link = await page
@@ -614,14 +617,39 @@ export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptO
           const b = (el as HTMLElement).getBoundingClientRect();
           return b.width > 0 && b.height > 0;
         };
+        // Site chrome present on every page (a footer newsletter signup, a
+        // header/drawer login form) is not part of the opt-out control.
+        const CHROME = 'header, footer, nav, [role="banner"], [role="contentinfo"], [role="navigation"], dialog, [role="dialog"], [aria-modal="true"]';
+        const PAGE_CHROME = 'header, footer, nav, [role="banner"], [role="contentinfo"], [role="navigation"]';
+        const controls = Array.from(document.querySelectorAll('button, [role="button"], [role="switch"], input[type="checkbox"]'))
+          .filter(visible)
+          .filter((el) => !el.hasAttribute('data-complykit-optout'))
+          .filter((el) => act.test(`${el.textContent ?? ''} ${el.getAttribute('aria-label') ?? ''}`));
+        // The page's own content first; a control in the header/footer/nav only as a fallback.
+        const ctl = controls.find((el) => !el.closest(PAGE_CHROME)) ?? controls[0];
+        if (ctl) ctl.setAttribute('data-complykit-optout-action', '1');
+
+        // Required personal fields that belong to THIS control: its own form;
+        // for a control outside any form, unattached fields in its nearest
+        // section. Never fields in chrome that does not contain the control,
+        // and never another form's fields.
+        const ctlForm = ctl ? ((ctl as HTMLButtonElement).form ?? ctl.closest('form')) : null;
+        const section = ctl && !ctlForm ? ctl.closest('section, article, [role="region"], [role="main"], main, dialog, [role="dialog"], [aria-modal="true"]') : null;
+        const belongs = (f: HTMLInputElement): boolean => {
+          const chrome = f.closest(CHROME);
+          if (chrome && !(ctl && chrome.contains(ctl))) return false;
+          const fForm = f.form ?? f.closest('form');
+          if (!ctl) return true; // no control: report what the page's own content asks for
+          if (ctlForm) return fForm === ctlForm;
+          if (fForm) return false;
+          return Boolean(section && section.contains(f));
+        };
         const required = Array.from(document.querySelectorAll<HTMLInputElement>('input, select, textarea'))
           .filter(visible)
           .filter((i) => i.required || i.getAttribute('aria-required') === 'true')
+          .filter(belongs)
           .map((i) => i.name || i.id || i.type)
           .filter((n) => pf.test(n));
-        const controls = Array.from(document.querySelectorAll('button, [role="button"], [role="switch"], input[type="checkbox"]')).filter(visible);
-        const ctl = controls.find((el) => act.test(`${el.textContent ?? ''} ${el.getAttribute('aria-label') ?? ''}`));
-        if (ctl) ctl.setAttribute('data-complykit-optout-action', '1');
         return { required, hasAction: Boolean(ctl) };
       },
       { action: OPT_OUT_ACTION.source, personal: PERSONAL_FIELD.source },

@@ -283,6 +283,7 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
         const tl = out.timeline;
         const banner = tl.events.find((e) => e.type === 'banner' && (e.state === 'shown' || e.state === 'reappeared'));
         const choice = [...tl.events].reverse().find((e) => e.type === 'choice');
+        const walk = [...tl.events].reverse().find((e) => e.type === 'opt-out-walk');
         const toolRead = tl.events.find((e) => e.type === 'consent-readout' && e.label === 'default-consent-tool');
         const consentTool = toolRead?.type === 'consent-readout' ? ConsentToolRecord.safeParse(toolRead.data) : undefined;
         const ckRead = tl.events.find((e) => e.type === 'consent-readout' && e.label === 'complykit-tool');
@@ -296,6 +297,7 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
           consentTool: consentTool?.success ? consentTool.data : undefined,
           complykit: complykit?.success ? complykit.data : undefined,
           choice: choice?.type === 'choice' ? { kind: choice.choice, ok: choice.ok, method: choice.note ? `${choice.method} — ${choice.note}` : choice.method } : undefined,
+          optOutWalk: walk?.type === 'opt-out-walk' ? { found: walk.found, linkText: walk.linkText, requiredFields: walk.requiredFields, performed: walk.performed } : undefined,
           counts: countsOf(tl),
           evidence: { har: tl.snapshot.evidence.har, timeline: tl.snapshot.evidence.timeline, screenshots: out.screenshots },
         });

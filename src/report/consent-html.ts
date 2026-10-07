@@ -146,7 +146,7 @@ ${SCOPE_CSS}
 </style></head><body><main>
 <header id="overview"><div class="eyebrow">ComplyKit · Website privacy report</div><h1>${esc(m.site.host)}</h1><p class="human-muted">${esc(m.site.url)} · Scanned ${esc(m.startedAt.slice(0, 16).replace('T', ' '))} UTC</p>
 <p class="human-intro">See how cookies and tracking tools behaved, decide what needs attention, and keep track of your work.</p>
-<nav class="human-nav" aria-label="Report sections"><a href="#remediation">Make these changes</a><a href="#behavior-matrix">Cookie &amp; tool checks</a><a href="#compatibility">Consent tool compatibility</a>${m.consentToolProof?.detected ? '<a href="#consent-tool-proof">Your consent tool</a>' : ''}<a href="#report-workspace">Your checklist</a><a href="#coverage">Scan coverage</a></nav></header>
+<nav class="human-nav" aria-label="Report sections"><a href="#remediation">Your to-do list</a><a href="#behavior-matrix">Cookie &amp; tool checks</a><a href="#compatibility">Consent tool compatibility</a>${m.consentToolProof?.detected ? '<a href="#consent-tool-proof">Your consent tool</a>' : ''}<a href="#report-workspace">Saved progress</a><a href="#coverage">Scan coverage</a></nav></header>
 ${renderScopeHtml(m)}
 ${renderRemediationHtml(m.remediation, m)}
 ${renderSinceHtml(m.since, carriedTasks(m.siteWorkspace?.doneTasks, library))}
@@ -155,7 +155,7 @@ ${renderBehaviorMatrix(matrix, workbench)}
 ${renderCompatibilityHtml(m.compatibility, { changeListHref: opts.changeList === false ? undefined : (opts.changeList ?? CHANGE_LIST_FILE) })}
 ${renderConsentToolProofHtml(m.consentToolProof)}
 <details class="human-details" id="rule-actions"><summary>Rule findings and other review actions (${groups.length})</summary><div><p>These are the original rule findings, grouped into actions. Some are legal or research questions rather than behavior mismatches. Select an action to open it in the workspace.</p><ul>${groups.map(g => `<li><button type="button" data-select-action="${g.id}">${esc(actionTitle(g))}</button> <span class="human-muted">${esc(KIND_HUMAN[g.kind])}</span></li>`).join('') || '<li>No rule findings were recorded. The grid above still shows any behavior mismatches or missing checks.</li>'}</ul></div></details>
-<details class="human-details" id="checklist-panel"><summary>Checklist and saved progress</summary><div>${workspacePanel()}</div></details>
+<details class="human-details" id="checklist-panel"><summary>Saved progress, backups and research notes</summary><div>${workspacePanel('Saved progress')}</div></details>
 <div id="matrix-detail-library" hidden>${library}</div>
 <noscript><p>Enable JavaScript to select grid results and save progress. All research and action details are shown below when scripting is disabled.</p><style>#matrix-detail-library[hidden]{display:block!important}</style></noscript>
 <details class="human-details" id="coverage-panel"><summary>Scan coverage, limitations and evidence</summary><div>

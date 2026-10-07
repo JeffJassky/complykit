@@ -14,7 +14,10 @@ try {
   const { chromium } = await import('playwright');
   available = fs.existsSync(chromium.executablePath());
 } catch { /* Same optional browser convention as the collector tests. */ }
-const suite = available ? describe : describe.skip;
+// Without the Playwright Chromium build, an installed browser named by
+// COMPLYKIT_BROWSER_CHANNEL (chrome / msedge) runs these too.
+const channelFallback = available ? {} : { channel: process.env.COMPLYKIT_BROWSER_CHANNEL };
+const suite = available || process.env.COMPLYKIT_BROWSER_CHANNEL ? describe : describe.skip;
 
 const run: Run = { schemaVersion: 1, id: asRunId('report-browser'), property: 'Example site', startedAt: '2026-10-05T10:00:00Z', versions: { package: '0', registry: '0', engines: {} }, accessLevels: ['public'], matrix: [], gaps: [], rulesExecuted: [] };
 const subject = { property: 'Example site', routePattern: '/', locator: { role: 'text', name: '.hero > p:nth-child(2)', cssPath: '.hero > p:nth-child(2)', ordinal: 0 } };
@@ -27,7 +30,7 @@ const consentFinding: Finding = { ...finding, ruleId: asRuleId('tracking.prior-c
 
 suite('human reports in a browser', () => {
   let browser: Browser;
-  beforeAll(async () => { const { chromium } = await import('playwright'); browser = await chromium.launch({ headless: true }); });
+  beforeAll(async () => { const { chromium } = await import('playwright'); browser = await chromium.launch({ headless: true, ...channelFallback }); });
   afterAll(async () => { await browser?.close(); });
 
   it('shows the work brief, hides technical details, and works on a narrow screen', async () => {
@@ -75,7 +78,12 @@ suite('human reports in a browser', () => {
     expect(await page.locator('#matrix-detail-library').isVisible()).toBe(false);
     expect(await page.locator('[data-action-key]:visible').count()).toBe(0);
     expect(await page.locator('.matrix-cell').count()).toBe(0);
-    expect(await page.locator('.matrix-result').allTextContents()).toEqual(expect.arrayContaining(['?'])); // a check that couldn't run needs a look
+    expect(await page.locator('.matrix-result').allTextContents()).toEqual(['–', '–']); // the failed reject is one column gap: not checked, not "needs a look"
+    expect(await page.locator('#matrix-question-count').textContent()).toBe('0');
+    expect(await page.locator('#matrix-gaps').textContent()).toContain('could not confirm rejecting');
+    await page.selectOption('#matrix-filter', 'attention'); // the column gap alone does not make a row unresolved
+    expect(await page.locator('[data-matrix-row]:visible').count()).toBe(0);
+    await page.selectOption('#matrix-filter', 'all');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.selectOption('#matrix-filter', 'storage');
     expect(await page.locator('[data-matrix-kind=tool]:visible').count()).toBe(0);
@@ -93,8 +101,8 @@ suite('human reports in a browser', () => {
     expect(await page.locator('[data-matrix-group]').count()).toBe(0);
     await page.locator('[data-matrix-kind=tool] .matrix-result').nth(0).click(); // only actions that ran get a column
     expect(await page.locator('#matrix-detail-title').textContent()).toBe('Example analytics');
-    expect(await page.locator('#matrix-detail-status').textContent()).toBe('Could not be checked — needs a look');
-    expect(await page.locator('#matrix-detail-reason').textContent()).toContain('not confirmed successful');
+    expect(await page.locator('#matrix-detail-status').textContent()).toBe('Not checked — this visitor choice was not completed');
+    expect(await page.locator('#matrix-detail-reason').textContent()).toContain('could not confirm rejecting');
     expect(await page.locator('#matrix-primary [data-action-key]:visible').count()).toBe(1);
     expect(await page.locator('#matrix-related').isVisible()).toBe(true);
     expect(await page.locator('#matrix-related').getAttribute('open')).toBe(null);
@@ -115,7 +123,7 @@ suite('human reports in a browser', () => {
 
 suite('report checklist persistence', () => {
   let browser: Browser;
-  beforeAll(async () => { const { chromium } = await import('playwright'); browser = await chromium.launch({ headless: true }); });
+  beforeAll(async () => { const { chromium } = await import('playwright'); browser = await chromium.launch({ headless: true, ...channelFallback }); });
   afterAll(async () => { await browser?.close(); });
 
   it('updates counts, restores notes, isolates scans, and supports remaining-task filters', async () => {
@@ -168,7 +176,13 @@ suite('report checklist persistence', () => {
     await page.goto('https://reports.example/one');
     const totals=async()=>Promise.all(['mismatch','question','match','done'].map(id=>page.locator('#matrix-'+id+'-count').textContent()));
     // The identified tool and its cookie are checked automatically: on before a choice (mismatch), off after rejection (match).
-    expect(await totals()).toEqual(['2','8','2','0']);
+    // The failed withdrawal is one column-level gap: its 4 cells are "not checked", not counted as needing a look.
+    expect(await totals()).toEqual(['2','4','2','0']);
+    expect(await page.locator('#matrix-gaps li').count()).toBe(1);
+    expect(await page.locator('#matrix-gaps').textContent()).toContain('After withdrawal');
+    expect(await page.locator('th[data-column-state=not-completed]').count()).toBe(1);
+    expect(await page.locator('th[data-column-state=not-completed] .matrix-col-gap').textContent()).toBe('Not completed');
+    expect(await page.locator('.matrix-result[data-result=not-tested]').allTextContents()).toEqual(['–','–','–','–']);
     expect(await page.locator('.matrix-result[data-result=mismatch]').count()).toBe(2);
     expect(await page.locator('.matrix-result[data-result=match]').count()).toBe(2);
     expect(await page.locator('#actions').count()).toBe(0);
@@ -177,12 +191,12 @@ suite('report checklist persistence', () => {
     await page.locator('#matrix-primary .work-question-details > summary').click();
     await page.locator('#matrix-primary [data-work-note]').fill('Consent gate updated; retest booked.');
     await page.locator('#matrix-primary [data-work-status]').selectOption('done');
-    expect(await totals()).toEqual(['1','8','2','1']);
+    expect(await totals()).toEqual(['1','4','2','1']);
     expect(await page.locator('#matrix-detail-status').textContent()).toContain('Marked done');
     expect(await page.locator('#matrix-detail-reason').textContent()).toContain('Original scan result: Behavior mismatch');
     expect(await page.locator('.matrix-result[data-result=not-tested]').count()).toBe(4);
     await page.reload();
-    expect(await totals()).toEqual(['1','8','2','1']);
+    expect(await totals()).toEqual(['1','4','2','1']);
     await page.locator('.matrix-result[data-result=done]').click();
     expect(await page.locator('#matrix-primary [data-work-note]').inputValue()).toContain('Consent gate updated');
     // A purpose answer resolves research questions, not missing evidence or unrelated checks.
@@ -193,33 +207,35 @@ suite('report checklist persistence', () => {
     await form.locator('[name=category]').selectOption('analytics');await form.locator('[name=control]').selectOption('consent');
     expect(await page.locator('[data-matrix-kind=storage]').filter({hasText:'_visitor'}).locator('.matrix-category').textContent()).toContain('Analytics'); // inherited from its tool
     expect(await page.locator('[data-matrix-kind=storage]').filter({hasText:'_mystery'}).locator('.matrix-category').textContent()).toContain('your classification');
-    expect(await totals()).toEqual(['2','6','3','1']);
+    expect(await totals()).toEqual(['2','2','3','1']);
     expect(await page.locator('#matrix-classification [name=category]').isVisible()).toBe(true);
     expect(await page.locator('#matrix-classification [data-class-apply]').isVisible()).toBe(true);
     expect(await form.locator('[name=category] option').allTextContents()).toEqual(['Choose a category…','Necessary','Functional','Analytics','Performance','Advertisement','Other']);
     await page.locator('#matrix-primary [data-work-status]').selectOption('done');
-    expect(await totals()).toEqual(['1','6','3','2']);
+    expect(await totals()).toEqual(['1','2','3','2']);
     await form.locator('[name=category]').selectOption('performance');
-    expect(await totals()).toEqual(['2','6','3','1']); // a changed classification reopens completed work
+    expect(await totals()).toEqual(['2','2','3','1']); // a changed classification reopens completed work
     await form.locator('[data-class-apply]').click();
     expect(await page.locator('#matrix-classification [data-category-impact]').textContent()).toContain('your purpose choice');
     await form.locator('[name=control]').selectOption('');
     await form.locator('[name=category]').selectOption('necessary');
-    expect(await totals()).toEqual(['1','6','4','1']); // necessary may always run: working as expected
+    expect(await totals()).toEqual(['1','2','4','1']); // necessary may always run: working as expected
     await form.locator('summary').filter({hasText:'Additional purposes'}).click();
     await form.locator('[name=additionalCategories][value=advertising]').check();
-    expect(await totals()).toEqual(['2','6','3','1']); // necessary does not override advertising
+    expect(await totals()).toEqual(['2','2','3','1']); // necessary does not override advertising
     await page.reload();
-    expect(await totals()).toEqual(['2','6','3','1']);
+    expect(await totals()).toEqual(['2','2','3','1']);
     await page.locator('[data-matrix-kind=storage]').filter({hasText:'_mystery'}).locator('.matrix-result[data-result=mismatch]').click();
     expect(await page.locator('#matrix-classification [name=category]').inputValue()).toBe('necessary');
     expect(await page.locator('#matrix-classification [name=additionalCategories][value=advertising]').isChecked()).toBe(true);
     expect(await page.locator('.matrix-result[data-result=not-tested]').count()).toBe(4);
     await page.locator('.matrix-result[data-result=not-tested]').first().click();
     await page.locator('#matrix-primary [data-work-status]').selectOption('done');
-    expect(await page.locator('#matrix-detail-status').textContent()).toBe('Could not be checked — needs a look');
+    expect(await page.locator('#matrix-detail-status').textContent()).toBe('Not checked — this visitor choice was not completed');
+    expect(await page.locator('#matrix-detail-status').getAttribute('data-tone')).toBe('neutral');
+    expect(await page.locator('#matrix-detail-reason').textContent()).toContain('whole “After withdrawal” column');
     expect(await page.locator('.matrix-result[data-result=not-tested]').count()).toBe(4);
-    await page.goto('https://reports.example/two');expect(await totals()).toEqual(['2','8','2','0']);
+    await page.goto('https://reports.example/two');expect(await totals()).toEqual(['2','4','2','0']);
     expect(JSON.stringify(model)).toBe(original);expect(errors).toEqual([]);await context.close();
   });
 
@@ -343,7 +359,7 @@ suite('report checklist persistence', () => {
   });
 });
 
-// R3: the guided checklist ("Make these changes"). Runs on the Playwright
+// R3: the guided checklist ("Your to-do list"). Runs on the Playwright
 // Chromium build when present, else on an installed browser named by
 // COMPLYKIT_BROWSER_CHANNEL (chrome / msedge).
 const remChannel = process.env.COMPLYKIT_BROWSER_CHANNEL;
@@ -352,7 +368,8 @@ remSuite('the guided checklist in a browser', () => {
   let browser: Browser;
   const NOW = '2026-10-06T12:00:00.000Z';
   const tasks = generateConsentConfig(compatibilityEvaluation(), { complykitVersion: '0.0.0-test', now: NOW }).tasks;
-  const required = tasks.filter((t) => !t.optional && !t.classifyFirst).length;
+  const required = tasks.filter((t) => !t.optional).length;
+  const installTask = tasks.find((t) => t.kind === 'install')!;
   function reportHtml(service?: { domain: string; workspace: string; jobId: string }): string {
     const e = compatibilityEvaluation();
     e.compatibility = reconcileCompatibility(e);
@@ -374,10 +391,11 @@ remSuite('the guided checklist in a browser', () => {
     page.on('pageerror', (err) => errors.push(err.message));
     await page.goto('https://reports.example/checklist');
     const section = page.locator('#remediation');
-    expect(await section.locator('h2').textContent()).toBe('Make these changes');
+    expect(await section.locator('h2').textContent()).toBe('Your to-do list');
     const cards = section.locator('[data-remediation-id]');
-    expect(await cards.first().getAttribute('data-remediation-id')).toBe('install');
-    expect(await section.locator('[data-rem-progress-text]').textContent()).toBe(`0 of ${required} verified`);
+    expect(await cards.first().getAttribute('data-task-kind')).toBe('classify'); // the decisions, then install
+    expect(await cards.nth(1).getAttribute('data-remediation-id')).toBe('install');
+    expect(await section.locator('[data-rem-progress-text]').textContent()).toBe(`0 of ${required} done`);
     expect(await section.locator('[data-rem-verify]:visible').count()).toBe(0);
     expect(await section.locator('[data-rem-offline]').isVisible()).toBe(true);
     expect(await section.locator('[data-rem-zip]').isVisible()).toBe(false);
@@ -389,15 +407,15 @@ remSuite('the guided checklist in a browser', () => {
     await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { document.body.dataset.copied = text; } } }));
     const install = section.locator('[data-remediation-id="install"]');
     await install.locator('[data-rem-copy]').click();
-    await expect.poll(() => page.evaluate(() => document.body.dataset.copied ?? '')).toBe(tasks[0].snippet!.after);
+    await expect.poll(() => page.evaluate(() => document.body.dataset.copied ?? '')).toBe(installTask.snippet!.after);
     expect(await install.locator('[data-rem-copy-status]').textContent()).toBe('Copied');
     // Keyboard: focus the "made this change" button and press Enter.
     await install.locator('[data-rem-done]').focus();
     await page.keyboard.press('Enter');
     expect(await install.locator('[data-rem-pill]').textContent()).toBe('Marked done');
     expect(await install.getAttribute('data-status')).toBe('done-unverified');
-    expect(await section.locator('[data-rem-progress-text]').textContent()).toBe(`0 of ${required} verified`);
-    expect(await section.locator('[data-rem-progress-more]').textContent()).toContain('1 marked done, not verified yet');
+    expect(await section.locator('[data-rem-progress-text]').textContent()).toBe(`0 of ${required} done`);
+    expect(await section.locator('[data-rem-progress-more]').textContent()).toContain('1 more marked done, not verified yet');
     // Change-list items link to their task.
     expect(await page.locator('#compatibility .ck-change-task').count()).toBeGreaterThan(0);
     await page.reload();
@@ -446,7 +464,7 @@ remSuite('the guided checklist in a browser', () => {
     expect(step1).toContain('Download install bundle (.zip)');
     expect(step1).not.toContain('consent-config');
     // Manual tasks never get a Verify button.
-    const manual = tasks.find((t) => t.verify.method === 'manual')!;
+    const manual = tasks.find((t) => t.verify.method === 'manual' && t.kind !== 'classify')!;
     expect(await section.locator(`[data-remediation-id="${manual.id}"] [data-rem-verify]`).count()).toBe(0);
     await install.locator('[data-rem-verify]').click();
     await expect.poll(() => install.locator('[data-rem-pill]').textContent()).toBe('Verified ✓');
@@ -454,9 +472,9 @@ remSuite('the guided checklist in a browser', () => {
     expect(await install.locator('[data-rem-result]').textContent()).toContain('The served HTML carries the change');
     expect(await install.locator('[data-rem-result] .ck-task-evidence li').count()).toBe(1);
     expect(await install.locator('[data-rem-done]').isVisible()).toBe(false);
-    expect(await section.locator('[data-rem-progress-text]').textContent()).toBe(`1 of ${required} verified`);
+    expect(await section.locator('[data-rem-progress-text]').textContent()).toBe(`1 of ${required} done`);
     // Mark another one done: it goes to the shared workspace under task:change:<id>.
-    const next = section.locator('[data-remediation-id]').nth(1);
+    const next = section.locator('[data-remediation-id]').nth(2); // after the decision and install
     const nextId = (await next.getAttribute('data-remediation-id'))!;
     await next.locator('[data-rem-done]').click();
     await expect.poll(() => patches.some((p) => (p[`task:change:${nextId}`]?.value as { status?: string } | undefined)?.status === 'done-unverified')).toBe(true);
@@ -464,7 +482,7 @@ remSuite('the guided checklist in a browser', () => {
     expect(patches.some((p) => 'task:change:install' in p)).toBe(false);
     // A failing endpoint says so and changes nothing.
     await context.route('**/remediation/**', (route) => route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'could not fetch the page' }) }));
-    const third = section.locator('[data-remediation-id]').nth(2);
+    const third = section.locator('[data-remediation-id]').nth(3);
     await third.locator('[data-rem-verify]').click();
     await expect.poll(() => third.locator('[data-rem-result]').textContent()).toContain('Could not run the check: could not fetch the page');
     expect(await third.locator('[data-rem-pill]').textContent()).toBe('To do');

@@ -268,7 +268,7 @@ export { generateConsentConfig, DEFAULT_SCRIPT_SRC } from './consent-generator.j
 export type { GenerateConsentConfigOptions, GeneratedConsentConfig, GeneratorNote, SnippetRewrite } from './consent-generator.js';
 // The guided remediation flow (plans/remediation-flow.md): stable change ids,
 // the task model, the task builder and the pure verify checkers.
-export { changeId, changeSignature, elementSignatureOf, remediationTaskKey, readRemediationTaskValue, resolveRemediationTaskValue, isRemediationDone, REMEDIATION_TASK_KEY_PREFIX, INSTALL_TASK_ID } from './record/index.js';
+export { changeId, changeSignature, elementSignatureOf, remediationTaskKey, readRemediationTaskValue, resolveRemediationTaskValue, isRemediationDone, classificationDecided, REMEDIATION_TASK_KEY_PREFIX, INSTALL_TASK_ID } from './record/index.js';
 export type {
   RemediationTask,
   RemediationTaskKind,
@@ -285,7 +285,7 @@ export type {
 } from './record/index.js';
 export { buildRemediationTasks, installTask, removeExistingToolTasks, remediationTotals, renderHeadSnippet, scriptJson } from './remediation.js';
 export type { RemediationSource, RemediationSourceNote, BuildRemediationTasksOptions } from './remediation.js';
-// R3: the report's "Make these changes" checklist.
+// R3: the report's "Your to-do list" checklist.
 export { renderRemediationHtml, remediationFromWorkspace, parseRemediationTasks } from './report/consent-remediation.js';
 export type { RemediationSection, RemediationWorkspaceLike } from './report/consent-remediation.js';
 export { verifyInstall, verifyRewriteTag, verifyRemoveLeak, verifyGtmTagConsent, verifyConsentDefault, verifyRemoveExistingTool, judgeSpotCheck, runVerify, elementMatches } from './rules/remediation/verify.js';

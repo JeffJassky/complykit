@@ -12,6 +12,7 @@ import { compatibilityEvaluation, PAGE } from './fixtures/compatibility-report.j
 const NOW = '2026-10-06T12:00:00.000Z';
 const gen = (ev: TrackingEvaluation = compatibilityEvaluation(), workspace?: WorkspaceSnapshot) => generateConsentConfig(ev, { complykitVersion: '0.0.0-test', now: NOW, workspace });
 const byKind = (tasks: RemediationTask[], kind: RemediationTask['kind']): RemediationTask[] => tasks.filter((t) => t.kind === kind);
+const install = (tasks: RemediationTask[]): RemediationTask => tasks.find((t) => t.kind === 'install')!;
 
 describe('buildRemediationTasks', () => {
   const r = gen();
@@ -25,8 +26,9 @@ describe('buildRemediationTasks', () => {
     expect(tasks.map((t) => t.order)).toEqual(tasks.map((_, i) => i));
   });
 
-  it('install is first, verified by the latest config hash, blocking and above GTM; its snippet is Part 1 of snippet.html', () => {
-    const t = tasks[0];
+  it('install comes right after the decisions, verified by the latest config hash, blocking and above GTM; its snippet is Part 1 of snippet.html', () => {
+    const t = tasks[1];
+    expect(tasks[0].kind).toBe('classify');
     expect(t.id).toBe('install');
     expect(t.kind).toBe('install');
     expect(t.status).toBe('todo');
@@ -60,15 +62,15 @@ describe('buildRemediationTasks', () => {
     expect(meta.map((t) => t.kind).sort()).toEqual(['remove-leak', 'rewrite-tag']);
     for (const t of meta) expect(t.alsoFixes).toContain('Meta Pixel running before the visitor chooses (seen in the scan).');
     const calls = r.compatibility.groups.find((g) => g.id === 'consent-api')!.items.map((i) => i.id);
-    expect(tasks[0].aliases).toEqual(calls);
-    expect(tasks[0].alsoFixes!.join(' ')).toMatch(/Telling Google Analytics 4 the visitor’s choice/);
+    expect(install(tasks).aliases).toEqual(calls);
+    expect(install(tasks).alsoFixes!.join(' ')).toMatch(/Telling Google Analytics 4 the visitor’s choice/);
     const exposure = r.compatibility.groups.find((g) => g.id === 'exposures')!.items[0].id;
     expect(byKind(tasks, 'remove-leak')[0].aliases).toContain(exposure);
     expect(byKind(tasks, 'confirm-in-browser')).toHaveLength(0);
   });
 
-  it('order: install, tags, leaks, GTM, platform, consent defaults, then the rest; titles short and imperative', () => {
-    expect(tasks.map((t) => t.kind)).toEqual(['install', 'rewrite-tag', 'rewrite-tag', 'remove-leak', 'gate-gtm-tag', 'use-platform-api', 'set-consent-default', 'needs-a-look']);
+  it('order: decisions, install, tags, leaks, GTM, platform, consent defaults, then the rest; titles short and imperative', () => {
+    expect(tasks.map((t) => t.kind)).toEqual(['classify', 'install', 'rewrite-tag', 'rewrite-tag', 'remove-leak', 'gate-gtm-tag', 'use-platform-api', 'set-consent-default', 'needs-a-look']);
     // Tags by page in document order: line 12 (Google Analytics) before line 38 (Meta Pixel).
     expect(byKind(tasks, 'rewrite-tag').map((t) => t.title)).toEqual(['Hold the Google Analytics 4 tag until consent', 'Hold the Meta Pixel tag until consent']);
     expect(byKind(tasks, 'remove-leak')[0].title).toBe('Delete the Meta Pixel no-JavaScript fallback');
@@ -124,8 +126,8 @@ describe('buildRemediationTasks', () => {
       runs: [],
     };
     const t = buildRemediationTasks(r, compatibilityEvaluation(), { workspace: ws });
-    expect(t[0].status).toBe('verified');
-    expect(t[0].lastVerify?.message).toBe('config present and current');
+    expect(install(t).status).toBe('verified');
+    expect(install(t).lastVerify?.message).toBe('config present and current');
     expect(t.find((x) => x.id === rewriteId)?.status).toBe('failed');
     expect(t.find((x) => x.id === gtmId)?.status).toBe('done-unverified');
     expect(t.filter((x) => ![rewriteId, gtmId, 'install'].includes(x.id)).every((x) => x.status === 'todo')).toBe(true);
@@ -140,7 +142,7 @@ describe('buildRemediationTasks', () => {
     const later = generateConsentConfig(compatibilityEvaluation(), { complykitVersion: '0.0.0-test', now: '2026-10-08T09:00:00.000Z' });
     expect(later.tasks.map((t) => t.id)).toEqual(tasks.map((t) => t.id));
     expect(later.config.hash).not.toBe(r.config.hash); // the config moved (generatedFrom.at) …
-    expect(later.tasks[0].id).toBe('install'); // … the install task's id is constant; its verify spec carries the new hash
+    expect(install(later.tasks).id).toBe('install'); // … the install task's id is constant; its verify spec carries the new hash
     // Classify the unknown-vendor tool: its own tasks may change; every other task keeps its id.
     const ev = compatibilityEvaluation();
     const p = ev.inventory.find((x) => x.partyId === 'cloudflare')!;
@@ -153,7 +155,8 @@ describe('buildRemediationTasks', () => {
   it('a stored config.value without the compatibility section is enough: the report is rebuilt from the evaluation', () => {
     const t = buildRemediationTasks({ config: r.config, notes: r.notes, snippet: r.snippet }, compatibilityEvaluation());
     expect(t.map((x) => x.id)).toEqual(tasks.map((x) => x.id));
-    expect(t[0].verify.check === 'install' && t[0].verify.scriptSrc).toBe(r.scriptSrc);
+    const spec = install(t).verify;
+    expect(spec.check === 'install' && spec.scriptSrc).toBe(r.scriptSrc);
   });
 
   it('context-purpose tools come last, marked optional', () => {
@@ -184,7 +187,7 @@ describe('remove the existing consent tool', () => {
     ev.inventory.push({ ...ev.inventory[1], partyId: 'unknown:cmp.test', label: 'cmp.test', domain: 'cmp.test', hosts: ['cdn.cmp.test', 'cmp.test'], recognized: true, categories: ['consent'], implementation: { class: 'direct-script', evidence: [], alsoSeen: [] } });
     const r = gen(ev);
     expect(r.notes.some((n) => n.code === 'existing-consent-tool' && n.partyIds?.includes('unknown:cmp.test'))).toBe(true);
-    const t = r.tasks[1];
+    const t = r.tasks[r.tasks.findIndex((x) => x.kind === 'install') + 1];
     expect(t.kind).toBe('remove-existing-tool');
     expect(t.id).toMatch(/^remove-existing-tool:[0-9a-f]{12}$/);
     expect(t.verify).toEqual({ check: 'remove-existing-tool', method: 'static', page: PAGE, partyId: 'unknown:cmp.test', hosts: ['cdn.cmp.test', 'cmp.test'], label: 'cmp.test' });
@@ -206,8 +209,9 @@ describe('remove the existing consent tool', () => {
     const ev = compatibilityEvaluation();
     ev.platform = { name: 'wordpress', evidence: ['wp-content'], consentPlugin: 'cookieyes' };
     const r = gen(ev);
-    expect(r.tasks[1].kind).toBe('remove-existing-tool');
-    expect(r.tasks[1].tools).toEqual(['cookieyes']);
+    const after = r.tasks[r.tasks.findIndex((x) => x.kind === 'install') + 1];
+    expect(after.kind).toBe('remove-existing-tool');
+    expect(after.tools).toEqual(['cookieyes']);
   });
 
   it('installTask alone: the folder is derived from the script src', () => {
@@ -231,8 +235,9 @@ describe('folding, the browser confirm and titles (hand-made change lists over t
   const ev = compatibilityEvaluation();
   const group = (id: string) => r.compatibility.groups.find((g) => g.id === id)!;
   const mismatch = group('mismatch').items[0]; // Meta Pixel, ran where it should be off
+  // The changes only: the fixture's unclassified tool (tracker.test) brings its decision first, tested in its own block below.
   const build = (groups: Array<{ id: string; items: typeof mismatch[] }>, config = r.config, workspace?: WorkspaceSnapshot) =>
-    buildRemediationTasks({ config, notes: [], compatibility: { ...r.compatibility, groups: groups.map((g) => ({ ...group(g.id), items: g.items })), otherChanges: [] } }, ev, { workspace });
+    buildRemediationTasks({ config, notes: [], compatibility: { ...r.compatibility, groups: groups.map((g) => ({ ...group(g.id), items: g.items })), otherChanges: [] } }, ev, { workspace }).filter((t) => t.kind !== 'classify');
 
   it('a mismatch no other task fixes is never folded away: it stays first after install, with its own browser check', () => {
     const t = build([{ id: 'mismatch', items: [mismatch] }, { id: 'rewrite', items: group('rewrite').items.filter((i) => !i.partyIds.includes('meta.pixel')) }]);
@@ -312,5 +317,60 @@ describe('folding, the browser confirm and titles (hand-made change lists over t
       'Hold the Meta Pixel tag until consent (on the home page, line 38)',
       'Hold the Meta Pixel tag until consent (on /cart)',
     ]);
+  });
+});
+
+describe('decisions in the same list: classify an unrecognized tool (the B2 fixture’s tracker.test)', () => {
+  const ev = compatibilityEvaluation();
+  const p = ev.inventory.find((x) => x.partyId === 'unknown:tracker.test')!;
+  const key = classificationKey({ kind: 'tool', partyId: p.partyId, domain: p.domain, recognized: p.recognized });
+  const tasks = gen(ev).tasks;
+  const decision = tasks.find((t) => t.kind === 'classify')!;
+
+  it('one decision per unclassified tool, first in the list, with a stable id and the workspace key that decides it', () => {
+    expect(tasks[0]).toBe(decision);
+    expect(decision.id).toMatch(/^classify:[0-9a-f]{12}$/);
+    expect(decision.title).toBe('Decide: what is tracker.test?');
+    expect(decision.classKey).toBe(key);
+    expect(decision.partyIds).toEqual(['unknown:tracker.test']);
+    expect(decision.status).toBe('todo');
+    expect(decision.optional).toBe(false);
+    expect(decision.verify.method).toBe('manual');
+    expect(decision.summary).toMatch(/One change below waits on this answer/);
+    expect(RemediationTaskSchema.safeParse(decision).success).toBe(true);
+    expect(gen(compatibilityEvaluation()).tasks[0].id).toBe(decision.id);
+  });
+
+  it('a change whose tools are all unclassified waits on the decision instead of a “classify first” of its own; it stays required', () => {
+    const blocked = tasks.filter((t) => t.waitingOn?.length);
+    expect(blocked.map((t) => t.kind)).toEqual(['needs-a-look']);
+    expect(blocked[0].waitingOn).toEqual([decision.id]);
+    expect(blocked[0].optional).toBe(false);
+    expect(tasks.indexOf(blocked[0])).toBeGreaterThan(tasks.indexOf(decision));
+    expect(remediationTotals(tasks).required).toBe(tasks.length);
+  });
+
+  it('decided by the workspace’s classification (a chosen purpose, not “Other”, not a pre-filled suggestion) — never by a task:change entry', () => {
+    const at = (value: unknown, extra: WorkspaceSnapshot['entries'] = {}): RemediationTask => buildRemediationTasks(gen(ev), ev, { workspace: { domain: 'example-shop.test', entries: { [key]: { value, at: NOW }, ...extra }, runs: [] } }).find((t) => t.kind === 'classify')!;
+    expect(at({ category: 'analytics', categoryChosen: true }).status).toBe('verified');
+    expect(at({ category: 'necessary' }).status).toBe('verified');
+    expect(at({ category: 'other', categoryChosen: true }).status).toBe('todo');
+    expect(at({ category: 'analytics', categoryChosen: false }).status).toBe('todo');
+    expect(at(null).status).toBe('todo');
+    expect(at(null, { [remediationTaskKey(decision.id)]: { value: { status: 'verified' }, at: NOW } }).status).toBe('todo');
+  });
+
+  it('after the classification is applied (the regenerated list): the decision stays, done; nothing waits on an open decision', () => {
+    const ws = (category: string): WorkspaceSnapshot => ({ domain: 'example-shop.test', entries: { [key]: { value: { category, categoryChosen: true }, at: NOW } }, runs: [] });
+    const tracks = gen(compatibilityEvaluation(), ws('analytics')).tasks;
+    const d = tracks.find((t) => t.kind === 'classify')!;
+    expect(d.id).toBe(decision.id);
+    expect(d.status).toBe('verified');
+    expect(tracks.some((t) => t.waitingOn?.length)).toBe(false);
+    const necessary = gen(compatibilityEvaluation(), ws('necessary')).tasks;
+    expect(necessary.find((t) => t.kind === 'classify')?.status).toBe('verified');
+    // tracker.test behaves like a tracker, so "necessary" is refused (a generator note) and its change stays — actionable: the decision it names is made.
+    const open = new Set(necessary.filter((t) => t.kind === 'classify' && t.status !== 'verified').map((t) => t.id));
+    expect(necessary.some((t) => t.waitingOn?.some((id) => open.has(id)))).toBe(false);
   });
 });

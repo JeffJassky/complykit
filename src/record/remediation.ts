@@ -28,6 +28,7 @@ import { CompatibilityChangeKind, type MarkupFinding } from './tracking.js';
 //   change-dns                  the first-party alias host
 //   behavior-mismatch, accepted-exposure, needs-a-look, remove-existing-tool
 //                               the party
+//   classify                    the party (the decision is about the tool)
 //   install                     constant: 'install' (the config hash lives in
 //                               its verify spec; a regenerated config is the
 //                               same task with a new hash to verify)
@@ -39,7 +40,10 @@ export const INSTALL_TASK_ID = 'install';
 
 // 'confirm-in-browser': one consolidated spot check per party whose folded
 // behavior / consent-API items no static task covers (buildRemediationTasks).
-export const RemediationTaskKind = z.enum(['install', 'remove-existing-tool', ...CompatibilityChangeKind.options, 'confirm-in-browser']);
+// 'classify': a decision, not a change to the site — what an unrecognized tool
+// is for. Done when the site workspace holds a classification for it
+// (`classKey`); never stored under task:change:<id>.
+export const RemediationTaskKind = z.enum(['classify', 'install', 'remove-existing-tool', ...CompatibilityChangeKind.options, 'confirm-in-browser']);
 export type RemediationTaskKind = z.infer<typeof RemediationTaskKind>;
 
 /** What identifies one element in served HTML, independent of its line. */
@@ -156,8 +160,12 @@ export const RemediationTask = z.object({
   lastVerify: RemediationLastVerify.optional(),
   /** A context-purpose tool (chat, embeds, fonts…): applies only where it is not strictly needed. */
   optional: z.boolean(),
-  /** Every tool on it is unclassified: applies only if it tracks visitors. */
+  /** Every tool on it is unclassified: applies only if it tracks visitors (see waitingOn for the decision it waits on). */
   classifyFirst: z.boolean().optional(),
+  /** A 'classify' task: the workspace key (`class:<id>`, the report's data-class-key with the prefix) whose classification decides it. */
+  classKey: z.string().optional(),
+  /** The 'classify' tasks this change waits on: it applies only once they are decided (and only if the tool tracks visitors). */
+  waitingOn: z.array(z.string()).optional(),
   notes: z.array(z.string()).default([]),
   guide: z.object({ label: z.string(), href: z.string() }).optional(),
   /** Change-list items folded into this task (a behavior mismatch, a consent-API call, an exposure the change removes): their ids, so a status stored under one of them is still found (resolveRemediationTaskValue). */
@@ -300,7 +308,9 @@ export function readRemediationTaskValue(value: unknown): RemediationTaskValue |
  * `verified` reads as `done-unverified` (the owner did the work; this task's
  * own check has not run), never as a pass.
  */
-export function resolveRemediationTaskValue(task: { id: string; aliases?: string[]; verify: { check: string } }, entries: Record<string, { value: unknown } | undefined>): RemediationTaskValue | undefined {
+export function resolveRemediationTaskValue(task: { id: string; aliases?: string[]; verify: { check: string }; classKey?: string }, entries: Record<string, { value: unknown } | undefined>): RemediationTaskValue | undefined {
+  // A decision: its status is whether the workspace holds the classification — nothing else.
+  if (task.classKey) return { status: classificationDecided(entries[task.classKey]?.value) ? 'verified' : 'todo' };
   const own = entries[remediationTaskKey(task.id)];
   if (own) return readRemediationTaskValue(own.value) ?? { status: 'todo' };
   for (const a of task.aliases ?? []) {
@@ -309,6 +319,22 @@ export function resolveRemediationTaskValue(task: { id: string; aliases?: string
     return v.status === 'verified' && task.verify.check !== 'spot-check' ? { ...v, status: 'done-unverified' } : v;
   }
   return undefined;
+}
+
+/**
+ * A classification value that decides a 'classify' task: a purpose the person
+ * chose (not a pre-filled suggestion: `categoryChosen: false`), other than
+ * "Other" — the purposes the scan can apply (site-workspace.ts
+ * classificationCategories). Accepts the workbench's { category,
+ * additionalCategories } and a plain { categories }. The service and the
+ * report script carry the same rule.
+ */
+export function classificationDecided(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  if (v.categoryChosen === false) return false;
+  const all = [v.category, ...(Array.isArray(v.additionalCategories) ? v.additionalCategories : []), ...(Array.isArray(v.categories) ? v.categories : [])];
+  return all.some((c) => typeof c === 'string' && c !== '' && c !== 'other' && c !== 'unknown');
 }
 
 /** Done for the checklist's purposes: verified, or marked done by the owner (verification pending or impossible). */

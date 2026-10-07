@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { classificationDecided } from '../shared/api.js';
 import type {
   RemediationLastVerify,
   RemediationResponse,
@@ -79,7 +80,9 @@ export function storedTasks(ws: SiteWorkspace): RemediationTask[] {
  * unless the task's own check is a spot check, like the item's was — the same
  * rule as complykit's resolveRemediationTaskValue.
  */
-export function taskValue(t: Pick<RemediationTask, 'id' | 'aliases' | 'verify'>, ws: SiteWorkspace): RemediationTaskValue | undefined {
+export function taskValue(t: Pick<RemediationTask, 'id' | 'aliases' | 'verify' | 'classKey'>, ws: SiteWorkspace): RemediationTaskValue | undefined {
+  // A decision (kind 'classify'): decided when the workspace holds a purpose for the tool — nothing else.
+  if (t.classKey) return { status: classificationDecided(ws.entries[t.classKey]?.value) ? 'verified' : 'todo' };
   const own = ws.entries[remediationTaskKey(t.id)];
   if (own) return readTaskValue(own.value);
   for (const a of t.aliases ?? []) {
@@ -107,9 +110,9 @@ export function remediationTotals(tasks: RemediationTask[]): RemediationTotals {
   return { total: tasks.length, verified: count('verified'), doneUnverified: count('done-unverified'), failed: count('failed'), cannotVerify: count('cannot-verify'), todo: count('todo'), required: tasks.filter((t) => !t.optional).length };
 }
 
-/** Progress over the required tasks (not optional, not classify-first) — the count the report and the site page show. */
+/** Progress over the required tasks (not optional; decisions included) — the count the report and the site page show. `verified` = done: checks passed and decisions made. */
 export function checklistProgress(ws: SiteWorkspace): { verified: number; required: number; doneUnverified: number; failed: number } | undefined {
-  const tasks = mergeTaskStatus(storedTasks(ws), ws).filter((t) => !t.optional && !t.classifyFirst);
+  const tasks = mergeTaskStatus(storedTasks(ws), ws).filter((t) => !t.optional);
   if (!tasks.length) return undefined;
   const count = (s: RemediationStatus): number => tasks.filter((t) => t.status === s).length;
   return { verified: count('verified'), required: tasks.length, doneUnverified: count('done-unverified'), failed: count('failed') };
@@ -142,6 +145,7 @@ export class RemediationVerifier {
     if (!id || id.length > MAX_TASK_ID || /[\u0000-\u001f]/.test(id)) throw new WorkspaceError(404, 'no such task');
     const task = storedTasks(await workspaces.get(domain)).find((t) => t.id === id);
     if (!task) throw new WorkspaceError(404, 'no such task in the site’s current checklist (generate the config first)');
+    if (task.classKey) throw new WorkspaceError(409, 'this is a decision, not a change: classify the tool in the report; it is done once the site’s workspace holds its purpose');
     if (task.verify.method === 'manual') throw new WorkspaceError(409, 'this change cannot be checked from outside: mark it done (the rescan decides)');
     if (this.busy.has(domain)) throw new WorkspaceError(409, `a verify for ${domain} is already running; try again when it finishes`);
     this.busy.add(domain);

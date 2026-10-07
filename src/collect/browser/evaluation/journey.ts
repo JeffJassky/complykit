@@ -1,5 +1,6 @@
 import type { Page } from 'playwright';
 import type { CaptureHandle } from './capture.js';
+import { step, pathOf } from './steps.js';
 
 // The journey (plans/consent-design.md §2.3): land, dwell until activity
 // settles, scroll in steps, open a listing page, a product page and the cart
@@ -83,17 +84,27 @@ export async function discoverJourneyPages(page: Page, maxPages: number): Promis
 
 export async function navigate(page: Page, cap: CaptureHandle, url: string, j: ResolvedJourney): Promise<void> {
   cap.push({ type: 'action', t: cap.now(), action: 'navigate', url, pageIndex: cap.pageIndex() });
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: j.navTimeoutMs }).catch(() => {});
-  await page.waitForLoadState('load', { timeout: Math.min(15000, j.navTimeoutMs) }).catch(() => {});
+  await step(
+    'navigate',
+    async () => {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: j.navTimeoutMs }).catch(() => {});
+      await page.waitForLoadState('load', { timeout: Math.min(15000, j.navTimeoutMs) }).catch(() => {});
+    },
+    pathOf(url),
+  );
 }
 
 export async function dwell(page: Page, cap: CaptureHandle, ms: number): Promise<void> {
   if (ms <= 0) return;
   cap.push({ type: 'action', t: cap.now(), action: 'wait', detail: `${ms}ms`, pageIndex: cap.pageIndex() });
-  await page.waitForTimeout(ms);
+  await step('dwell', () => page.waitForTimeout(ms));
 }
 
 export async function scrollSteps(page: Page, cap: CaptureHandle, steps: number): Promise<void> {
+  if (steps > 0) await step('scroll', () => scrollStepsUntimed(page, cap, steps));
+}
+
+async function scrollStepsUntimed(page: Page, cap: CaptureHandle, steps: number): Promise<void> {
   for (let i = 1; i <= steps; i++) {
     await page
       .evaluate((f) => window.scrollTo({ top: document.documentElement.scrollHeight * f, behavior: 'instant' as ScrollBehavior }), i / steps)
@@ -151,9 +162,13 @@ async function findSearchInput(page: Page): Promise<'found' | 'none' | 'post'> {
  * Type the marker into the site's search box, submit it and wait for the
  * results page. Returns false (after noting why) when it could not be done.
  */
-export async function searchStep(page: Page, cap: CaptureHandle, step: SearchStep, j: ResolvedJourney): Promise<boolean> {
-  if (step.done) return false;
-  step.done = true;
+export async function searchStep(page: Page, cap: CaptureHandle, search: SearchStep, j: ResolvedJourney): Promise<boolean> {
+  if (search.done) return false;
+  return step('search', () => searchStepUntimed(page, cap, search, j));
+}
+
+async function searchStepUntimed(page: Page, cap: CaptureHandle, search: SearchStep, j: ResolvedJourney): Promise<boolean> {
+  search.done = true;
   let found = await findSearchInput(page);
   if (found === 'none') {
     // Many themes hide the box behind a search icon: open it (or follow it to a search page) once and look again.
@@ -169,18 +184,18 @@ export async function searchStep(page: Page, cap: CaptureHandle, step: SearchSte
     }
   }
   if (found === 'post') {
-    step.note('site search: the search form submits by POST, which the journey does not do — search terms and page titles sent from a results page were not tested');
+    search.note('site search: the search form submits by POST, which the journey does not do — search terms and page titles sent from a results page were not tested');
     return false;
   }
   if (found !== 'found') {
-    step.note(SEARCH_NOT_FOUND);
+    search.note(SEARCH_NOT_FOUND);
     return false;
   }
   const sel = '[data-complykit-marker="journey-search"]';
   const before = page.url();
   await page.click(sel, { timeout: 3000 }).catch(() => {});
   cap.push({ type: 'action', t: cap.now(), action: 'type', detail: 'search marker', pageIndex: cap.pageIndex() });
-  await page.type(sel, step.term, { delay: 40 }).catch(() => {});
+  await page.type(sel, search.term, { delay: 40 }).catch(() => {});
   cap.push({ type: 'action', t: cap.now(), action: 'key', detail: 'Enter (submit search)', pageIndex: cap.pageIndex() });
   await Promise.all([
     page.waitForURL((u) => u.href !== before, { timeout: 8000, waitUntil: 'domcontentloaded' }).catch(() => {}),
@@ -194,20 +209,31 @@ export async function searchStep(page: Page, cap: CaptureHandle, step: SearchSte
 
 /** Visit the rest of the journey from the current (landing) page. */
 export async function browse(page: Page, cap: CaptureHandle, j: ResolvedJourney, landingUrl: string, search?: SearchStep): Promise<void> {
-  await scrollSteps(page, cap, j.scrollSteps);
-  const targets = j.paths?.length
-    ? j.paths.map((p) => new URL(p, landingUrl).toString())
-    : await discoverJourneyPages(page, j.maxPages);
-  if (search && !search.done) await searchStep(page, cap, search, j);
-  for (const url of targets) {
-    await navigate(page, cap, url, j);
-    await dwell(page, cap, j.pageDwellMs);
-    await scrollSteps(page, cap, Math.max(1, Math.ceil(j.scrollSteps / 2)));
-  }
+  await step('browse', async () => {
+    await scrollSteps(page, cap, j.scrollSteps);
+    const targets = j.paths?.length
+      ? j.paths.map((p) => new URL(p, landingUrl).toString())
+      : await step('discover', () => discoverJourneyPages(page, j.maxPages));
+    if (search && !search.done) await searchStep(page, cap, search, j);
+    let n = 0;
+    for (const url of targets) {
+      await step(
+        'page',
+        async () => {
+          await navigate(page, cap, url, j);
+          await dwell(page, cap, j.pageDwellMs);
+          await scrollSteps(page, cap, Math.max(1, Math.ceil(j.scrollSteps / 2)));
+        },
+        `${++n} ${pathOf(url)}`,
+      );
+    }
+  });
 }
 
 /** One more same-origin navigation so the last page's exit beacons get flushed. */
 export async function flush(page: Page, cap: CaptureHandle, landingUrl: string, j: ResolvedJourney): Promise<void> {
-  await navigate(page, cap, landingUrl, j);
-  await dwell(page, cap, Math.min(3000, j.pageDwellMs));
+  await step('flush', async () => {
+    await navigate(page, cap, landingUrl, j);
+    await dwell(page, cap, Math.min(3000, j.pageDwellMs));
+  });
 }

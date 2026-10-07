@@ -242,6 +242,7 @@ export const OptOutWalkEvent = z.object({
   requiredFields: z.array(z.string()).default([]),
   confirmation: z.string().optional(), // text that confirms an opt-out, if shown
   landedUrl: z.string().optional(),
+  performed: z.boolean().optional(), // the scan used the opt-out control (never a form asking for personal data)
   pageIndex: z.number().int(),
 });
 export type OptOutWalkEvent = z.infer<typeof OptOutWalkEvent>;
@@ -365,6 +366,11 @@ export const TimelineSnapshot = z.object({
     .optional(),
   // Things this scenario could not observe or do, stated, never silently clean.
   notTested: z.array(z.string()).default([]),
+  // Where the visit's time went: one row per step path ("land", "browse.page.navigate"),
+  // repeats aggregated; slowest first. Absent = an older collector.
+  steps: z
+    .array(z.object({ step: z.string(), count: z.number().int(), ms: z.number(), maxMs: z.number(), open: z.boolean().optional() }))
+    .optional(),
   evidence: z
     .object({
       har: z.string().optional(),
@@ -485,6 +491,10 @@ export const ScenarioSummary = z.object({
   // complykit's own tool as this scenario's landing exposed it (D10); absent = not on the page or not read.
   complykit: ComplykitToolSnapshot.optional(),
   choice: z.object({ kind: z.string(), ok: z.boolean(), method: z.string() }).optional(),
+  // The opt-out link walk on this scenario's visit, when one ran: why an opt-out was or was not completed.
+  optOutWalk: z
+    .object({ found: z.boolean(), linkText: z.string().optional(), requiredFields: z.array(z.string()).default([]), performed: z.boolean().optional() })
+    .optional(),
   // Visits that completed for this scenario (1 = a single run; 2 = plus the throttled pass).
   runs: z.number().int().optional(),
   counts: z

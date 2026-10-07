@@ -33,6 +33,22 @@ describe('consent behavior matrix',()=>{
   expect(status({...model,notTested:[{scope:'frame',id:'frame',reason:'blocked'}]},'storage','_fbp','reject').status).toBe('unknown');
   expect(status({...model,notTested:[{scope:'flow',id:'do-nothing',reason:'unreadable frame in this visit'}]},'storage','_fbp','reject').status).toBe('match');
  });
+ it('a failed opt-out link is one column-level gap that says why, not a "needs a look" per cookie',()=>{
+  const loc=evaluation.locations[0];
+  const optOut=(extra:object)=>buildConsentReportModel(TrackingEvaluation.parse({...evaluation,locations:[{...loc,scenarios:[...loc.scenarios,{scenario:'opt-out-link',status:'tested',choice:{kind:'opt-out-link',ok:false,method:'link — requires email — not submitted'},...extra}]}]}),[]);
+  const withWalk=optOut({optOutWalk:{found:true,linkText:'Your Privacy Choices',requiredFields:['email'],performed:false}});
+  expect(withWalk.grid.de!['opt-out-link']!.choiceGap).toBe('The opt-out was not completed: “Your Privacy Choices” leads to a page that asks for email, and the scan does not submit personal data.');
+  const matrix=buildBehaviorMatrix(withWalk);
+  const col=matrix.columns.find(c=>c.id==='de:opt-out-link')!;
+  expect(col.unavailable?.reason).toContain('asks for email');
+  expect(matrix.columns.find(c=>c.id==='de:reject')!.unavailable).toBeUndefined();
+  const cells=matrix.rows.map(r=>r.cells[matrix.columns.indexOf(col)]);
+  expect(cells.every(c=>c.status==='not-tested'&&c.reason.includes('asks for email')&&c.reason.includes('whole “After the opt-out link” column'))).toBe(true);
+  // Older records carry only the note on the choice method.
+  expect(optOut({}).grid.de!['opt-out-link']!.choiceGap).toContain('asks for email');
+  expect(optOut({optOutWalk:{found:false,requiredFields:[]}}).grid.de!['opt-out-link']!.choiceGap).toBe('No opt-out link was found, so the opt-out could not be made.');
+  expect(optOut({choice:{kind:'opt-out-link',ok:false,method:'link'},optOutWalk:{found:true,linkText:'Do Not Sell',requiredFields:[],performed:false}}).grid.de!['opt-out-link']!.choiceGap).toContain('no opt-out button or switch');
+ });
  it('preserves repeated storage writes in both pre-choice and post-reject phases',()=>{
   const timeline=Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'reject',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies:[],storage:[],frames:[]},events:[{type:'banner',t:0,state:'shown',pageIndex:0},{type:'cookie-write',t:100,name:'_fbp',value:'redacted',chain:['https://connect.facebook.net/pixel.js'],frameUrl:evaluation.site.url,pageIndex:0},{type:'choice',t:200,choice:'reject',ok:true,method:'test',pageIndex:0},{type:'cookie-write',t:300,name:'_fbp',value:'redacted',chain:['https://connect.facebook.net/pixel.js'],frameUrl:evaluation.site.url,pageIndex:0}]});
   const observations=summarizeBehavior([timeline]);

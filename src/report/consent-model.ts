@@ -52,6 +52,8 @@ export interface GridCell {
   counts: Record<FindingKind, number>;
   banner?: string;
   choice?: string;
+  /** Why the visitor choice this scenario depends on was not completed, in the owner's words (absent = completed or no choice). */
+  choiceGap?: string;
   /** Visits that completed (1 = a single run; 2 = plus the throttled pass). Absent = not recorded. */
   runs?: number;
 }
@@ -158,6 +160,27 @@ const emptyCounts = (): Record<FindingKind, number> => ({ violation: 0, 'needs-r
 
 const PLAINTIFF_STATES = new Set(['us-ca', 'us-fl', 'us-pa']);
 
+const CHOICE_NAME: Record<string, string> = { reject: 'rejecting', accept: 'accepting', partial: 'accepting analytics only', withdraw: 'withdrawing consent', dismiss: 'closing the banner', 'opt-out-link': 'the opt-out link' };
+
+/**
+ * Why a visitor choice was not completed, from the opt-out walk when there is
+ * one (older records: the "requires …" note on the choice method). One
+ * sentence for the whole column — not a statement about any cookie or tool.
+ */
+export function choiceGap(s: TrackingEvaluation['locations'][number]['scenarios'][number]): string {
+  const walk = s.optOutWalk;
+  const legacy = /requires (.+?) — not submitted/.exec(s.choice?.method ?? '')?.[1];
+  const fields = walk?.requiredFields.length ? walk.requiredFields : legacy ? legacy.split(', ') : [];
+  if (s.scenario === 'opt-out-link' || s.choice?.kind === 'opt-out-link') {
+    if (walk && !walk.found) return 'No opt-out link was found, so the opt-out could not be made.';
+    const link = walk?.linkText ? `“${walk.linkText}”` : 'The opt-out link';
+    if (fields.length) return `The opt-out was not completed: ${link} leads to a page that asks for ${fields.join(', ')}, and the scan does not submit personal data.`;
+    if (walk && !walk.performed) return `The opt-out was not completed: ${link} leads to a page with no opt-out button or switch the scan could use.`;
+    return `The opt-out through ${link} could not be confirmed.`;
+  }
+  return `The scan could not confirm ${CHOICE_NAME[s.choice?.kind ?? s.scenario] ?? 'this visitor choice'} worked.`;
+}
+
 export function buildConsentReportModel(evaluation: TrackingEvaluation, findings: Finding[]): ConsentReportModel {
   const scenarioSet = new Set<ScenarioId>();
   for (const l of evaluation.locations) for (const s of l.scenarios) scenarioSet.add(s.scenario);
@@ -177,6 +200,7 @@ export function buildConsentReportModel(evaluation: TrackingEvaluation, findings
           counts: emptyCounts(),
           banner: s.banner?.found ? s.banner.cmp ?? 'banner' : 'no banner',
           choice: s.choice ? `${s.choice.kind}${s.choice.ok ? '' : ' (failed)'}` : undefined,
+          choiceGap: s.choice && !s.choice.ok ? choiceGap(s) : undefined,
           runs: s.runs,
         };
       }

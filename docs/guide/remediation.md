@@ -93,12 +93,14 @@ with your answers and reloads the report where you were. Nothing is rescanned, s
 takes seconds. Your answers are saved with the site, shared by everyone who opens its
 report, and used by every later report and config.
 
-You do not have to classify everything first. Tools you leave alone appear in the
-checklist as "classify first" items, listed apart from the required ones.
+You do not have to classify everything first. Each tool you leave alone is a decision
+at the top of the to-do list ("Decide: what is getscrolly.com?"), and the changes that
+depend on it say "Waiting on: your decision on what getscrolly.com is" until you make it.
+It is one list: the decisions and the changes are counted together.
 
 ## 4. Generate the checklist
 
-Press **Generate the consent tool config** (in the report's "Make these changes"
+Press **Generate the consent tool config** (in the report's "Your to-do list"
 section, or **Generate consent tool config** on the site page). One press makes the
 config, the paste-in snippet and the change list from the scan and your
 classifications, and then refreshes the report so all three agree. The checklist
@@ -111,12 +113,13 @@ that is still needed keeps its status. If the checklist was regenerated elsewher
 
 ## 5. Read the checklist
 
-The "Make these changes" section is an ordered list. Do it in order: the install
-comes first and the rest rely on it. Each item has a short title ("Hold the Meta Pixel
+The "Your to-do list" section is one ordered list. Do it in order: the decisions about
+tools the scan does not know come first (their answers decide which changes apply, and
+what the config in the install snippet says), then the install, which the rest rely on. Each item has a short title ("Hold the Meta Pixel
 tag until consent"), a line on why, numbered plain steps, the markup to paste with a
 **Copy** button, the markup as it is now, the pages it appears on, and notes.
 
-The order is: install the consent tool; remove the existing consent tool, if the scan
+The order is: decide what each unrecognized tool is; install the consent tool; remove the existing consent tool, if the scan
 found one; fix any tool seen running where it should be off; hold tags in the page;
 remove pixels that load on their own; gate tags inside Google Tag Manager; platform
 settings; consent defaults; vendor calls, DNS and decisions that stay; then
@@ -132,15 +135,26 @@ Each item shows one of these statuses:
 | **Verified** | **Verify** ran and the check passed. See [step 7](#_7-verify-each-change) for exactly what that means. |
 | **Failed** | **Verify** ran and the change is missing or wrong. The message says what it found. |
 | **Can't verify automatically** | The check could not decide: the element is gone, the site served a bot challenge, or this kind of change has no automatic check. Never a pass. |
+| **To decide** / **Decided** | Decisions only: whether the site's workspace holds a purpose for that tool. Set by classifying it, never by a button. |
 
 **This also fixes.** An item can list others under "This also fixes". For example,
 holding a tag can also clear a "this tool ran after a refusal" finding for the same
 vendor, and installing the tool covers a vendor's consent call. Those are folded into
 the one change so you make it once; its Verify is its own check of that change.
 
-**Only if they apply.** Chat widgets, embeds, fonts and tools you have not classified
-sit in a folded list at the end. They are not counted in the progress. Each says when
-it applies.
+**Decisions.** A "Decide: what is …?" item has no Verify button: its button opens that
+tool's classify form in the report's grid. It shows **To decide** until you pick a main
+purpose (Necessary, Functional, Analytics, Performance or Advertisement; "Other" does not
+decide it), then **Decided** at once. It lists the changes it unblocks. Press **Update
+report with my classifications**: the changes that were waiting are recomputed, kept if the
+tool tracks visitors and dropped if it does not, and the decision stays on the list, done.
+On the site page the item links to it in the report.
+
+**Waiting on.** A change whose tools are all unclassified names the decision it waits on
+and hides its buttons until that decision is made. It still counts toward the total.
+
+**Only if they apply.** Chat widgets, embeds and fonts sit in a folded list at the end.
+They are not counted in the progress. Each says when it applies.
 
 ## 6. Download the install bundle and make the changes
 
@@ -202,14 +216,14 @@ verified; pressing the button again undoes it.
 
 ## 8. Follow your progress
 
-The checklist's header reads, for example, "3 of 9 verified", then "1 marked done,
-not verified yet" and "1 failed" when they apply. The bar counts verified required
-changes only. The site list on the **Sites** page shows the same counts per site, so
-you can see where each one stands without opening it. Items under "Only if they apply"
-are never counted.
+The to-do list's header reads, for example, "3 of 9 done", then "1 more marked done,
+not verified yet" and "1 failed" when they apply. "Done" counts verified changes and
+decisions made; a change you only marked done is counted apart until Verify passes. The
+site list on the **Sites** page shows the same counts per site, so you can see where each
+one stands without opening it. Items under "Only if they apply" are never counted.
 
-When every required item is verified or marked done, including the install, the last
-step opens up.
+When every required item is done or marked done, including the install, the last step
+opens up.
 
 ## 9. Rescan
 
