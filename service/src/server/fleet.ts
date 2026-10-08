@@ -42,6 +42,7 @@ interface Machine {
 
 const HEALTH_TIMEOUT_MS = 90_000;
 const HEALTH_POLL_MS = 1_000;
+const SETTLE_TIMEOUT_MS = 30_000;
 
 /** Fly macaroon tokens ("FlyV1 fm2_…", from `fly tokens create`) carry their own scheme; older API tokens take Bearer. */
 export function authHeader(token: string): string {
@@ -95,11 +96,24 @@ export function flyFleet(cfg: FlyFleetConfig): Fleet {
         config: { ...m.config, image: cfg.image, env: { ...m.config?.env, ...workerEnv } },
       });
       m = { ...m, ...(updated ?? {}), config: updated?.config ?? { ...m.config, image: cfg.image } };
+      // Fly leaves a stopped Machine stopped after an update, but its reply shows a
+      // transitional state. Wait for it to settle, then start it below.
+      m.state = await settle(m.id);
     }
-    if (m.state === 'stopped' || m.state === 'suspended') {
+    if (m.state !== 'started' && m.state !== 'starting') {
       await call('POST', `${base}/${m.id}/start`);
     }
     return m;
+  }
+
+  /** Polls a Machine until it is stopped, suspended or started (an update replaces it first). */
+  async function settle(id: string): Promise<string> {
+    const deadline = now() + SETTLE_TIMEOUT_MS;
+    for (;;) {
+      const state = (await call<Machine>('GET', `${base}/${id}`).catch(() => undefined))?.state ?? 'unknown';
+      if (state === 'stopped' || state === 'suspended' || state === 'started' || state === 'starting' || now() >= deadline) return state;
+      await sleep(HEALTH_POLL_MS);
+    }
   }
 
   async function acquireOnce(region: string): Promise<WorkerHandle> {

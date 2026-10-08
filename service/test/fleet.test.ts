@@ -11,6 +11,7 @@ function sim(initial: M[] = [], opts: { healthy?: boolean } = {}) {
   const calls: string[] = [];
   const bodies: any[] = [];
   let clock = 0;
+  const pending: Array<() => void> = [];
   let n = 0;
   const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status });
   const f = (async (url: any, init: any = {}) => {
@@ -31,9 +32,16 @@ function sim(initial: M[] = [], opts: { healthy?: boolean } = {}) {
       const [, id, action] = p.split('/');
       const m = machines.get(id);
       if (!m) return json({ error: 'nf' }, 404);
-      if (!action && method === 'GET') return json(m);
-      if (!action && method === 'POST') { m.config = body.config; return json(m); }
-      if (action === 'start') { m.state = 'started'; return json({}); }
+      if (!action && method === 'GET') { const r = json(m); pending.splice(0).forEach((fn) => fn()); return r; }
+      if (!action && method === 'POST') {
+        // Like Fly: the reply shows the replacement in flight; a stopped Machine stays stopped once it lands.
+        m.config = body.config;
+        const after = m.state === 'started' ? 'started' : 'stopped';
+        m.state = 'replacing';
+        pending.push(() => { m.state = after; });
+        return json(m);
+      }
+      if (action === 'start') { if (m.state !== 'stopped' && m.state !== 'suspended') return json({ error: `cannot start from ${m.state}` }, 412); m.state = 'started'; return json({}); }
       if (action === 'stop') { m.state = 'stopped'; return json({}); }
       if (action === 'wait') return json({ ok: true });
     }
@@ -84,6 +92,7 @@ describe('flyFleet', () => {
     expect(m.config.image).toBe('img:2');
     expect(m.config.env).toMatchObject({ KEEP: 'x', WORKER: '1', WORKER_SECRET: SECRET });
     expect(m.config.metadata.complykit_role).toBe('worker');
+    expect(m.state).toBe('started');
   });
 
   it('serializes concurrent acquires of one region: one create', async () => {
