@@ -44,6 +44,7 @@ export {
   type RegimeLocation,
 } from './regime.js';
 export { US_STATE_PRIVACY_ACTS, US_STATE_NAMES, usStateAct, type UsStatePrivacyAct } from './us-states.js';
+export { isWiretapJurisdiction, WIRETAP_STATES } from './wiretap.js';
 export { citationLabel } from './citation.js';
 export { describeLocationRules, type LocationRules, type LocationRuleLaw, type DescribeLocationOptions } from './describe.js';
 export {

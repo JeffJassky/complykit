@@ -1,5 +1,5 @@
 import type { ConsentReportModel, ScenarioId, BehaviorMatrix, BehaviorMatrixCell } from '../../types/index.js';
-import { DEFAULT_KB, lookupStore, regimeForCodes, describeLocationRules } from '../registry/index.js';
+import { DEFAULT_KB, lookupStore, regimeForCodes, describeLocationRules, isWiretapJurisdiction } from '../registry/index.js';
 import { escapeHtml as esc } from './human.js';
 import { workspaceId } from './workspace.js';
 import { compareCookieBehavior, cookiePurposes, type ComparisonFacts, type PrivacyRegime } from './cookie-purpose.js';
@@ -73,7 +73,7 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
     const limited = facts ? phases.reduce((n,phase)=>n+(facts.limitedRequestsByPhase[phase]??0),0) : 0;
     const captureGap=m.notTested.filter(g=>(!g.location||g.location===col.location)&&(!['flow','scenario'].includes(g.scope)||!scenarios.includes(g.id as ScenarioId)||g.id===col.scenario)).some(g=>['frame','page','flow','scenario'].includes(g.scope)&&!['server-to-server','vendor-processing','contracts','consent-records','unvisited'].includes(g.id)&&!NOT_A_CAPTURE_GAP.test(g.reason));
     const rg = regimes.get(col.location) ?? { regime: 'unknown' as const, label: 'this location' };
-    const comparisonFacts: ComparisonFacts = {scenario:col.scenario,regime:rg.regime,regimeLabel:rg.label,unavailable,hasActivity,limitedOnly:row.kind==='tool'&&requests>0&&limited===requests&&!facts?.stores.some(isActiveStore),captureGap};
+    const comparisonFacts: ComparisonFacts = {scenario:col.scenario,regime:rg.regime,regimeLabel:rg.label,wiretap:isWiretapJurisdiction(m.locations.find(l=>l.id===col.location)?.jurisdictions??[]),unavailable,hasActivity,limitedOnly:row.kind==='tool'&&requests>0&&limited===requests&&!facts?.stores.some(isActiveStore),captureGap};
     return {columnId:col.id,...compareCookieBehavior(comparisonFacts,{categories:row.categories}),observed:actual,comparisonFacts,evidencePointers:[`/inventory/${i}`, ...(observed?['/behaviorObservations/'+m.behaviorObservations!.indexOf(observed)]:[])]} satisfies BehaviorMatrixCell;
     };
     const built=visits.length?visits.map(build):[build(undefined)];

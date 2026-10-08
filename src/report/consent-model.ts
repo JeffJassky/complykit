@@ -4,7 +4,7 @@ import { consentResearch, type ResearchWorkflow } from './research.js';
 import { buildCompatibilityReport, type CompatibilityReport } from './consent-compatibility.js';
 import { buildConsentToolProofReport, type ConsentToolProofReport } from './consent-tool-proof.js';
 import type { Finding, TrackingEvaluation, ScenarioId, Evidence } from '../record/index.js';
-import { getRequirement, describeLocationRules, citationLabel, type LocationRules } from '../registry/index.js';
+import { getRequirement, WIRETAP_STATES, describeLocationRules, citationLabel, type LocationRules } from '../registry/index.js';
 
 // The citation label lives in the registry (citation.ts) so the location popover
 // prints the same string; re-exported here for the report's existing callers.
@@ -135,7 +135,7 @@ export function findingKind(f: Finding): FindingKind {
 
 const emptyCounts = (): Record<FindingKind, number> => ({ violation: 0, 'needs-review': 0, exposure: 0, practice: 0 });
 
-const PLAINTIFF_STATES = new Set(['us-ca', 'us-fl', 'us-pa']);
+const PLAINTIFF_STATES = WIRETAP_STATES;
 
 const CHOICE_NAME: Record<string, string> = { reject: 'rejecting', accept: 'accepting', partial: 'accepting analytics only', withdraw: 'withdrawing consent', dismiss: 'closing the banner', 'opt-out-link': 'the opt-out link' };
 

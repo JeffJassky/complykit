@@ -8,6 +8,10 @@ import { escapeHtml as esc } from './human.js';
 export interface ScanScope {
   /** Cookie/tool checks whose result is "working as expected". */
   working: number;
+  /** Behavior-matrix cells that found a tool active where the location's rules expect it off. */
+  mismatches: number;
+  /** Wiretap-litigation exposures found (`totals.exposure`). */
+  exposures: number;
   /** Pages the journey visited (most any one visit reached); undefined when not recorded. */
   pages?: number;
   locations: number;
@@ -17,18 +21,23 @@ export interface ScanScope {
 
 export function scanScope(m: ConsentReportModel): ScanScope {
   const working = (m.behaviorMatrix?.rows ?? []).flatMap((r) => r.cells).filter((c) => c.status === 'match' || c.status === 'allowed').length;
+  const mismatches = (m.behaviorMatrix?.rows ?? []).flatMap((r) => r.cells).filter((c) => c.status === 'mismatch').length;
   const pageCounts = (m.behaviorObservations ?? []).map((o) => o.pages).filter((n): n is number => typeof n === 'number');
   const tested = m.locations.filter((l) => l.verdict === 'verified' && m.scenarios.some((s) => m.grid[l.id]?.[s]?.status === 'tested'));
   const runCounts = tested.flatMap((l) => m.scenarios.map((s) => m.grid[l.id]?.[s]).filter((c) => c?.status === 'tested').map((c) => c?.runs ?? 1));
-  return { working, pages: pageCounts.length ? Math.max(...pageCounts) : undefined, locations: tested.length, runs: runCounts.length ? Math.min(...runCounts) : 1 };
+  return { working, mismatches, exposures: m.totals?.exposure ?? 0, pages: pageCounts.length ? Math.max(...pageCounts) : undefined, locations: tested.length, runs: runCounts.length ? Math.min(...runCounts) : 1 };
 }
 
-/** "324 checks working as expected on 14 pages, 1 location, logged out, 1 run each" */
+/**
+ * "324 checks working as expected on 14 pages, 1 location, logged out, 1 run each" — and when
+ * something is wrong, that leads: "2 behavior mismatches and 3 litigation exposures — 324 checks …".
+ */
 export function scopeLine(m: ConsentReportModel): string {
   const s = scanScope(m);
   const n = (k: number, one: string) => `${k} ${one}${k === 1 ? '' : 's'}`;
   const pages = s.pages === undefined ? 'an unrecorded number of pages' : n(s.pages, 'page');
-  return `${n(s.working, 'check')} working as expected on ${pages}, ${n(s.locations, 'location')}, logged out, ${n(s.runs, 'run')} each`;
+  const problems = [s.mismatches && `${s.mismatches} behavior mismatch${s.mismatches === 1 ? '' : 'es'}`, s.exposures && n(s.exposures, 'litigation exposure')].filter(Boolean).join(' and ');
+  return `${problems ? `${problems} — ` : ''}${n(s.working, 'check')} working as expected on ${pages}, ${n(s.locations, 'location')}, logged out, ${n(s.runs, 'run')} each`;
 }
 
 export const BLIND_SPOTS: Array<{ label: string; text: string }> = [
