@@ -1,0 +1,2442 @@
+{
+  "version": 1,
+  "asOf": "2026-10-08",
+  "posture": {
+    "title": "How complykit decides what to expect",
+    "principles": [
+      "Two tests, and a site must pass both. First, the letter of the law where the visitor is. Second, how the law is actually enforced and litigated there — including lawsuits under laws that were not written for websites. Meeting the statute while staying exposed to a well-known lawsuit pattern is not treated as compliant.",
+      "Where the two tests disagree, the stricter one sets the expectation. California’s privacy act is opt-out, but wiretap suits there target trackers that fire before the visitor agrees, so complykit expects those trackers off until the visitor accepts.",
+      "Nothing is given up without a reason. A tool is expected off only where a law or a documented lawsuit pattern says so; everywhere else it may run, and the report says so.",
+      "A location is what the scan measured, never what a site claims. Each law is tested from a browser whose exit address was verified to be in that place; an unverified location is compared against nothing.",
+      "Absence is not a pass. A visit that could not run, or a capture that might have missed something, is reported as not checked, never as fine.",
+      "Places complykit has not researched fail closed: its consent tool treats those visitors as opt-in, the strictest model, and the scanner draws no legal conclusion there.",
+      "This guide is the policy the scanner runs. Every rule here is the same data the scanner uses, so the guide and the reports cannot disagree."
+    ]
+  },
+  "models": [
+    {
+      "id": "opt-in",
+      "label": "Opt-in",
+      "summary": "Nothing non-essential may run until the visitor says yes. A banner is required, rejecting must be as easy as accepting, and consent must be provable and as easy to withdraw as to give.",
+      "mustHave": [
+        "No analytics, advertising or social scripts, cookies or storage before a choice — only what is strictly necessary for a service the visitor asked for.",
+        "A banner where rejecting is as easy as accepting: regulators expect the reject option on the first screen, as prominent as accept, with no pre-ticked boxes.",
+        "Proof of consent, and a way to withdraw it that is as easy as giving it. Withdrawal means the tools stop and what they stored is removed."
+      ]
+    },
+    {
+      "id": "opt-out-signal",
+      "label": "Opt-out, privacy signal honored",
+      "summary": "Tracking may run by default, but the visitor can opt out of the sale or sharing of their data and of targeted advertising, and the browser’s Global Privacy Control (GPC) signal must be treated as that opt-out without the visitor doing anything.",
+      "mustHave": [
+        "Tracking may run by default; the visitor can opt out of sale, sharing and targeted advertising.",
+        "The browser’s opt-out signal (GPC) is honored as an opt-out on the first page, with no popup.",
+        "A clear and conspicuous way to opt out, reachable from every page, that works without an account or extra information. California prescribes the wording (see CCPA).",
+        "Disclosure of the processing and the opt-out right in the privacy policy (not checked by a scan)."
+      ]
+    },
+    {
+      "id": "opt-out",
+      "label": "Opt-out",
+      "summary": "Tracking may run by default and the visitor can opt out of targeted advertising and the sale of their data. The state’s law does not require honoring the browser’s opt-out signal.",
+      "mustHave": [
+        "Tracking may run by default; the visitor can opt out of targeted advertising and sale.",
+        "A clear and conspicuous way to opt out, reachable from the site, that works without an account or extra information.",
+        "No legal duty to honor GPC here — complykit’s consent tool honors it anyway, because traffic thresholds make several states’ duties apply to most busy sites.",
+        "Disclosure of the processing and the opt-out right in the privacy policy (not checked by a scan)."
+      ]
+    },
+    {
+      "id": "opt-out-no-act",
+      "label": "No state privacy law",
+      "summary": "The state has no comprehensive privacy law in force. Federal rules (COPPA, the FTC Act) and the state’s wiretap statute may still apply; the scan compares tools with the baseline US opt-out model.",
+      "mustHave": [
+        "No state-specific consent or opt-out duty is asserted.",
+        "complykit still checks that a rejection, an opt-out or the privacy signal is respected when a site offers one: a choice that leaks is evidence in wiretap suits everywhere."
+      ]
+    },
+    {
+      "id": "unresearched",
+      "label": "Not researched",
+      "summary": "complykit has not researched the law here. The scanner shows what it observed and draws no legal conclusion; complykit’s consent tool treats these visitors as opt-in, the strictest model.",
+      "mustHave": [
+        "Nothing is compared against a legal model. Treat visitors from here as opt-in until the law is researched."
+      ]
+    }
+  ],
+  "wiretap": {
+    "summary": "In these states, all-party-consent wiretap laws are used to sue websites whose trackers send what a visitor does to a third party before the visitor agrees. The privacy statute may be opt-out, but prior consent is the defence in court — so complykit expects the targeted tools off until the visitor accepts.",
+    "holds": "Advertising pixels, session recording, chat and identity-resolution tools stay off until the visitor accepts. Courts accept only consent given before the tracking starts; a footer policy link or “by using this site you agree” is not consent, and an opt-out banner never provides it.",
+    "states": [
+      "us-ca",
+      "us-fl",
+      "us-il",
+      "us-md",
+      "us-pa"
+    ]
+  },
+  "scenarios": [
+    {
+      "id": "do-nothing",
+      "label": "Before a choice",
+      "what": "Loads the home page in a fresh browser and waits, never touching the banner.",
+      "why": "What runs before the visitor has decided anything — the core question in opt-in places and in wiretap suits."
+    },
+    {
+      "id": "browse",
+      "label": "Browse without choosing",
+      "what": "Visits several pages and searches the site, ignoring the banner.",
+      "why": "Some tools wait for a second page, a scroll or a search before they fire; a single landing misses them."
+    },
+    {
+      "id": "dismiss",
+      "label": "Banner closed without choosing",
+      "what": "Closes the banner with its X or by clicking away, then browses.",
+      "why": "Closing a banner is not consent. Tools that treat it as a yes are a common finding in the EU and UK."
+    },
+    {
+      "id": "reject",
+      "label": "After rejection",
+      "what": "Rejects everything on the banner, reloads, and browses.",
+      "why": "A rejection must stop the tools. A rejection that leaks is a violation in opt-in places and evidence in wiretap suits everywhere."
+    },
+    {
+      "id": "accept",
+      "label": "After acceptance",
+      "what": "Accepts everything on the banner and browses.",
+      "why": "Shows which tools the banner was holding back, so they are known and listed even where they correctly waited."
+    },
+    {
+      "id": "partial",
+      "label": "After accepting analytics only",
+      "what": "Turns on analytics alone in the banner’s settings and browses.",
+      "why": "Consent must be specific: accepting analytics must not switch on advertising."
+    },
+    {
+      "id": "withdraw",
+      "label": "After withdrawal",
+      "what": "Accepts, browses, reopens the site’s privacy settings and rejects everything, then reloads and browses.",
+      "why": "Withdrawing must be as easy as consenting, and must actually stop the tools and remove what they stored."
+    },
+    {
+      "id": "gpc",
+      "label": "Privacy signal (GPC)",
+      "what": "Visits with the browser sending Global Privacy Control from the first request, never touching the banner.",
+      "why": "Several US states require honoring the signal as an opt-out with no click. California fined companies that ignored it."
+    },
+    {
+      "id": "opt-out-all",
+      "label": "After opting out every way",
+      "what": "Sends GPC, rejects on the banner and uses the site’s opt-out link, then counts what still runs.",
+      "why": "The way California investigators test: opt out every way at once, then look for anything still sending data."
+    },
+    {
+      "id": "opt-out-link",
+      "label": "After the opt-out link",
+      "what": "Finds the “Do Not Sell or Share” link, uses it as a visitor would, and browses. Never submits personal information.",
+      "why": "The link must exist where the law says, and must work without an account or extra information."
+    },
+    {
+      "id": "return-visit",
+      "label": "Returning after rejection",
+      "what": "Rejects, then comes back later in the same browser.",
+      "why": "A refusal must be remembered: tools must not run on the next visit, and the visitor should not be pestered again at once."
+    },
+    {
+      "id": "markers",
+      "label": "Sample information test",
+      "what": "Arrives with made-up ad-click IDs in the address and types a made-up email and search into the page, without submitting.",
+      "why": "Shows whether what a visitor types or arrives with reaches a third party — the “contents” wiretap suits are built on."
+    }
+  ],
+  "laws": [
+    {
+      "id": "eprivacy",
+      "name": "ePrivacy Directive (2002/58/EC, as amended by 2009/136/EC)",
+      "shortName": "ePrivacy Directive",
+      "summary": "The EU’s cookie law. Storing anything on a visitor’s device, or reading anything from it, needs prior consent unless strictly necessary for a service the visitor asked for. Regulators read “anything” broadly: pixels, link tracking, local storage and IP-based tracking all count.",
+      "kind": "obligation",
+      "scope": "EU & EEA",
+      "requirements": [
+        {
+          "id": "eprivacy.art5.3",
+          "title": "Consent before storing or reading information on the device",
+          "citation": "ePrivacy Directive Art. 5(3)",
+          "text": "Member States shall ensure that the storing of information, or the gaining of access to information already stored, in the terminal equipment of a subscriber or user is only allowed on condition that the subscriber or user concerned has given his or her consent, having been provided with clear and comprehensive information … This shall not prevent any technical storage or access … as strictly necessary in order for the provider of an information society service explicitly requested by the subscriber or user to provide the service.",
+          "kind": "obligation",
+          "since": "2011-05-25",
+          "urls": [
+            "https://eur-lex.europa.eu/eli/dir/2002/58/oj",
+            "https://www.edpb.europa.eu/system/files/documents/2024-10/edpb_guidelines_202302_technical_scope_art_53_eprivacydirective_v2_en_0.pdf"
+          ],
+          "authority": [
+            {
+              "ref": "edpb-02-2023",
+              "note": "technical scope: tracking pixels, URL/link tracking, local storage, IP-only tracking and hashed identifiers are all \"gaining access\""
+            },
+            {
+              "ref": "edpb-cookie-banner-taskforce-2023",
+              "note": "no reject on first layer, pre-ticked boxes, deceptive design"
+            }
+          ],
+          "volatile": false
+        }
+      ],
+      "placeCodes": [
+        "eu"
+      ],
+      "notes": []
+    },
+    {
+      "id": "gdpr",
+      "name": "General Data Protection Regulation (EU 2016/679)",
+      "shortName": "GDPR",
+      "summary": "EU data protection law. Where consent is the basis, it must be freely given, specific, informed and unambiguous, provable, and as easy to withdraw as to give; the privacy notice must name who receives the data.",
+      "kind": "obligation",
+      "scope": "EU & EEA",
+      "requirements": [
+        {
+          "id": "gdpr.art7.3",
+          "title": "Withdrawal of consent",
+          "citation": "GDPR Art. 7(3)",
+          "text": "The data subject shall have the right to withdraw consent at any time. It shall be as easy to withdraw as to give consent.",
+          "kind": "obligation",
+          "since": "2018-05-25",
+          "urls": [
+            "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+          ],
+          "authority": [
+            {
+              "ref": "edpb-03-2022",
+              "note": "click-asymmetry treated as a dark pattern"
+            }
+          ],
+          "volatile": false
+        },
+        {
+          "id": "gdpr.art13.recipients",
+          "title": "Name the recipients of personal data",
+          "citation": "GDPR Art. 13(1)(e)",
+          "text": "The controller shall … provide the data subject with … the recipients or categories of recipients of the personal data, if any.",
+          "kind": "obligation",
+          "since": "2018-05-25",
+          "urls": [
+            "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+          ],
+          "authority": [],
+          "volatile": false
+        },
+        {
+          "id": "gdpr.art4.11",
+          "title": "Valid consent: freely given, specific, informed, unambiguous",
+          "citation": "GDPR Art. 4(11)",
+          "text": "‘consent’ of the data subject means any freely given, specific, informed and unambiguous indication of the data subject’s wishes by which he or she, by a statement or by a clear affirmative action, signifies agreement to the processing of personal data relating to him or her. (Recital 32: silence, pre-ticked boxes or inactivity should not therefore constitute consent.) Applies to cookie consent through ePrivacy Art 2(f).",
+          "kind": "obligation",
+          "since": "2018-05-25",
+          "urls": [
+            "https://eur-lex.europa.eu/eli/reg/2016/679/oj",
+            "https://www.edpb.europa.eu/system/files/documents/2023-01/edpb_20230118_report_cookie_banner_taskforce_en.pdf"
+          ],
+          "authority": [
+            {
+              "ref": "cjeu-planet49-c-673-17",
+              "note": "a pre-ticked checkbox is not valid consent to cookies"
+            },
+            {
+              "ref": "edpb-05-2020",
+              "note": "consent guidelines: cookie walls are not freely given consent (¶¶39–41)"
+            },
+            {
+              "ref": "edpb-03-2022",
+              "note": "deceptive design patterns: a visually dominant accept steers the choice"
+            },
+            {
+              "ref": "edpb-cookie-banner-taskforce-2023",
+              "note": "no reject on the first layer, deceptive button colors/contrast, pre-ticked boxes, legitimate interest for trackers"
+            },
+            {
+              "ref": "cnil-cookies-2020",
+              "note": "refusing must be as easy as accepting; one-click reject where there is one-click accept"
+            }
+          ],
+          "volatile": false
+        }
+      ],
+      "placeCodes": [
+        "eu"
+      ],
+      "notes": []
+    },
+    {
+      "id": "pecr",
+      "name": "Privacy and Electronic Communications Regulations 2003 (as amended by the Data (Use and Access) Act 2025)",
+      "shortName": "PECR",
+      "summary": "The UK’s cookie law, rewritten by the Data (Use and Access) Act 2025. Storage and access need prior consent, with narrow exceptions: strictly necessary, appearance and functionality, and first-party statistics with a simple, free way to object.",
+      "kind": "obligation",
+      "scope": "United Kingdom",
+      "requirements": [
+        {
+          "id": "pecr.reg6",
+          "title": "Consent before storage or access (UK)",
+          "citation": "Privacy and Electronic Communications (EC Directive) Regulations 2003 reg. 6",
+          "text": "A person must not store information, or gain access to information stored, in the terminal equipment of a subscriber or user, or instigate another person to do so, unless the subscriber or user is provided with clear and comprehensive information about the purposes and has given consent — subject to the Schedule A1 exceptions (strictly necessary; statistical purposes with a simple, free means of objecting; appearance/functionality).",
+          "kind": "obligation",
+          "since": "2003-12-11",
+          "urls": [
+            "https://www.legislation.gov.uk/uksi/2003/2426/regulation/6",
+            "https://www.legislation.gov.uk/uksi/2003/2426/schedule/A1",
+            "https://ico.org.uk/for-organisations/direct-marketing-and-privacy-and-electronic-communications/guidance-on-the-use-of-storage-and-access-technologies/what-are-the-exceptions/"
+          ],
+          "authority": [
+            {
+              "ref": "duaa-2025",
+              "note": "Data (Use and Access) Act 2025 rewrite; commenced 2026-02-05 (S.I. 2026/82); fines up to £17.5M or 4%"
+            },
+            {
+              "ref": "ico-storage-access-guidance-2026",
+              "note": "advertising is never exempt; the statistical exception needs a processor and excludes session recording"
+            }
+          ],
+          "volatile": false
+        }
+      ],
+      "placeCodes": [
+        "uk"
+      ],
+      "notes": []
+    },
+    {
+      "id": "uk-gdpr",
+      "name": "UK General Data Protection Regulation",
+      "shortName": "UK GDPR",
+      "summary": "UK data protection law, retained from the GDPR: the same consent standard, including withdrawal as easy as giving consent.",
+      "kind": "obligation",
+      "scope": "United Kingdom",
+      "requirements": [
+        {
+          "id": "uk-gdpr.art7.3",
+          "title": "Withdrawal of consent (UK)",
+          "citation": "UK GDPR Art. 7(3)",
+          "text": "The data subject shall have the right to withdraw his or her consent at any time … It shall be as easy to withdraw as to give consent.",
+          "kind": "obligation",
+          "since": "2021-01-01",
+          "urls": [
+            "https://www.legislation.gov.uk/eur/2016/679/article/7"
+          ],
+          "authority": [
+            {
+              "ref": "ico-storage-access-guidance-2026",
+              "note": "withdrawal means stop, tell third parties, treat as erasure"
+            }
+          ],
+          "volatile": false
+        },
+        {
+          "id": "uk-gdpr.art4.11",
+          "title": "Valid consent (UK): freely given, specific, informed, unambiguous",
+          "citation": "UK GDPR Art. 4(11)",
+          "text": "‘consent’ of the data subject means any freely given, specific, informed and unambiguous indication of the data subject’s wishes by which he or she, by a statement or by a clear affirmative action, signifies agreement to the processing of personal data relating to him or her. PECR reg 6 consent takes this meaning.",
+          "kind": "obligation",
+          "since": "2021-01-01",
+          "urls": [
+            "https://www.legislation.gov.uk/eur/2016/679/article/4",
+            "https://ico.org.uk/for-organisations/direct-marketing-and-privacy-and-electronic-communications/guidance-on-the-use-of-storage-and-access-technologies/how-do-we-manage-consent-in-practice/"
+          ],
+          "authority": [
+            {
+              "ref": "ico-storage-access-guidance-2026",
+              "note": "accept-all and reject-all equally prominent; non-exempt toggles off by default; no cookie walls for general access"
+            }
+          ],
+          "volatile": false
+        }
+      ],
+      "placeCodes": [
+        "uk"
+      ],
+      "notes": []
+    },
+    {
+      "id": "ccpa",
+      "name": "California Consumer Privacy Act (Civ. Code §1798.100 et seq.) and regulations (11 CCR §7000 et seq.)",
+      "shortName": "CCPA / CPRA",
+      "summary": "California’s privacy act and its regulations. Opt-out, not opt-in: a business that sells or shares data must offer a prescribed opt-out link, honor the browser’s GPC signal as an opt-out, and since 2026 show the visitor that the signal was honored.",
+      "kind": "obligation",
+      "scope": "California",
+      "requirements": [
+        {
+          "id": "ccpa.regs.7025",
+          "title": "Honor opt-out preference signals (Global Privacy Control)",
+          "citation": "11 CCR §7025(b)–(c)",
+          "text": "A business that sells or shares personal information shall process an opt-out preference signal as a valid request to opt out of sale/sharing for that browser or device and any consumer profile associated with it, without requiring more information, and shall not respond to the signal with a popup or interstitial. Paraphrase — see 11 CCR §7025 and Civ. Code §1798.135.",
+          "kind": "obligation",
+          "since": "2023-03-29",
+          "urls": [
+            "https://cppa.ca.gov/regulations/pdf/ccpa_updates_cyber_risk_admt_appr_text.pdf",
+            "https://cppa.ca.gov/regulations/pdf/ccpa_statute_eff_20260101.pdf"
+          ],
+          "authority": [
+            {
+              "ref": "ca-ag-sephora-2022",
+              "note": "GPC \"completely ignored\"; investigators compared GPC on vs off"
+            },
+            {
+              "ref": "cppa-tractor-supply-2025",
+              "note": "GPC ignored; remedy: quarterly scans and a tracker inventory"
+            },
+            {
+              "ref": "ca-ag-healthline-2025",
+              "note": "opted out three ways at once, then counted remaining trackers"
+            }
+          ],
+          "volatile": false
+        },
+        {
+          "id": "ccpa.regs.7025c6",
+          "title": "Display that the opt-out signal was processed",
+          "citation": "11 CCR §7025(c)(6)",
+          "text": "The business must display whether or not it has processed the consumer’s opt-out preference signal — the regulation’s example is “Opt-Out Request Honored” — and §7026(g) requires a way to confirm an opt-out was processed. Paraphrase; mandatory from 2026-01-01.",
+          "kind": "obligation",
+          "since": "2026-01-01",
+          "urls": [
+            "https://cppa.ca.gov/regulations/pdf/ccpa_updates_cyber_risk_admt_appr_text.pdf"
+          ],
+          "authority": [],
+          "volatile": false
+        },
+        {
+          "id": "ccpa.opt-out-link",
+          "title": "Opt-out link, icon, and methods",
+          "citation": "11 CCR §7013, 7015, 7026",
+          "text": "A business that sells or shares personal information must offer a “Do Not Sell or Share My Personal Information” link in the header or footer, or a single “Your Privacy Choices” link accompanied by the opt-out icon (§7015(b)); offer at least two opt-out methods, one being the opt-out preference signal (§7026(a)(1)); a cookie banner is not by itself an acceptable method (§7026(a)(4)); and must not add friction such as requiring unnecessary information (§7026(c)). Paraphrase.",
+          "kind": "obligation",
+          "since": "2023-03-29",
+          "urls": [
+            "https://cppa.ca.gov/regulations/pdf/ccpa_updates_cyber_risk_admt_appr_text.pdf"
+          ],
+          "authority": [
+            {
+              "ref": "cppa-ford-2026",
+              "note": "email verification before processing opt-outs was unlawful friction"
+            },
+            {
+              "ref": "cppa-playon-2026",
+              "note": "opt-out by phone/email only; no GPC"
+            }
+          ],
+          "volatile": false
+        },
+        {
+          "id": "ccpa.regs.7004",
+          "title": "Symmetry in choice (no dark patterns)",
+          "citation": "11 CCR §7004(a)(2)",
+          "text": "Methods for submitting CCPA requests and obtaining consent must offer symmetry in choice: the path to a more privacy-protective option must not be longer or more difficult than the less protective one. Since 2026-01-01, a choice that makes the “yes” button more prominent (larger, brighter) than the “no” button is not symmetrical ((a)(2)(D)); “Accept All” with only “More Information” is not symmetrical ((a)(2)(C)). An agreement obtained through dark patterns is not consent (§7004(c)). Paraphrase — see 11 CCR §7004.",
+          "kind": "obligation",
+          "since": "2023-03-29",
+          "urls": [
+            "https://cppa.ca.gov/regulations/pdf/ccpa_updates_cyber_risk_admt_appr_text.pdf"
+          ],
+          "authority": [
+            {
+              "ref": "ct-ag-cure-notices-2025",
+              "note": "Reject All shown with Accept, same color, font and size"
+            },
+            {
+              "ref": "cppa-honda-2025",
+              "note": "asymmetric cookie banner as a dark pattern"
+            }
+          ],
+          "volatile": false
+        }
+      ],
+      "placeCodes": [
+        "us-ca"
+      ],
+      "notes": []
+    },
+    {
+      "id": "us-state-privacy",
+      "name": "US state comprehensive privacy laws (opt-out rights, universal opt-out mechanisms)",
+      "shortName": "State privacy acts",
+      "summary": "The comprehensive privacy acts of the other US states. All opt-out: the visitor can opt out of targeted advertising and sale, the site must say how, and in some states the browser’s GPC signal must be honored as that opt-out.",
+      "kind": "obligation",
+      "scope": "US states with a comprehensive privacy act",
+      "requirements": [
+        {
+          "id": "us-states.opt-out-signal",
+          "title": "Honor universal opt-out signals (state laws)",
+          "citation": "State comprehensive privacy acts universal opt-out mechanism provisions (e.g. Colo. Rev. Stat. §6-1-1306(1)(a)(IV))",
+          "text": "Controllers covered by these state laws must treat a recognized universal opt-out mechanism (GPC) as an opt-out of targeted advertising and sale. Dates per the CPPA’s 2026-08-06 list; thresholds differ by state and are not observable from a browser. Paraphrase — see research-consent-law.md §1.4.",
+          "kind": "obligation",
+          "since": "2024-07-01",
+          "urls": [
+            "https://cppa.ca.gov/meetings/materials/20260806_07_02.pdf"
+          ],
+          "authority": [],
+          "volatile": true
+        },
+        {
+          "id": "us-states.opt-out-method",
+          "title": "Offer a clear and conspicuous way to opt out of targeted advertising and sale (state laws)",
+          "citation": "State comprehensive privacy acts right to opt out of targeted advertising and sale, and the clear and conspicuous disclosure of how (e.g. Va. Code §59.1-578(D))",
+          "text": "The state comprehensive privacy acts give consumers the right to opt out of the processing of their personal data for targeted advertising and of its sale (Iowa lists only the sale opt-out as a right, but still requires disclosing how to opt out of targeted advertising). A controller that does either must clearly and conspicuously disclose that processing and the manner in which a consumer may exercise the right to opt out; several acts (e.g. Connecticut, Texas) require a clear and conspicuous link on the website for that purpose. The wording of the link is not prescribed outside California. Thresholds for coverage differ by state and are not observable from a browser. Paraphrase — see research-consent-law.md §1.4 and plans/location-rules-citations.md.",
+          "kind": "obligation",
+          "since": "2023-01-01",
+          "urls": [
+            "https://law.lis.virginia.gov/vacode/title59.1/chapter53/"
+          ],
+          "authority": [],
+          "volatile": true
+        }
+      ],
+      "placeCodes": [
+        "us-co",
+        "us-ct",
+        "us-de",
+        "us-in",
+        "us-ia",
+        "us-ky",
+        "us-md",
+        "us-mn",
+        "us-mt",
+        "us-ne",
+        "us-nh",
+        "us-nj",
+        "us-or",
+        "us-ri",
+        "us-tn",
+        "us-tx",
+        "us-ut",
+        "us-va"
+      ],
+      "notes": [
+        {
+          "kind": "posture",
+          "title": "Thresholds are assumed met",
+          "text": "Each act applies only above a traffic or revenue threshold (often 35,000–100,000 residents a year), which no browser can observe. Every tracked visitor counts toward it, so busy sites cross thresholds in several states. complykit applies every act as if it covers the site, and its consent tool honors GPC for all US traffic.",
+          "sources": [
+            {
+              "label": "Research §1.4",
+              "href": "plans/research-consent-law.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cipa",
+      "name": "California Invasion of Privacy Act (Penal Code §630 et seq.) — litigation exposure",
+      "shortName": "CIPA",
+      "summary": "California’s Invasion of Privacy Act, a 1967 wiretap law now the main engine of website tracking suits. Plaintiffs claim a site helps a vendor read visitors’ communications without everyone’s prior consent. $5,000 per violation, no harm required.",
+      "kind": "exposure",
+      "risk": "high",
+      "scope": "California",
+      "requirements": [
+        {
+          "id": "cipa.631",
+          "title": "Wiretap theory: contents to a third party without prior consent (CA)",
+          "citation": "Cal. Penal Code §631(a)",
+          "text": "Plaintiffs allege a site aids a vendor in learning the contents of a communication (descriptive URLs, searches, form input, chat, session replay) in transit without the consent of all parties. Consent must come before the transmission. $5,000 per violation (§637.2). Exposure, not an obligation — see research-consent-law.md §2.1–2.2.",
+          "kind": "exposure",
+          "since": "1967-01-01",
+          "urls": [
+            "https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?lawCode=PEN&sectionNum=631"
+          ],
+          "authority": [
+            {
+              "ref": "javier-v-assurance-2022",
+              "note": "retroactive consent does not cure"
+            },
+            {
+              "ref": "mikulsky-2025",
+              "note": "session replay capturing form contents stated a claim"
+            }
+          ],
+          "volatile": false
+        },
+        {
+          "id": "cipa.638.51",
+          "title": "Pen-register theory: addressing data to a tracker (CA)",
+          "citation": "Cal. Penal Code §638.51",
+          "text": "Plaintiffs allege a third-party tracker that records dialing, routing, addressing or signaling information (IP, device identifiers, page addresses) is an unauthorized pen register / trap-and-trace device. Exposure — volatile: SB 690 (pending Governor action as of 2026-09-30) would end private website suits from 2027-01-01, and Variety Media (Cal. Ct. App., tentative) holds IP-only complaints fail.",
+          "kind": "exposure",
+          "since": "2015-01-01",
+          "urls": [
+            "https://leginfo.legislature.ca.gov/faces/billHistoryClient.xhtml?bill_id=202520260SB690"
+          ],
+          "authority": [],
+          "volatile": true
+        }
+      ],
+      "placeCodes": [
+        "us-ca"
+      ],
+      "notes": [
+        {
+          "kind": "litigation",
+          "title": "Only prior consent counts",
+          "text": "Consent obtained after tracking starts does not cure it (Javier v. Assurance IQ, 9th Cir. 2022). A footer policy link is not consent where tracking starts first, an opt-out banner never provides prior consent, and a rejection that still leaks is evidence for the plaintiff — one court treated a shopper’s activity after she rejected cookies as confidential.",
+          "sources": [
+            {
+              "label": "Research §2.1–2.2",
+              "href": "plans/research-consent-law.md"
+            }
+          ]
+        },
+        {
+          "kind": "litigation",
+          "title": "Out-of-state sites can be sued in California",
+          "text": "Knowingly tracking devices located in California is enough for California courts to hear the case (Briskin v. Shopify, 9th Cir. en banc 2025). Where the business is based does not matter.",
+          "sources": [
+            {
+              "label": "Research §2.4",
+              "href": "plans/research-consent-law.md"
+            }
+          ]
+        },
+        {
+          "kind": "pending",
+          "title": "SB 690 would end private pen-register suits, not wiretap suits",
+          "text": "SB 690 passed the Legislature on 2026-08-28 and went to the Governor (deadline 2026-09-30). If it is law, only the Attorney General can bring §638.51 pen-register claims about websites from 2027-01-01. It leaves §631, §632, §632.7 and every other state untouched, so it does not change complykit’s posture.",
+          "sources": [
+            {
+              "label": "SB 690 bill history",
+              "href": "https://leginfo.legislature.ca.gov/faces/billHistoryClient.xhtml?bill_id=202520260SB690"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fsca",
+      "name": "Florida Security of Communications Act (Fla. Stat. ch. 934) — litigation exposure",
+      "shortName": "Florida FSCA",
+      "summary": "Florida’s Security of Communications Act requires every party’s prior consent to intercept a communication. The greater of $1,000 or $100 a day, plus punitive damages and fees.",
+      "kind": "exposure",
+      "risk": "high",
+      "scope": "Florida",
+      "requirements": [
+        {
+          "id": "fsca.934.03",
+          "title": "Wiretap theory: interception without all-party consent (FL)",
+          "citation": "Fla. Stat. §934.03",
+          "text": "Florida’s Security of Communications Act requires all-party prior consent to intercept the contents of a communication; §934.10 gives the greater of $1,000 or $100/day, punitive damages and fees, 2-year limitation. Chat and session-replay suits are rising, including in small claims. Exposure — see research-consent-law.md §2.5.",
+          "kind": "exposure",
+          "since": "1969-01-01",
+          "urls": [
+            "http://www.leg.state.fl.us/statutes/index.cfm?App_mode=Display_Statute&URL=0900-0999/0934/Sections/0934.03.html"
+          ],
+          "authority": [],
+          "volatile": false
+        }
+      ],
+      "placeCodes": [
+        "us-fl"
+      ],
+      "notes": [
+        {
+          "kind": "litigation",
+          "title": "High and rising: small-claims chat suits",
+          "text": "After a 2021 wave failed, suits revived in 2025 (W.W. v. Orlando Health). Hundreds of small-claims suits over chat widgets are filed under the $8,000 limit, with pretrial hearings within one to two weeks of service.",
+          "sources": [
+            {
+              "label": "Research §2.5",
+              "href": "plans/research-consent-law.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wesca",
+      "name": "Pennsylvania Wiretapping and Electronic Surveillance Control Act — litigation exposure",
+      "shortName": "Pennsylvania WESCA",
+      "summary": "Pennsylvania’s wiretap act. Courts treat the interception as happening in the visitor’s browser in Pennsylvania (Popa v. Harriet Carter, 3d Cir. 2022), so out-of-state sites are reachable.",
+      "kind": "exposure",
+      "risk": "moderate-low",
+      "scope": "Pennsylvania",
+      "requirements": [
+        {
+          "id": "wesca.5703",
+          "title": "Wiretap theory: interception at the visitor’s browser (PA)",
+          "citation": "18 Pa. C.S. §5703",
+          "text": "Pennsylvania’s Wiretapping and Electronic Surveillance Control Act; interception is treated as occurring at the visitor’s browser (Popa v. Harriet Carter, 3d Cir. 2022). Federal standing now defeats non-sensitive cases. Exposure — moderate to low.",
+          "kind": "exposure",
+          "since": "1978-10-04",
+          "urls": [
+            "https://www.legis.state.pa.us/cfdocs/legis/LI/consCheck.cfm?txtType=HTM&ttl=18&div=0&chpt=57&sctn=3&subsctn=0"
+          ],
+          "authority": [],
+          "volatile": false
+        }
+      ],
+      "placeCodes": [
+        "us-pa"
+      ],
+      "notes": [
+        {
+          "kind": "litigation",
+          "title": "Federal standing now stops most non-sensitive cases",
+          "text": "Routine tracking on a non-sensitive site is not a concrete injury in federal court (Cook v. GameStop, 3d Cir. 2025). Health, finance and other sensitive sites remain exposed.",
+          "sources": [
+            {
+              "label": "Research §2.4–2.5",
+              "href": "plans/research-consent-law.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mdwa",
+      "name": "Maryland Wiretapping and Electronic Surveillance Act (Cts. & Jud. Proc. §10-401 et seq.) — litigation exposure",
+      "shortName": "Maryland Wiretap Act",
+      "summary": "Maryland requires every party’s prior consent to intercept a communication. At least $100 a day or $1,000, plus punitive damages and fees.",
+      "kind": "exposure",
+      "risk": "moderate-low",
+      "scope": "Maryland",
+      "requirements": [
+        {
+          "id": "mdwa.10-402",
+          "title": "Wiretap theory: interception without all-party prior consent (MD)",
+          "citation": "Md. Code, Cts. & Jud. Proc. §10-402",
+          "text": "Maryland requires the prior consent of all parties to intercept a wire, oral or electronic communication (§10-402(c)(3)); §10-410 gives actual damages of not less than $100/day or $1,000, punitive damages and fees. Metadata-only claims are weak: URLs, IP addresses, cookie values and login events are not \"contents\" (Doe II v. MedStar, Md. App. 2026-03-13, unreported); federal session-replay suits have failed on standing. Form input, search terms and chat text sent to a third party remain the exposure. Moderate–low — see research-consent-law.md §2.5.",
+          "kind": "exposure",
+          "since": "1977-07-01",
+          "urls": [
+            "https://mgaleg.maryland.gov/mgawebsite/Laws/StatuteText?article=gcj&section=10-402&enactments=false"
+          ],
+          "authority": [
+            {
+              "ref": "doe-ii-v-medstar-2026",
+              "note": "URLs, IPs, cookies, login events are not contents (summary judgment for the site)"
+            },
+            {
+              "ref": "straubmuller-v-jetblue-2023",
+              "note": "session replay dismissed for lack of standing (D. Md.)"
+            }
+          ],
+          "volatile": false
+        }
+      ],
+      "placeCodes": [
+        "us-md"
+      ],
+      "notes": [
+        {
+          "kind": "litigation",
+          "title": "Page addresses and cookies are not “contents”; form input is",
+          "text": "A Maryland appeals court held URLs, IP addresses, cookie values and login events are not the contents of a communication (Doe II v. MedStar, 2026, unreported). What a visitor types — form input, searches, chat text — sent to a third party remains the exposure.",
+          "sources": [
+            {
+              "label": "Research §2.5",
+              "href": "plans/research-consent-law.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ilea",
+      "name": "Illinois Eavesdropping Act (720 ILCS 5/14) — litigation exposure",
+      "shortName": "Illinois Eavesdropping Act",
+      "summary": "Illinois prohibits intercepting a private electronic communication without every party’s consent, and makes whoever the eavesdropper works for liable too. Actual and punitive damages; no statutory damages or fee shifting.",
+      "kind": "exposure",
+      "risk": "moderate",
+      "scope": "Illinois",
+      "requirements": [
+        {
+          "id": "ilea.14-2",
+          "title": "Eavesdropping theory: a private electronic communication intercepted without all-party consent (IL)",
+          "citation": "720 ILCS 5/14-2",
+          "text": "Illinois prohibits a non-party from surreptitiously intercepting a private electronic communication without the consent of all parties (720 ILCS 5/14-2(a)(3)), and §14-6 makes the eavesdropper’s principal liable for actual and punitive damages; there are no statutory damages or fee shifting. N.D. Ill. courts let pixel claims proceed against the site owner as the principal (Kurowski v. Rush, 2023; Dawson v. University of Phoenix, 2026-01-13). Moderate — see research-consent-law.md §2.5.",
+          "kind": "exposure",
+          "since": "2014-12-30",
+          "urls": [
+            "https://www.ilga.gov/Documents/legislation/ilcs/documents/072000050K14-2.htm"
+          ],
+          "authority": [
+            {
+              "ref": "kurowski-v-rush-2023",
+              "note": "site owner liable as principal for the pixel vendor (N.D. Ill.)"
+            },
+            {
+              "ref": "dawson-v-university-of-phoenix-2026",
+              "note": "principal theory followed; pixel claim proceeds (N.D. Ill.)"
+            }
+          ],
+          "volatile": false
+        }
+      ],
+      "placeCodes": [
+        "us-il"
+      ],
+      "notes": [
+        {
+          "kind": "litigation",
+          "title": "The site is liable for its pixel vendor",
+          "text": "Federal courts in Illinois let pixel claims proceed against the site owner as the vendor’s principal (Kurowski v. Rush, 2023; Dawson v. University of Phoenix, 2026).",
+          "sources": [
+            {
+              "label": "Kurowski v. Rush",
+              "href": "https://www.govinfo.gov/content/pkg/USCOURTS-ilnd-1_22-cv-05380/pdf/USCOURTS-ilnd-1_22-cv-05380-1.pdf"
+            },
+            {
+              "label": "Dawson v. University of Phoenix",
+              "href": "https://cases.justia.com/federal/district-courts/illinois/ilndce/1:2025cv03497/475832/52/0.pdf"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "enforcement-practice",
+      "name": "Regulator-ordered practices (not statutes)",
+      "shortName": "Regulator practice",
+      "summary": "Not a statute: what regulators order companies to do after enforcement. California’s orders require periodic scans and an inventory of every third party that receives visitor data — a party nobody can identify cannot be disclosed, contracted or gated.",
+      "kind": "practice",
+      "scope": "Everywhere",
+      "requirements": [
+        {
+          "id": "practice.tracker-inventory",
+          "title": "Know every third party that receives visitor data",
+          "citation": "Regulator orders tracker inventory and periodic scans",
+          "text": "Enforcement orders (CPPA v. Tractor Supply, 2025; CA AG v. Healthline, 2025) require periodic scans and an inventory of every tracker on the site. A party nobody can identify cannot be disclosed, contracted, or gated. Practice, not a statute.",
+          "kind": "practice",
+          "since": "2025-09-30",
+          "urls": [
+            "https://cppa.ca.gov/pdf/20250930_tractor_supply_bd_sfo.pdf"
+          ],
+          "authority": [],
+          "volatile": false
+        }
+      ],
+      "placeCodes": [
+        "eu",
+        "uk",
+        "us-al",
+        "us-ak",
+        "us-az",
+        "us-ar",
+        "us-ca",
+        "us-co",
+        "us-ct",
+        "us-de",
+        "us-dc",
+        "us-fl",
+        "us-ga",
+        "us-hi",
+        "us-id",
+        "us-il",
+        "us-in",
+        "us-ia",
+        "us-ks",
+        "us-ky",
+        "us-la",
+        "us-me",
+        "us-md",
+        "us-ma",
+        "us-mi",
+        "us-mn",
+        "us-ms",
+        "us-mo",
+        "us-mt",
+        "us-ne",
+        "us-nv",
+        "us-nh",
+        "us-nj",
+        "us-nm",
+        "us-ny",
+        "us-nc",
+        "us-nd",
+        "us-oh",
+        "us-ok",
+        "us-or",
+        "us-pa",
+        "us-ri",
+        "us-sc",
+        "us-sd",
+        "us-tn",
+        "us-tx",
+        "us-ut",
+        "us-vt",
+        "us-va",
+        "us-wa",
+        "us-wv",
+        "us-wi",
+        "us-wy",
+        "other"
+      ],
+      "notes": []
+    }
+  ],
+  "places": [
+    {
+      "code": "eu",
+      "name": "European Union & EEA",
+      "group": "europe",
+      "members": [
+        "Austria",
+        "Belgium",
+        "Bulgaria",
+        "Croatia",
+        "Cyprus",
+        "Czechia",
+        "Denmark",
+        "Estonia",
+        "Finland",
+        "France",
+        "Germany",
+        "Greece",
+        "Hungary",
+        "Ireland",
+        "Italy",
+        "Latvia",
+        "Lithuania",
+        "Luxembourg",
+        "Malta",
+        "Netherlands",
+        "Poland",
+        "Portugal",
+        "Romania",
+        "Slovakia",
+        "Slovenia",
+        "Spain",
+        "Sweden",
+        "Iceland",
+        "Liechtenstein",
+        "Norway"
+      ],
+      "model": "opt-in",
+      "label": "Opt-in (EU/EEA)",
+      "wiretap": false,
+      "lawIds": [
+        "eprivacy",
+        "gdpr",
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "dismiss",
+        "reject",
+        "accept",
+        "partial",
+        "withdraw",
+        "return-visit",
+        "markers"
+      ],
+      "notes": [
+        {
+          "kind": "posture",
+          "title": "Google Consent Mode “advanced” needs a decision",
+          "text": "With Consent Mode “advanced”, Google tags send cookieless pings before consent. Whether that is allowed without consent is contested: the pings carry the IP address, browser details and the full page address, which EU guidance treats as gaining access. complykit reports them as needing your decision rather than as a pass or a violation.",
+          "sources": [
+            {
+              "label": "EDPB Guidelines 2/2023",
+              "href": "https://www.edpb.europa.eu/system/files/documents/2024-10/edpb_guidelines_202302_technical_scope_art_53_eprivacydirective_v2_en_0.pdf"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "uk",
+      "name": "United Kingdom",
+      "group": "europe",
+      "model": "opt-in",
+      "label": "Opt-in (UK)",
+      "wiretap": false,
+      "lawIds": [
+        "pecr",
+        "uk-gdpr",
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "dismiss",
+        "reject",
+        "accept",
+        "partial",
+        "withdraw",
+        "return-visit",
+        "markers"
+      ],
+      "notes": [
+        {
+          "kind": "exception",
+          "title": "Statistics exception (since 2026-02-05)",
+          "text": "The Data (Use and Access) Act 2025 lets first-party statistics run without consent if the visitor gets a simple, free way to object and the data goes only to a processor acting for the site. Advertising is never exempt, and session recording is not “statistics”. Fines now reach £17.5M or 4% of turnover.",
+          "sources": [
+            {
+              "label": "ICO: storage and access exceptions",
+              "href": "https://ico.org.uk/for-organisations/direct-marketing-and-privacy-and-electronic-communications/guidance-on-the-use-of-storage-and-access-technologies/what-are-the-exceptions/"
+            }
+          ]
+        },
+        {
+          "kind": "posture",
+          "title": "Google Consent Mode “advanced” needs a decision",
+          "text": "As in the EU, cookieless pings before consent are reported as needing your decision.",
+          "sources": []
+        }
+      ]
+    },
+    {
+      "code": "us-al",
+      "name": "Alabama",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Alabama, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Alabama Personal Data Protection Act (HB 351)",
+        "citation": "Ala. Acts 2026, HB 351",
+        "urls": [
+          "https://alison.legislature.state.al.us/files/pdf/SearchableInstruments/2026RS/HB351-enr.pdf"
+        ],
+        "from": "2027-05-01",
+        "inForce": false,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": [
+        {
+          "kind": "pending",
+          "title": "Alabama Personal Data Protection Act (HB 351) takes effect 2027-05-01",
+          "text": "Alabama Personal Data Protection Act (HB 351) is enacted and takes effect 2027-05-01. Until then nothing is compared under it.",
+          "sources": [
+            {
+              "label": "Alabama Personal Data Protection Act (HB 351)",
+              "href": "https://alison.legislature.state.al.us/files/pdf/SearchableInstruments/2026RS/HB351-enr.pdf"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "us-ak",
+      "name": "Alaska",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Alaska, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-az",
+      "name": "Arizona",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Arizona, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": [
+        {
+          "kind": "posture",
+          "title": "Email tracking-pixel suits ended",
+          "text": "Suits over “spy pixels” in marketing email failed on appeal (Smith v. Target, Ariz. Ct. App. 2025-11-13). Arizona has no comprehensive privacy act.",
+          "sources": [
+            {
+              "label": "Research §2.5",
+              "href": "plans/research-consent-law.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "us-ar",
+      "name": "Arkansas",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Arkansas, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-ca",
+      "name": "California",
+      "group": "us",
+      "model": "opt-out-signal",
+      "label": "Opt-out, privacy signal honored (California)",
+      "wiretap": true,
+      "lawIds": [
+        "ccpa",
+        "cipa",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "California Consumer Privacy Act (as amended by the CPRA)",
+        "citation": "Cal. Civ. Code §1798.100 et seq.; 11 CCR §7000 et seq.",
+        "urls": [
+          "https://cppa.ca.gov/regulations/pdf/ccpa_statute_eff_20260101.pdf"
+        ],
+        "from": "2020-01-01",
+        "gpcFrom": "2023-03-29",
+        "inForce": true,
+        "sensitive": "notice-and-opt-out"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "opt-out-all",
+        "opt-out-link",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-co",
+      "name": "Colorado",
+      "group": "us",
+      "model": "opt-out-signal",
+      "label": "Opt-out, privacy signal honored (Colorado)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Colorado Privacy Act",
+        "citation": "Colo. Rev. Stat. §6-1-1301 et seq.",
+        "urls": [
+          "https://coag.gov/resources/colorado-privacy-act/"
+        ],
+        "from": "2023-07-01",
+        "gpcFrom": "2024-07-01",
+        "inForce": true,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "opt-out-all",
+        "opt-out-link",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-ct",
+      "name": "Connecticut",
+      "group": "us",
+      "model": "opt-out-signal",
+      "label": "Opt-out, privacy signal honored (Connecticut)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Connecticut Data Privacy Act",
+        "citation": "Conn. Gen. Stat. §42-515 et seq.",
+        "urls": [
+          "https://www.cga.ct.gov/current/pub/chap_743jj.htm"
+        ],
+        "from": "2023-07-01",
+        "gpcFrom": "2025-01-01",
+        "inForce": true,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "opt-out-all",
+        "opt-out-link",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-de",
+      "name": "Delaware",
+      "group": "us",
+      "model": "opt-out-signal",
+      "label": "Opt-out, privacy signal honored (Delaware)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Delaware Personal Data Privacy Act",
+        "citation": "6 Del. C. ch. 12D",
+        "urls": [
+          "https://delcode.delaware.gov/title6/c012d/index.html"
+        ],
+        "from": "2025-01-01",
+        "gpcFrom": "2026-01-01",
+        "inForce": true,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "opt-out-all",
+        "opt-out-link",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-dc",
+      "name": "District of Columbia",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (District of Columbia, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-fl",
+      "name": "Florida",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Florida, no state privacy law in force)",
+      "wiretap": true,
+      "lawIds": [
+        "fsca",
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-ga",
+      "name": "Georgia",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Georgia, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-hi",
+      "name": "Hawaii",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Hawaii, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-id",
+      "name": "Idaho",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Idaho, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-il",
+      "name": "Illinois",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Illinois, no state privacy law in force)",
+      "wiretap": true,
+      "lawIds": [
+        "ilea",
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": [
+        {
+          "kind": "exception",
+          "title": "Face scanning is a separate, stricter law",
+          "text": "Illinois’s Biometric Information Privacy Act applies if a site scans faces (virtual try-on, ID checks). It is not part of a tracking scan.",
+          "sources": [
+            {
+              "label": "Research §2.5",
+              "href": "plans/research-consent-law.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "us-in",
+      "name": "Indiana",
+      "group": "us",
+      "model": "opt-out",
+      "label": "Opt-out (Indiana)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Indiana Consumer Data Protection Act",
+        "citation": "Ind. Code art. 24-15",
+        "urls": [
+          "https://iga.in.gov/pdf-documents/123/2023/senate/bills/SB0005/SB0005.05.ENRS.pdf"
+        ],
+        "from": "2026-01-01",
+        "inForce": true,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-ia",
+      "name": "Iowa",
+      "group": "us",
+      "model": "opt-out",
+      "label": "Opt-out (Iowa)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Iowa Consumer Data Protection Act",
+        "citation": "Iowa Code ch. 715D",
+        "urls": [
+          "https://www.legis.iowa.gov/docs/code/715D.pdf"
+        ],
+        "from": "2025-01-01",
+        "inForce": true,
+        "sensitive": "notice-and-opt-out"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-ks",
+      "name": "Kansas",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Kansas, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-ky",
+      "name": "Kentucky",
+      "group": "us",
+      "model": "opt-out",
+      "label": "Opt-out (Kentucky)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Kentucky Consumer Data Protection Act",
+        "citation": "Ky. Rev. Stat. §367.3611 et seq.",
+        "urls": [
+          "https://apps.legislature.ky.gov/law/acts/24RS/documents/0072.pdf"
+        ],
+        "from": "2026-01-01",
+        "inForce": true,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-la",
+      "name": "Louisiana",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Louisiana, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Louisiana Consumer Privacy Act (SB 386)",
+        "citation": "La. Acts 2026, SB 386",
+        "urls": [
+          "https://legis.la.gov/"
+        ],
+        "from": "2027-01-01",
+        "inForce": false,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": [
+        {
+          "kind": "pending",
+          "title": "Louisiana Consumer Privacy Act (SB 386) takes effect 2027-01-01",
+          "text": "Louisiana Consumer Privacy Act (SB 386) is enacted and takes effect 2027-01-01. Until then nothing is compared under it.",
+          "sources": [
+            {
+              "label": "Louisiana Consumer Privacy Act (SB 386)",
+              "href": "https://legis.la.gov/"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "us-me",
+      "name": "Maine",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Maine, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-md",
+      "name": "Maryland",
+      "group": "us",
+      "model": "opt-out-signal",
+      "label": "Opt-out, privacy signal honored (Maryland)",
+      "wiretap": true,
+      "lawIds": [
+        "us-state-privacy",
+        "mdwa",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Maryland Online Data Privacy Act",
+        "citation": "Md. Code, Com. Law §14-4701 et seq.",
+        "urls": [
+          "https://mgaleg.maryland.gov/mgawebsite/Laws/StatuteText?article=gcl&section=14-4707&enactments=false"
+        ],
+        "from": "2025-10-01",
+        "gpcFrom": "2025-10-01",
+        "inForce": true,
+        "sensitive": "sale-banned"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "opt-out-all",
+        "opt-out-link",
+        "markers"
+      ],
+      "notes": [
+        {
+          "kind": "exception",
+          "title": "Sale of sensitive data is banned outright",
+          "text": "Maryland’s privacy act bans selling sensitive data rather than requiring consent for it. Its wording on the privacy signal is ambiguous; California’s regulator counts Maryland as a GPC state, and so does complykit.",
+          "sources": [
+            {
+              "label": "Md. Com. Law §14-4707",
+              "href": "https://mgaleg.maryland.gov/mgawebsite/Laws/StatuteText?article=gcl&section=14-4707&enactments=false"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "us-ma",
+      "name": "Massachusetts",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Massachusetts, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": [
+        {
+          "kind": "posture",
+          "title": "Not in the wiretap posture: closed by the state’s highest court",
+          "text": "Massachusetts’s Supreme Judicial Court held its wiretap act does not reach website tracking (Vita v. New England Baptist, 2024-10-24). A bill to change that (S.1266) is pending.",
+          "sources": [
+            {
+              "label": "Research §2.5",
+              "href": "plans/research-consent-law.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "us-mi",
+      "name": "Michigan",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Michigan, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-mn",
+      "name": "Minnesota",
+      "group": "us",
+      "model": "opt-out-signal",
+      "label": "Opt-out, privacy signal honored (Minnesota)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Minnesota Consumer Data Privacy Act",
+        "citation": "Minn. Stat. §325M.10 et seq.",
+        "urls": [
+          "https://www.revisor.mn.gov/statutes/cite/325M"
+        ],
+        "from": "2025-07-31",
+        "gpcFrom": "2025-07-31",
+        "inForce": true,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "opt-out-all",
+        "opt-out-link",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-ms",
+      "name": "Mississippi",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Mississippi, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-mo",
+      "name": "Missouri",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Missouri, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-mt",
+      "name": "Montana",
+      "group": "us",
+      "model": "opt-out-signal",
+      "label": "Opt-out, privacy signal honored (Montana)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Montana Consumer Data Privacy Act",
+        "citation": "Mont. Code Ann. §30-14-2801 et seq.",
+        "urls": [
+          "https://leg.mt.gov/bills/mca/title_0300/chapter_0140/part_0280/sections_index.html"
+        ],
+        "from": "2024-10-01",
+        "gpcFrom": "2025-01-01",
+        "inForce": true,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "opt-out-all",
+        "opt-out-link",
+        "markers"
+      ],
+      "notes": [
+        {
+          "kind": "posture",
+          "title": "Not in the wiretap posture: no private lawsuits",
+          "text": "Montana’s eavesdropping law is criminal only, with no private right to sue, and no website suits were found.",
+          "sources": [
+            {
+              "label": "Research §2.5",
+              "href": "plans/research-consent-law.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "us-ne",
+      "name": "Nebraska",
+      "group": "us",
+      "model": "opt-out-signal",
+      "label": "Opt-out, privacy signal honored (Nebraska)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Nebraska Data Privacy Act",
+        "citation": "Neb. Rev. Stat. §87-1101 et seq.",
+        "urls": [
+          "https://nebraskalegislature.gov/laws/statutes.php?statute=87-1101"
+        ],
+        "from": "2025-01-01",
+        "gpcFrom": "2025-01-01",
+        "inForce": true,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "opt-out-all",
+        "opt-out-link",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-nv",
+      "name": "Nevada",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Nevada, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-nh",
+      "name": "New Hampshire",
+      "group": "us",
+      "model": "opt-out-signal",
+      "label": "Opt-out, privacy signal honored (New Hampshire)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "New Hampshire Data Privacy Act",
+        "citation": "N.H. Rev. Stat. Ann. ch. 507-H",
+        "urls": [
+          "https://www.gencourt.state.nh.us/rsa/html/LII/507-H/507-H-mrg.htm"
+        ],
+        "from": "2025-01-01",
+        "gpcFrom": "2025-01-01",
+        "inForce": true,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "opt-out-all",
+        "opt-out-link",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-nj",
+      "name": "New Jersey",
+      "group": "us",
+      "model": "opt-out-signal",
+      "label": "Opt-out, privacy signal honored (New Jersey)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "New Jersey Data Privacy Act",
+        "citation": "N.J. Stat. §56:8-166.4 et seq.",
+        "urls": [
+          "https://www.njconsumeraffairs.gov/ocr/Pages/data-privacy.aspx"
+        ],
+        "from": "2025-01-15",
+        "gpcFrom": "2025-07-15",
+        "inForce": true,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "opt-out-all",
+        "opt-out-link",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-nm",
+      "name": "New Mexico",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (New Mexico, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-ny",
+      "name": "New York",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (New York, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-nc",
+      "name": "North Carolina",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (North Carolina, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-nd",
+      "name": "North Dakota",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (North Dakota, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-oh",
+      "name": "Ohio",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Ohio, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-ok",
+      "name": "Oklahoma",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Oklahoma, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Oklahoma Consumer Data Privacy Act (SB 546)",
+        "citation": "Okla. Sess. Laws 2025, SB 546",
+        "urls": [
+          "https://www.oklegislature.gov/cf_pdf/2025-26%20ENR/SB/SB546%20ENR.PDF"
+        ],
+        "from": "2027-01-01",
+        "inForce": false,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": [
+        {
+          "kind": "pending",
+          "title": "Oklahoma Consumer Data Privacy Act (SB 546) takes effect 2027-01-01",
+          "text": "Oklahoma Consumer Data Privacy Act (SB 546) is enacted and takes effect 2027-01-01. Until then nothing is compared under it.",
+          "sources": [
+            {
+              "label": "Oklahoma Consumer Data Privacy Act (SB 546)",
+              "href": "https://www.oklegislature.gov/cf_pdf/2025-26%20ENR/SB/SB546%20ENR.PDF"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "us-or",
+      "name": "Oregon",
+      "group": "us",
+      "model": "opt-out-signal",
+      "label": "Opt-out, privacy signal honored (Oregon)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Oregon Consumer Privacy Act",
+        "citation": "ORS 646A.570 to 646A.589",
+        "urls": [
+          "https://www.doj.state.or.us/consumer-protection/id-theft-data-breaches/privacy/"
+        ],
+        "from": "2024-07-01",
+        "gpcFrom": "2026-01-01",
+        "inForce": true,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "opt-out-all",
+        "opt-out-link",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-pa",
+      "name": "Pennsylvania",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Pennsylvania, no state privacy law in force)",
+      "wiretap": true,
+      "lawIds": [
+        "wesca",
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-ri",
+      "name": "Rhode Island",
+      "group": "us",
+      "model": "opt-out",
+      "label": "Opt-out (Rhode Island)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Rhode Island Data Transparency and Privacy Protection Act",
+        "citation": "R.I. Gen. Laws ch. 6-48.1",
+        "urls": [
+          "https://webserver.rilegislature.gov/Statutes/TITLE6/6-48.1/6-48.1-4.htm"
+        ],
+        "from": "2026-01-01",
+        "inForce": true,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-sc",
+      "name": "South Carolina",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (South Carolina, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-sd",
+      "name": "South Dakota",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (South Dakota, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-tn",
+      "name": "Tennessee",
+      "group": "us",
+      "model": "opt-out",
+      "label": "Opt-out (Tennessee)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Tennessee Information Protection Act",
+        "citation": "Tenn. Code Ann. §47-18-3201 et seq.",
+        "urls": [
+          "https://www.tn.gov/attorneygeneral/working-for-tennessee/tennessee-information-protection-act.html"
+        ],
+        "from": "2025-07-01",
+        "inForce": true,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-tx",
+      "name": "Texas",
+      "group": "us",
+      "model": "opt-out-signal",
+      "label": "Opt-out, privacy signal honored (Texas)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Texas Data Privacy and Security Act",
+        "citation": "Tex. Bus. & Com. Code ch. 541",
+        "urls": [
+          "https://statutes.capitol.texas.gov/Docs/BC/htm/BC.541.htm"
+        ],
+        "from": "2024-07-01",
+        "gpcFrom": "2025-01-01",
+        "inForce": true,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "opt-out-all",
+        "opt-out-link",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-ut",
+      "name": "Utah",
+      "group": "us",
+      "model": "opt-out",
+      "label": "Opt-out (Utah)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Utah Consumer Privacy Act",
+        "citation": "Utah Code §13-61-101 et seq.",
+        "urls": [
+          "https://le.utah.gov/xcode/Title13/Chapter61/13-61.html"
+        ],
+        "from": "2023-12-31",
+        "inForce": true,
+        "sensitive": "notice-and-opt-out"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-vt",
+      "name": "Vermont",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Vermont, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Vermont Data Privacy and Online Surveillance Act (S.71)",
+        "citation": "Vt. Acts 2026, S.71",
+        "urls": [
+          "https://legislature.vermont.gov/"
+        ],
+        "from": "2028-01-01",
+        "inForce": false,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": [
+        {
+          "kind": "pending",
+          "title": "Vermont Data Privacy and Online Surveillance Act (S.71) takes effect 2028-01-01",
+          "text": "Vermont Data Privacy and Online Surveillance Act (S.71) is enacted and takes effect 2028-01-01. Until then nothing is compared under it.",
+          "sources": [
+            {
+              "label": "Vermont Data Privacy and Online Surveillance Act (S.71)",
+              "href": "https://legislature.vermont.gov/"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "us-va",
+      "name": "Virginia",
+      "group": "us",
+      "model": "opt-out",
+      "label": "Opt-out (Virginia)",
+      "wiretap": false,
+      "lawIds": [
+        "us-state-privacy",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "Virginia Consumer Data Protection Act",
+        "citation": "Va. Code §59.1-575 et seq.",
+        "urls": [
+          "https://law.lis.virginia.gov/vacode/title59.1/chapter53/"
+        ],
+        "from": "2023-01-01",
+        "inForce": true,
+        "sensitive": "opt-in"
+      },
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-wa",
+      "name": "Washington",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Washington, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": [
+        {
+          "kind": "posture",
+          "title": "Not in the wiretap posture: closed for pixels",
+          "text": "Washington’s privacy act requires all-party consent, but its Supreme Court held that searches and clicks producing an automated response from a corporate site are not a communication between people (Baker v. Seattle Children’s Hospital, 2026-10-08). Chat with a human agent was left open, so live chat carries some risk.",
+          "sources": [
+            {
+              "label": "Baker v. Seattle Children’s Hospital",
+              "href": "https://www.courts.wa.gov/opinions/pdf/1045905.pdf"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "us-wv",
+      "name": "West Virginia",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (West Virginia, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-wi",
+      "name": "Wisconsin",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Wisconsin, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "us-wy",
+      "name": "Wyoming",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Wyoming, no state privacy law in force)",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept",
+        "gpc",
+        "markers"
+      ],
+      "notes": []
+    },
+    {
+      "code": "other",
+      "name": "Everywhere else",
+      "group": "other",
+      "model": "unresearched",
+      "label": "Not researched",
+      "wiretap": false,
+      "lawIds": [
+        "enforcement-practice"
+      ],
+      "scenarios": [
+        "do-nothing",
+        "browse",
+        "reject",
+        "accept"
+      ],
+      "notes": [
+        {
+          "kind": "posture",
+          "title": "Fail closed",
+          "text": "Visitors from places complykit has not researched are treated as opt-in by its consent tool. Add a place to this guide before drawing conclusions about it.",
+          "sources": []
+        }
+      ]
+    }
+  ]
+}

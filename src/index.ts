@@ -234,8 +234,8 @@ export { buildCoverageIndex } from './coverage-index.js';
 
 // --- rules: runtime + types --------------------------------------------------
 export { ALL_RULES, getRule, resolveCapsFor, evaluate, isLlmRule } from './rules/index.js';
-export { decideVerification, defaultScenarios, locationPreset, buildTrackingEvaluation } from './rules/tracking/index.js';
-export type { EvaluationInput } from './rules/tracking/index.js';
+export { decideVerification, defaultScenarios, locationPreset, buildTrackingEvaluation, buildLegalGuide, GUIDE_SCENARIOS } from './rules/tracking/index.js';
+export type { EvaluationInput, LegalGuide } from './rules/tracking/index.js';
 export { parseGtmContainer, parseContainers, extractContainerData } from './rules/tracking/gtm.js';
 export type { ContainerData, ParseContainerOptions } from './rules/tracking/gtm.js';
 export { summarizeConsentApi } from './rules/tracking/consent-api.js';

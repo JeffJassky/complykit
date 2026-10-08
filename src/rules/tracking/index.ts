@@ -23,3 +23,5 @@ export { parseGtmContainer, parseContainers, extractContainerData, locateContain
 export type { ContainerConsentRewrite, ContainerConsentRewriteResult } from './gtm.js';
 export { classifyImplementations, classifyImplementation, firstPartyCollectEndpoints, scriptIndex, isGtmContainerUrl, otherTagManagerOf, OTHER_TAG_MANAGERS } from './implementation.js';
 export type { CollectEndpoint, ImplementationInput, ScriptIndex } from './implementation.js';
+export { buildLegalGuide, GUIDE_SCENARIOS } from './legal-guide.js';
+export type { LegalGuide } from './legal-guide.js';
