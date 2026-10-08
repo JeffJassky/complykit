@@ -18,13 +18,15 @@ const US_PRIVACY_STATE: ScenarioId[] = ['do-nothing', 'browse', 'reject', 'accep
 const US_OTHER: ScenarioId[] = ['do-nothing', 'browse', 'reject', 'accept', 'gpc', 'markers'];
 const ELSEWHERE: ScenarioId[] = ['do-nothing', 'browse', 'reject', 'accept'];
 
-/** US states whose law requires honoring opt-out signals — derived from the registry, not hand-listed. */
-export function optOutSignalStates(): Set<string> {
+const today = (): string => new Date().toISOString().slice(0, 10);
+const OPT_OUT_SIGNAL_IDS = new Set<string>(['ccpa.regs.7025', 'us-states.opt-out-signal']);
+
+/** US states whose law requires honoring opt-out signals on a date (default today) — derived from the registry by requirement id, not hand-listed. */
+export function optOutSignalStates(onDate: string = today()): Set<string> {
   const out = new Set<string>();
   for (const r of ALL_REQUIREMENTS) {
-    const inst = String(r.instrument);
-    if (inst !== 'ccpa' && inst !== 'us-state-privacy') continue;
-    for (const j of r.jurisdictions ?? []) if (j.code.startsWith('us-')) out.add(j.code);
+    if (!OPT_OUT_SIGNAL_IDS.has(String(r.id))) continue;
+    for (const j of r.jurisdictions ?? []) if (j.code.startsWith('us-') && (j.from ?? r.effective.from) <= onDate) out.add(j.code);
   }
   return out;
 }
@@ -38,10 +40,10 @@ export function optOutSignalStates(): Set<string> {
  * banner there may hold vendors until it is accepted (accept is not applicable
  * where no banner is shown).
  */
-export function defaultScenarios(jurisdictions: readonly string[]): ScenarioId[] {
+export function defaultScenarios(jurisdictions: readonly string[], onDate: string = today()): ScenarioId[] {
   if (jurisdictions.includes('eu') || jurisdictions.includes('uk')) return [...EU_UK];
   if (jurisdictions.includes('us')) {
-    const states = optOutSignalStates();
+    const states = optOutSignalStates(onDate);
     return jurisdictions.some((j) => states.has(j)) ? [...US_PRIVACY_STATE] : [...US_OTHER];
   }
   return [...ELSEWHERE];
@@ -52,7 +54,7 @@ export function defaultScenarios(jurisdictions: readonly string[]): ScenarioId[]
  * locations include accept — where a banner holds vendors it is the only visit
  * that sees them; with no banner it is not applicable after one landing.
  */
-export function quickScenarios(jurisdictions: readonly string[]): ScenarioId[] {
+export function quickScenarios(jurisdictions: readonly string[], onDate: string = today()): ScenarioId[] {
   if (jurisdictions.includes('eu') || jurisdictions.includes('uk')) return ['do-nothing', 'reject', 'accept'];
   if (jurisdictions.includes('us')) return ['do-nothing', 'reject', 'accept', 'gpc', 'markers'];
   return ['do-nothing', 'reject'];

@@ -355,7 +355,7 @@ export function evaluateConsentToolProof(ev: TrackingEvaluation, input: ConsentT
   // --- regime the tool decided vs the location's rules ---
   for (const l of ev.locations) {
     if (l.verification.verdict !== 'verified') continue;
-    const law = regimeOf(l.verification.jurisdictions);
+    const law = regimeOf(l.verification.jurisdictions, ev.startedAt?.slice(0, 10));
     if (law === 'unknown') continue;
     const s = seen.find((x) => x.location === l.spec.id && x.snap.state?.regime);
     const decided = s?.snap.state?.regime;
@@ -433,7 +433,7 @@ export function evaluateConsentToolProof(ev: TrackingEvaluation, input: ConsentT
         skipped.add(`${l.spec.id}: location not verified`);
         continue;
       }
-      const law = regimeOf(l.verification.jurisdictions);
+      const law = regimeOf(l.verification.jurisdictions, ev.startedAt?.slice(0, 10));
       for (const s of l.scenarios) {
         if (s.status !== 'tested') {
           skipped.add(`${l.spec.id}/${s.scenario}: ${s.reason ?? s.status}`);
