@@ -1,0 +1,318 @@
+{
+  "version": 1,
+  "asOf": "2026-10-08",
+  "posture": {
+    "title": "How complykit decides what to expect",
+    "principles": [
+      "Principle one.",
+      "Principle two."
+    ]
+  },
+  "models": [
+    {
+      "id": "opt-in",
+      "label": "Opt-in",
+      "summary": "Opt-in summary.",
+      "mustHave": [
+        "Opt-in must."
+      ]
+    },
+    {
+      "id": "opt-out-signal",
+      "label": "Opt-out, privacy signal honored",
+      "summary": "Signal summary.",
+      "mustHave": [
+        "Signal must."
+      ]
+    },
+    {
+      "id": "opt-out",
+      "label": "Opt-out",
+      "summary": "Opt-out summary.",
+      "mustHave": [
+        "Opt-out must."
+      ]
+    },
+    {
+      "id": "opt-out-no-act",
+      "label": "No state privacy law",
+      "summary": "No-act summary.",
+      "mustHave": [
+        "No-act must."
+      ]
+    },
+    {
+      "id": "unresearched",
+      "label": "Not researched",
+      "summary": "Unresearched summary.",
+      "mustHave": [
+        "Unresearched must."
+      ]
+    }
+  ],
+  "wiretap": {
+    "summary": "Wiretap summary.",
+    "holds": "Wiretap holds text.",
+    "states": [
+      "us-ca",
+      "us-il"
+    ]
+  },
+  "scenarios": [
+    {
+      "id": "do-nothing",
+      "label": "Before a choice",
+      "what": "Loads and waits.",
+      "why": "Why waiting."
+    },
+    {
+      "id": "gpc",
+      "label": "Privacy signal (GPC)",
+      "what": "Sends GPC.",
+      "why": "Why GPC."
+    }
+  ],
+  "laws": [
+    {
+      "id": "eprivacy",
+      "name": "ePrivacy Directive (full name)",
+      "shortName": "ePrivacy Directive",
+      "summary": "ePrivacy Directive summary text.",
+      "kind": "obligation",
+      "scope": "eu",
+      "requirements": [
+        {
+          "id": "eprivacy.req",
+          "title": "ePrivacy Directive duty",
+          "citation": "ePrivacy Directive §1",
+          "text": "ePrivacy Directive text.",
+          "kind": "obligation",
+          "since": "2020-01-01",
+          "urls": [],
+          "authority": [],
+          "volatile": false
+        }
+      ],
+      "placeCodes": [
+        "eu"
+      ],
+      "notes": []
+    },
+    {
+      "id": "ccpa",
+      "name": "CCPA / CPRA (full name)",
+      "shortName": "CCPA / CPRA",
+      "summary": "CCPA / CPRA summary text.",
+      "kind": "obligation",
+      "scope": "us-ca",
+      "requirements": [
+        {
+          "id": "ccpa.req",
+          "title": "CCPA / CPRA duty",
+          "citation": "CCPA / CPRA §1",
+          "text": "CCPA / CPRA text.",
+          "kind": "obligation",
+          "since": "2020-01-01",
+          "urls": [],
+          "authority": [],
+          "volatile": false
+        }
+      ],
+      "placeCodes": [
+        "us-ca"
+      ],
+      "notes": []
+    },
+    {
+      "id": "cipa",
+      "name": "CIPA (full name)",
+      "shortName": "CIPA",
+      "summary": "CIPA summary text.",
+      "kind": "exposure",
+      "scope": "us-ca",
+      "requirements": [
+        {
+          "id": "cipa.req",
+          "title": "CIPA duty",
+          "citation": "CIPA §1",
+          "text": "CIPA text.",
+          "kind": "exposure",
+          "since": "2020-01-01",
+          "urls": [],
+          "authority": [],
+          "volatile": false
+        }
+      ],
+      "placeCodes": [
+        "us-ca"
+      ],
+      "notes": [
+        {
+          "kind": "litigation",
+          "title": "Only prior consent counts",
+          "text": "Prior consent text.",
+          "sources": []
+        }
+      ],
+      "risk": "high"
+    },
+    {
+      "id": "ilea",
+      "name": "Illinois Eavesdropping Act (full name)",
+      "shortName": "Illinois Eavesdropping Act",
+      "summary": "Illinois Eavesdropping Act summary text.",
+      "kind": "exposure",
+      "scope": "us-il",
+      "requirements": [
+        {
+          "id": "ilea.req",
+          "title": "Illinois Eavesdropping Act duty",
+          "citation": "Illinois Eavesdropping Act §1",
+          "text": "Illinois Eavesdropping Act text.",
+          "kind": "exposure",
+          "since": "2020-01-01",
+          "urls": [],
+          "authority": [],
+          "volatile": false
+        }
+      ],
+      "placeCodes": [
+        "us-il"
+      ],
+      "notes": [],
+      "risk": "moderate"
+    },
+    {
+      "id": "enforcement-practice",
+      "name": "Regulator practice (full name)",
+      "shortName": "Regulator practice",
+      "summary": "Regulator practice summary text.",
+      "kind": "practice",
+      "scope": "eu, us-ca, us-il, us-ga, other",
+      "requirements": [
+        {
+          "id": "enforcement-practice.req",
+          "title": "Regulator practice duty",
+          "citation": "Regulator practice §1",
+          "text": "Regulator practice text.",
+          "kind": "practice",
+          "since": "2020-01-01",
+          "urls": [],
+          "authority": [],
+          "volatile": false
+        }
+      ],
+      "placeCodes": [
+        "eu",
+        "us-ca",
+        "us-il",
+        "us-ga",
+        "other"
+      ],
+      "notes": []
+    }
+  ],
+  "places": [
+    {
+      "wiretap": false,
+      "scenarios": [
+        "do-nothing"
+      ],
+      "notes": [],
+      "code": "eu",
+      "name": "European Union & EEA",
+      "group": "europe",
+      "members": [
+        "Germany",
+        "France",
+        "Norway"
+      ],
+      "model": "opt-in",
+      "label": "Opt-in (EU/EEA)",
+      "lawIds": [
+        "eprivacy",
+        "enforcement-practice"
+      ]
+    },
+    {
+      "wiretap": true,
+      "scenarios": [
+        "do-nothing",
+        "gpc"
+      ],
+      "notes": [],
+      "code": "us-ca",
+      "name": "California",
+      "group": "us",
+      "model": "opt-out-signal",
+      "label": "Opt-out, privacy signal honored (California)",
+      "lawIds": [
+        "ccpa",
+        "cipa",
+        "enforcement-practice"
+      ],
+      "stateAct": {
+        "name": "California Consumer Privacy Act",
+        "citation": "Cal. Civ. Code §1798.100",
+        "urls": [],
+        "from": "2020-01-01",
+        "gpcFrom": "2023-03-29",
+        "inForce": true,
+        "sensitive": "notice-and-opt-out"
+      }
+    },
+    {
+      "wiretap": false,
+      "scenarios": [
+        "do-nothing"
+      ],
+      "notes": [],
+      "code": "us-ga",
+      "name": "Georgia",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Georgia, no state privacy law in force)",
+      "lawIds": [
+        "enforcement-practice"
+      ]
+    },
+    {
+      "wiretap": true,
+      "scenarios": [
+        "do-nothing"
+      ],
+      "notes": [
+        {
+          "kind": "exception",
+          "title": "Face scanning is a separate, stricter law",
+          "text": "BIPA text.",
+          "sources": []
+        }
+      ],
+      "code": "us-il",
+      "name": "Illinois",
+      "group": "us",
+      "model": "opt-out-no-act",
+      "label": "Opt-out (Illinois, no state privacy law in force)",
+      "lawIds": [
+        "ilea",
+        "enforcement-practice"
+      ]
+    },
+    {
+      "wiretap": false,
+      "scenarios": [
+        "do-nothing"
+      ],
+      "notes": [],
+      "code": "other",
+      "name": "Everywhere else",
+      "group": "other",
+      "model": "unresearched",
+      "label": "Not researched",
+      "lawIds": [
+        "enforcement-practice"
+      ]
+    }
+  ]
+}
