@@ -9,6 +9,17 @@ real if CI runs the matrix. See standards/traps.md #10.
 
 ## [Unreleased]
 
+### Added: location rules
+- The report shows each location's model, with a popover that lists the laws compared.
+- Opt-out-link check in every state with a privacy act in force
+  (`us-states.opt-out-method`), not only California and the signal states.
+- State act table with dates (`US_PRIVACY_ACT_STATES`, `US_STATE_PRIVACY_ACTS`).
+- The behavior matrix, compatibility expectations and scenario planner use the scan date.
+- `describeLocationRules` and `regimeForCodes` in the registry.
+
+### Fixed
+- The signal-state list now respects each state's start date.
+
 ### Added: client consent tool and consent-compatibility epic
 - `client/` (`@jeffjassky/complykit-consent`, private, not published): a
   zero-dependency consent tool that asks and remembers, holds scripts back,

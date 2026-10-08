@@ -38,6 +38,24 @@ complykit registry verify        # validates entries + mapping exhaustiveness
 `wcag22aa`, `gdpr-consent`, `ai-act-50` are saved filters over the registry, not
 hand-maintained ID lists. Custom rulesets compose the same way.
 
+## Location rules
+
+Which rules apply to a place is derived from the registry, not listed by hand.
+
+- `describeLocationRules(jurisdictions, onDate)` returns a location's model label,
+  summary, must-have bullets, the laws compared (from the requirements whose
+  jurisdictions reach it on that date) and notes. The report's location popover renders it.
+- `regimeForCodes(codes, onDate, { unverifiedUs })` is the scanner's regime decision
+  for jurisdiction codes: `opt-in`, `opt-out-signal`, `opt-out` or `unknown`.
+- `US_PRIVACY_ACT_STATES` is the table of states with a privacy act: the date each act
+  is in force and, where it applies, the date its signal duty starts.
+- `US_STATE_PRIVACY_ACTS` holds each act's name, citation and official URLs.
+
+Tracking requirements for the US states are `us-states.opt-out-signal` (honor a universal
+opt-out signal) and `us-states.opt-out-method` (a clear and conspicuous way to opt out of
+targeted advertising and sale). California's equivalents are `ccpa.regs.7025` and
+`ccpa.opt-out-link`.
+
 ## Versioning
 
 The registry version is stamped into every `run.json`, so a finding means what
