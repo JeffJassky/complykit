@@ -544,7 +544,11 @@ export async function rejectInOpenSettings(page: Page): Promise<boolean> {
 const OPT_OUT_LINK = /do not (sell|share)|your privacy choices|privacy choices|opt[- ]?out|limit the use of my|sale of (my )?personal/i;
 // Field wordings seen: "Opt-Out Request Honored", "GPC request honored.", "The GPC signal is honored".
 const CONFIRMATION = /opt[- ]?out (request )?(has been |is )?(honou?red|processed|received|confirmed|applied|recorded)|you (have|'ve) (been )?opted out|opted[- ]out of (the )?(sale|sharing)|(global privacy control|gpc)[^.\n]{0,30}?(detected|honou?red|recogni[sz]ed|respected|applied)|your (choices?|preferences?) (has|have) been (saved|updated)/i;
-const OPT_OUT_ACTION = /opt[- ]?out|do not (sell|share)|turn off|disable (sale|sharing)|confirm my choices|save (my )?(choices|preferences|settings)|submit/i;
+const OPT_OUT_ACTION = /opt[- ]?out|do not (sell|share)|turn off|disable (sale|sharing)|confirm my choices|save (my )?(choices|preferences|settings)|submit|reject all|decline( all| optional)?|refuse|deny/i;
+// A refusal outranks a save: "Save preferences" saves whatever the toggles say, and under US implied consent they start on.
+const REFUSAL = /reject all|decline( all| optional)?|refuse|deny/i;
+// Never the control that grants consent, whatever else its label says.
+const GRANT = /\baccept\b|allow all|agree/i;
 const PERSONAL_FIELD = /email|e-mail|name|phone|address|zip|postal|account|order/i;
 
 export interface OptOutWalk {
@@ -569,6 +573,32 @@ export async function findConfirmation(page: Page): Promise<string | undefined> 
       return m ? text.slice(Math.max(0, (m.index ?? 0) - 40), (m.index ?? 0) + m[0].length + 40).replace(/\s+/g, ' ').trim() : undefined;
     }, CONFIRMATION.source)
     .catch(() => undefined);
+}
+
+/** Switch off every visible, enabled, checked checkbox / switch in the dialog, form or section of the chosen control. */
+async function uncheckOptionalToggles(page: Page): Promise<void> {
+  await page
+    .evaluate(() => {
+      const ctl = document.querySelector('[data-complykit-optout-action="1"]');
+      if (!ctl) return;
+      const scope = ctl.closest('dialog, [role="dialog"], [aria-modal="true"]') ?? ctl.closest('form') ?? ctl.closest('section, article, [role="region"]') ?? document.body;
+      const shown = (el: Element): boolean => {
+        const b = (el as HTMLElement).getBoundingClientRect();
+        return b.width > 0 && b.height > 0;
+      };
+      const on = Array.from(scope.querySelectorAll<HTMLElement>('input[type="checkbox"], [role="switch"], [role="checkbox"]')).filter((el) => {
+        if (el === ctl || (el as HTMLInputElement).disabled || el.getAttribute('aria-disabled') === 'true') return false;
+        const checked = el instanceof HTMLInputElement ? el.checked : el.getAttribute('aria-checked') === 'true';
+        return checked;
+      });
+      for (const el of on) {
+        // A styled switch often hides the input and draws its label: click what the visitor can see.
+        const label = el instanceof HTMLInputElement ? (el.labels?.[0] ?? el.closest('label')) : null;
+        if (shown(el)) el.click();
+        else if (label && shown(label)) (label as HTMLElement).click();
+      }
+    })
+    .catch(() => {});
 }
 
 /**
@@ -626,8 +656,10 @@ export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptO
 
   const inspect = await page
     .evaluate(
-      ({ action, personal }) => {
+      ({ action, personal, refusal, grant }) => {
         const act = new RegExp(action, 'i');
+        const refuse = new RegExp(refusal, 'i');
+        const granting = new RegExp(grant, 'i');
         const pf = new RegExp(personal, 'i');
         const visible = (el: Element): boolean => {
           const b = (el as HTMLElement).getBoundingClientRect();
@@ -640,10 +672,15 @@ export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptO
         const controls = Array.from(document.querySelectorAll('button, [role="button"], [role="switch"], input[type="checkbox"]'))
           .filter(visible)
           .filter((el) => !el.hasAttribute('data-complykit-optout'))
-          .filter((el) => act.test(`${el.textContent ?? ''} ${el.getAttribute('aria-label') ?? ''}`));
-        // The page's own content first; a control in the header/footer/nav only as a fallback.
-        const ctl = controls.find((el) => !el.closest(PAGE_CHROME)) ?? controls[0];
+          .filter((el) => {
+            const label = `${el.textContent ?? ''} ${el.getAttribute('aria-label') ?? ''}`;
+            return act.test(label) && !granting.test(label);
+          });
+        // A refusal control first, then the page's own content; a control in the header/footer/nav only as a fallback.
+        const isRefusal = (el: Element): boolean => refuse.test(`${el.textContent ?? ''} ${el.getAttribute('aria-label') ?? ''}`);
+        const ctl = controls.find((el) => isRefusal(el) && !el.closest(PAGE_CHROME)) ?? controls.find(isRefusal) ?? controls.find((el) => !el.closest(PAGE_CHROME)) ?? controls[0];
         if (ctl) ctl.setAttribute('data-complykit-optout-action', '1');
+        const refusing = Boolean(ctl && isRefusal(ctl));
 
         // Required personal fields that belong to THIS control: its own form;
         // for a control outside any form, unattached fields in its nearest
@@ -668,14 +705,17 @@ export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptO
           .filter(belongs)
           .map((i) => i.name || i.id || i.type)
           .filter((n) => pf.test(n));
-        return { required, hasAction: Boolean(ctl) };
+        return { required, hasAction: Boolean(ctl), refusing };
       },
-      { action: OPT_OUT_ACTION.source, personal: PERSONAL_FIELD.source },
+      { action: OPT_OUT_ACTION.source, personal: PERSONAL_FIELD.source, refusal: REFUSAL.source, grant: GRANT.source },
     )
-    .catch(() => ({ required: [] as string[], hasAction: false }));
+    .catch(() => ({ required: [] as string[], hasAction: false, refusing: false }));
 
   let performed = false;
   if (perform && inspect.hasAction && inspect.required.length === 0) {
+    // A save-type control keeps whatever the toggles say, and they start on under implied consent:
+    // switch the optional ones off first (locked / disabled ones stay), as a visitor opting out would.
+    if (!inspect.refusing) await uncheckOptionalToggles(page);
     await page.click('[data-complykit-optout-action="1"]', { timeout: 4000 }).catch(() => {});
     steps++;
     performed = true;
