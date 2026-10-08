@@ -3,12 +3,13 @@ import { DEFAULT_KB, lookupStore, regimeForCodes, describeLocationRules, isWiret
 import { escapeHtml as esc } from './human.js';
 import { workspaceId } from './workspace.js';
 import { compareCookieBehavior, cookiePurposes, type ComparisonFacts, type PrivacyRegime } from './cookie-purpose.js';
+import { ScenarioId as ScenarioIds } from '../record/index.js';
 
 
 
 // Coverage notes that say nothing about whether requests or cookies were captured: they must not
 // turn an expected absence into "not checked" (every GPC visit carries the worker note).
-const NOT_A_CAPTURE_GAP = /globalPrivacyControl inside workers|^banner design:/;
+const NOT_A_CAPTURE_GAP = /globalPrivacyControl inside workers|^banner design:|^no visible (?:search|email) field/;
 const CHOICE = new Set(['reject','accept','partial','withdraw','opt-out-all','opt-out-link']);
 const PHASE_LABEL: Record<string,string> = {'no-banner':'while no consent banner was shown','before-banner':'before the banner appeared','before-choice':'before a privacy choice','after-reject':'after rejection','after-accept':'after acceptance','after-withdraw':'after withdrawal','after-dismiss':'after closing the banner'};
 const SCENARIO_LABEL: Record<string,string> = {'do-nothing':'Before a choice',browse:'Browse without choosing',dismiss:'Banner closed without choosing',reject:'After rejection',accept:'After acceptance',partial:'After accepting analytics only',withdraw:'After withdrawal','return-visit':'Returning after rejection',gpc:'Privacy signal (GPC)','opt-out-all':'After opting out every way','opt-out-link':'After the opt-out link',markers:'Sample information test'};
@@ -71,7 +72,9 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
     else if(p.recognized&&!facts&&!observed.knownPartyIds.includes(p.partyId))unavailable={status:'unknown',reason:'The saved tool identity could not be matched to the available evidence classifier.'};
     else if(m.locations.find(l=>l.id===col.location)?.verdict!=='verified')unavailable={status:'unknown',reason:'The test location was not verified.'};
     const limited = facts ? phases.reduce((n,phase)=>n+(facts.limitedRequestsByPhase[phase]??0),0) : 0;
-    const captureGap=m.notTested.filter(g=>(!g.location||g.location===col.location)&&(!['flow','scenario'].includes(g.scope)||!scenarios.includes(g.id as ScenarioId)||g.id===col.scenario)).some(g=>['frame','page','flow','scenario'].includes(g.scope)&&!['server-to-server','vendor-processing','contracts','consent-records','unvisited'].includes(g.id)&&!NOT_A_CAPTURE_GAP.test(g.reason));
+    // A gap scoped to a visitor action belongs to that action's column alone — including an action that
+    // could not run anywhere (so has no column), which must not spill over every other column at its location.
+    const captureGap=m.notTested.filter(g=>(!g.location||g.location===col.location)&&(!['flow','scenario'].includes(g.scope)||!ScenarioIds.options.includes(g.id as ScenarioId)||g.id===col.scenario)).some(g=>['frame','page','flow','scenario'].includes(g.scope)&&!['server-to-server','vendor-processing','contracts','consent-records','unvisited'].includes(g.id)&&!NOT_A_CAPTURE_GAP.test(g.reason));
     const rg = regimes.get(col.location) ?? { regime: 'unknown' as const, label: 'this location' };
     const comparisonFacts: ComparisonFacts = {scenario:col.scenario,regime:rg.regime,regimeLabel:rg.label,wiretap:isWiretapJurisdiction(m.locations.find(l=>l.id===col.location)?.jurisdictions??[]),unavailable,hasActivity,limitedOnly:row.kind==='tool'&&requests>0&&limited===requests&&!facts?.stores.some(isActiveStore),captureGap};
     return {columnId:col.id,...compareCookieBehavior(comparisonFacts,{categories:row.categories}),observed:actual,comparisonFacts,evidencePointers:[`/inventory/${i}`, ...(observed?['/behaviorObservations/'+m.behaviorObservations!.indexOf(observed)]:[])]} satisfies BehaviorMatrixCell;

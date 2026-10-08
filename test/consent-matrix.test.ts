@@ -35,6 +35,11 @@ describe('consent behavior matrix',()=>{
   // A coverage note that cannot hide requests or cookies does not turn an expected absence into "not checked".
   expect(status({...model,notTested:[{scope:'flow',id:'reject',reason:'navigator.globalPrivacyControl inside workers (init scripts do not run in workers; the Sec-GPC header is still sent)'}]},'storage','_fbp','reject').status).toBe('match');
   expect(status({...model,notTested:[{scope:'flow',id:'reject',reason:'unreadable frame in this visit'}]},'storage','_fbp','reject').status).toBe('unknown');
+  expect(status({...model,notTested:[{scope:'flow',id:'reject',location:'de',reason:'no visible email field to type the marker into'}]},'storage','_fbp','reject').status).toBe('match'); // a marker not typed hides nothing
+  // A visitor action that could not run anywhere (a banner with no close control, no per-category toggle)
+  // is a gap for its own column only — it says nothing about what the other visits captured.
+  expect(status({...model,notTested:[{scope:'scenario',id:'dismiss',location:'de',reason:'the banner offers no way to close it without choosing'}]},'storage','_fbp','reject').status).toBe('match');
+  expect(status({...model,notTested:[{scope:'flow',id:'partial',location:'de',reason:'could not grant a single category (no recognizable analytics-only control)'}]},'tool','Meta Pixel','reject').status).toBe('match');
  });
  it('a failed opt-out link is one column-level gap that says why, not a "needs a look" per cookie',()=>{
   const loc=evaluation.locations[0];

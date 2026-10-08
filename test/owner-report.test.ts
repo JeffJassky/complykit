@@ -112,6 +112,12 @@ describe('owner report: final', () => {
     expect(r.banner).toEqual({ state: 'none', visitsWithBanner: 0, visitsChecked: 2 });
     expect(r.scan).toMatchObject({ visitsDone: 2, visitsTotal: 2, pagesVisited: 2, finishedAt: '2026-10-07T10:05:00Z' });
   });
+  it('a choice the banner offers no control for says why, not "no banner"', () => {
+    const noClose = { scenario: 'dismiss', status: 'not-applicable', reason: 'the banner offers no way to close it without choosing', banner: { found: true, cmp: 'onetrust' }, choice: { kind: 'dismiss', ok: false, method: 'none' } };
+    const model = buildConsentReportModel(evaluation({ scenarios: [doNothing, noClose], inventory: [meta], observations: [obs('do-nothing', [fbpBeforeChoice])] }), []);
+    const r = buildOwnerReport({ ...base, stage: 'final', plan: undefined, model, finishedAt: '2026-10-07T10:05:00Z' });
+    expect(r.matrix.columns.find((c) => c.scenario === 'dismiss')).toMatchObject({ state: 'not-checked', note: 'Not applicable here: the banner offers no way to close it without choosing.' });
+  });
 
   it('no visit reached the site: one unreachable notice, no tools, decisions or to-do list', () => {
     const blocked = (scenario: string) => ({ scenario, status: 'not-tested', reason: 'bot protection blocked the visit (HTTP 503 — “503 Service Temporarily Unavailable”) — a recorded coverage gap, not evidence about the site', banner: { found: false } });

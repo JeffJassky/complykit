@@ -334,9 +334,11 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
       const grid = m?.grid[p.location]?.[p.scenario as ScenarioId];
       const note =
         grid?.status === 'not-applicable'
-          ? isChoice(p.scenario)
-            ? 'There was no consent banner, so this choice couldn’t be made.'
-            : 'This visit did not apply to the site.'
+          ? grid.banner !== 'no banner' && grid.reason
+            ? `Not applicable here: ${grid.reason}.` // the banner was there but offered no such control
+            : isChoice(p.scenario)
+              ? 'There was no consent banner, so this choice couldn’t be made.'
+              : 'This visit did not apply to the site.'
           : grid?.reason
             ? `This visit could not be completed: ${grid.reason}.`
             : 'This visit could not be completed.';
