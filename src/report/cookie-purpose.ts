@@ -41,6 +41,8 @@ export interface ComparisonFacts {
   /** Absent in reports saved before regimes existed: treated as 'opt-in', the old behavior. */
   regime?: PrivacyRegime;
   regimeLabel?: string;
+  /** The location carries wiretap-litigation exposure (CA, FL, PA): ad, recording, chat and identity tools are expected off until the visitor accepts. Absent in reports saved before this posture: today's behavior. */
+  wiretap?: boolean;
 }
 export interface PurposeDecision {
   categories: string[];
@@ -68,6 +70,9 @@ export function compareCookieBehavior(facts: ComparisonFacts, decision: PurposeD
   var saleShare = cats.some(function(c){return SALE_SHARE.indexOf(c) >= 0;});
   var context = !needsConsent && cats.some(function(c){return CONTEXT.indexOf(c) >= 0;});
   var analyticsOnly = cats.length > 0 && cats.every(function(c){return c === 'analytics' || c === 'performance' || c === 'error-monitoring';});
+  // Wiretap posture (CA/FL/PA, opt-out regimes): these categories are held until the visitor accepts. Inline list: this function runs inside saved HTML (registry WIRETAP_CATEGORIES, plus the legacy 'advertisement').
+  var WIRETAP = ['session-recording','chat','identity-resolution','advertising','advertisement'];
+  var wiretap = facts.wiretap === true && (regime === 'opt-out-signal' || regime === 'opt-out') && cats.some(function(c){return WIRETAP.indexOf(c) >= 0;});
   var s = facts.scenario;
   var noChoice = ['do-nothing','browse','dismiss','markers'].indexOf(s) >= 0;
   var refused = ['reject','withdraw','return-visit'].indexOf(s) >= 0;
@@ -79,6 +84,9 @@ export function compareCookieBehavior(facts: ComparisonFacts, decision: PurposeD
     if (s === 'accept') expected = 'May run after permission';
     else if (s === 'partial') { off = !analyticsOnly; expected = off ? 'Off: the visitor accepted analytics only' : 'May run: the visitor accepted analytics'; }
     else { off = true; expected = refused ? 'Off after the visitor refused' : 'Off until the visitor gives permission'; }
+  } else if (wiretap) {
+    if (s === 'accept') expected = 'May run: the visitor accepted';
+    else { off = true; expected = refused ? 'Off: the site offered a choice and the visitor refused' : optedOut ? 'Off after the visitor opted out' : 'Off until the visitor accepts: firing before a choice is what wiretap suits in this state are built on'; }
   } else if (needsConsent && (regime === 'opt-out-signal' || regime === 'opt-out')) {
     if (refused) { off = true; expected = 'Off: the site offered a choice and the visitor refused'; }
     else if (optedOut && saleShare && (regime === 'opt-out-signal' || s !== 'gpc')) { off = true; expected = s === 'gpc' ? 'Off or restricted while the browser sends the opt-out signal' : 'Off or restricted after the visitor opted out'; }
@@ -99,7 +107,7 @@ export function compareCookieBehavior(facts: ComparisonFacts, decision: PurposeD
   // "May run" is an expectation like any other: running (or not) meets it.
   if (!off) return result('match', 'Working as expected: ' + (facts.hasActivity ? 'it ran, and ' : 'it did not run; ') + 'it may run here under ' + where + '.');
   if (facts.limitedOnly) return regime === 'opt-in' ? result('review','Only consent-denied pings were sent, with nothing stored (e.g. Google Consent Mode "advanced"). Whether that is acceptable without consent is contested in the EU/UK.') : result('match','Only restricted-mode requests were sent (e.g. Google restricted data processing, Meta limited data use), with nothing stored. That is the expected opt-out behavior.');
-  if (facts.hasActivity) return result('mismatch','Active when ' + where + ' expect it to be off. This is a behavior mismatch, not a legal verdict.');
+  if (facts.hasActivity) return result('mismatch', wiretap && noChoice ? 'Active before any choice in a wiretap-litigation state, where this tool is expected off until the visitor accepts. This is a behavior mismatch and litigation exposure, not a legal verdict.' : 'Active when ' + where + ' expect it to be off. This is a behavior mismatch, not a legal verdict.');
   if (facts.captureGap) return result('unknown','Capture limits could hide activity; absence is not a pass.');
   return result('match','No activity was recorded, as expected. This covers the captured behavior and duration only.');
 }

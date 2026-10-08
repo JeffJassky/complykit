@@ -176,6 +176,8 @@ export {
   regimeFor,
   parseRegimeLocation,
   isOptOutSignalState,
+  isWiretapJurisdiction,
+  WIRETAP_STATES,
   regimeForCodes,
   isUsPrivacyActState,
   US_PRIVACY_ACT_STATES,

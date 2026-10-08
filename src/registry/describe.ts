@@ -5,6 +5,7 @@ import { requirementScopeFor } from './jurisdictions.js';
 import { regimeForCodes, type RegimeVerdict } from './regime.js';
 import { US_STATE_NAMES, usStateAct, type UsStatePrivacyAct } from './us-states.js';
 import { citationLabel } from './citation.js';
+import { isWiretapJurisdiction } from './wiretap.js';
 
 // "Which rules did the scan compare this location against?" — derived from the
 // registry alone, so the report's location line, its popover and the rules
@@ -122,6 +123,20 @@ const NO_ACT_MUST = [
  * (jurisdictions.ts) on a date (YYYY-MM-DD). Pure.
  */
 export function describeLocationRules(codes: readonly string[], onDate: string, opts: DescribeLocationOptions = {}): LocationRules {
+  const rules = describeBase(codes, onDate, opts);
+  if (!rules.verified || rules.regime === 'opt-in' || !isWiretapJurisdiction(codes)) return rules;
+  return {
+    ...rules,
+    summary: `${rules.summary} complykit also holds ad pixels, session recording, chat and identity-resolution tools until the visitor accepts, because wiretap suits are built on firing them before a choice.`,
+    mustHave: [...rules.mustHave, WIRETAP_MUST],
+  };
+}
+
+// complykit's posture for CA/FL/PA, not a statutory duty: the exposure is litigation, so the tools the suits target are expected off before a choice.
+const WIRETAP_MUST =
+  'Ad pixels, session recording, chat and identity-resolution tools are held until the visitor accepts. Firing them before a choice is the pattern wiretap suits (CA Penal Code §631/§638.51; Fla. Stat. §934.03; 18 Pa. C.S. §5703) are built on — complykit’s posture, litigation exposure rather than a statutory duty.';
+
+function describeBase(codes: readonly string[], onDate: string, opts: DescribeLocationOptions): LocationRules {
   const verified = opts.verified ?? codes.length > 0;
   if (!verified || !codes.length) {
     return {

@@ -103,7 +103,7 @@ describe('cookies inherit their tool; research covers only what is unknown', () 
     const sm = m.behaviorMatrix!.rows.find((r) => r.label === 'cx_visit')!;
     expect(sm.categories).toEqual(['session-recording', 'analytics']);
     expect(sm.categorySource).toBe('set by clarityish');
-    expect(sm.cells.map((c) => c.status)).toEqual(['match', 'match']); // California: analytics may run, and isn't sale/share
+    expect(sm.cells.map((c) => c.status)).toEqual(['mismatch', 'match']); // California is a wiretap-litigation state: session recording is held until the visitor accepts (do-nothing → mismatch); with no activity under GPC it is met
     expect(m.behaviorMatrix!.columns.map((c) => c.scenario)).toEqual(['do-nothing', 'gpc']);
   });
 

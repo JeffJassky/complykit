@@ -218,6 +218,8 @@ import {
   regimeFor,
   parseRegimeLocation,
   isOptOutSignalState,
+  isWiretapJurisdiction,
+  WIRETAP_STATES,
   regimeForCodes,
   isUsPrivacyActState,
   US_PRIVACY_ACT_STATES,
@@ -292,6 +294,7 @@ _use(requirementScopeFor(_getReq('eprivacy.art5.3')!, _j, '2026-10-02'));
 _use(normalizeRegion('US', 'California'));
 const _rg: string = regimeFor(parseRegimeLocation('US-CA'), '2026-10-06');
 _use(isOptOutSignalState('CA') && _rg);
+_use(isWiretapJurisdiction(['us', 'us-ca']) && WIRETAP_STATES.has('us-ca'));
 const _rvc: RegimeVerdict = regimeForCodes(['us', 'us-tx'], '2026-10-08', { unverifiedUs: 'baseline' });
 _use(isUsPrivacyActState('VA') && _rvc);
 const _acts: number = US_PRIVACY_ACT_STATES.length + US_OPT_OUT_SIGNAL_STATES.length + Object.keys(US_STATE_PRIVACY_ACTS).length + Object.keys(US_STATE_NAMES).length + EU_EEA_COUNTRIES.length;

@@ -100,12 +100,21 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 
 const GPC_SCENARIOS: ScenarioId[] = ['gpc', 'opt-out-all'];
 
+/** Why a banner scenario was skipped: a tool present but silent is the site's design for this visitor, not a detection failure. */
+export function noBannerReason(cmp?: string): string {
+  return cmp
+    ? `the consent tool (${cmp}) is on the page but showed no banner to this visitor — at this location the site does not ask for a choice before tracking`
+    : 'no consent banner detected (if the site shows one, the driver did not recognize it)';
+}
+
 class Visit {
   page!: Page;
   readonly screenshots: string[] = [];
   readonly siteReported = new Map<string, { source: string; value: string }>();
   bannerShown = false;
   cmp?: string;
+  /** A consent tool the driver detected that drew no banner for this visitor (e.g. US implied consent). */
+  silentCmp?: string;
   blocked?: string;
   throttleFailed?: string;
   private defaultToolRead = false;
@@ -249,6 +258,7 @@ class Visit {
           }
           return visible;
         });
+    if (popup && !seen) this.silentCmp = popup.cmp;
     if (popup && !seen) this.ev({ type: 'note', text: `consent tool detected (${popup.cmp}) but no banner is visible` });
     if (popup && seen) {
       this.bannerShown = true;
@@ -543,7 +553,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
         await v.land(landing);
         if (!v.bannerShown) {
           status = 'not-applicable';
-          reason = 'no consent banner detected (if the site shows one, the driver did not recognize it)';
+          reason = noBannerReason(v.silentCmp);
           break;
         }
         if (scenario === 'dismiss') {

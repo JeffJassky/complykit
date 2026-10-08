@@ -16,7 +16,7 @@ import type {
   TagContainer,
   TrackingEvaluation,
 } from '../../record/index.js';
-import { DEFAULT_KB, hostOf, regimeForCodes, lookupEntry, type KnowledgeBase, type KnowledgeEntry, type TagControl } from '../../registry/index.js';
+import { DEFAULT_KB, hostOf, regimeForCodes, lookupEntry, isWiretapJurisdiction, WIRETAP_CATEGORIES, type KnowledgeBase, type KnowledgeEntry, type TagControl } from '../../registry/index.js';
 import { PHASE_LABEL, WITHDRAW_GRACE_MS, graceCount, type Phase } from './analyze.js';
 import { GOOGLE_TAG_SETTINGS_FOR, googleTagIdOf, googleTagSettingOn } from './implementation.js';
 
@@ -245,9 +245,14 @@ export function regimeOf(jurisdictions: readonly string[], onDate: string = new 
   return regimeForCodes(jurisdictions, onDate, { unverifiedUs: 'baseline' });
 }
 
+// 'advertisement' is the legacy spelling of 'advertising' still found in saved inventories.
+const isWiretapCategory = (c: string): boolean => WIRETAP_CATEGORIES.has(c as never) || c === 'advertisement';
+
 /** Is the party expected OFF in this scenario under this regime? undefined = no expectation decidable here. */
-function expectedOff(categories: string[], regime: Regime, scenario: string): boolean | undefined {
+function expectedOff(categories: string[], regime: Regime, scenario: string, wiretap = false): boolean | undefined {
   if (!categories.length || categories.includes('unknown') || categories.includes('other') || regime === 'unknown') return undefined;
+  // Wiretap posture (CA/FL/PA): the categories wiretap suits target are held until the visitor accepts — chat included, though it is a context use elsewhere.
+  if (wiretap && regime !== 'opt-in' && categories.some(isWiretapCategory)) return scenario !== 'accept';
   const needsConsent = categories.some((c) => CONSENT_CATEGORIES.has(c));
   if (!needsConsent) return false;
   const saleShare = categories.some((c) => SALE_SHARE_CATEGORIES.has(c));
@@ -269,6 +274,7 @@ export function behaviorCellsFrom(ev: Pick<TrackingEvaluation, 'locations' | 'in
   for (const loc of ev.locations) {
     const verified = loc.verification.verdict === 'verified';
     const regime = regimeOf(loc.verification.jurisdictions, onDate);
+    const wiretap = isWiretapJurisdiction(loc.verification.jurisdictions);
     for (const sc of loc.scenarios) {
       const visits = observations.map((o, i) => ({ o, i })).filter(({ o }) => o.location === loc.spec.id && o.scenario === sc.scenario);
       const phases = SCENARIO_PHASES[sc.scenario] ?? PRE_CHOICE;
@@ -289,7 +295,7 @@ export function behaviorCellsFrom(ev: Pick<TrackingEvaluation, 'locations' | 'in
           no('the test location was not verified');
           continue;
         }
-        const off = expectedOff(p.categories, regime, sc.scenario);
+        const off = expectedOff(p.categories, regime, sc.scenario, wiretap);
         if (off === undefined) {
           no(regime === 'unknown' ? 'no automatic expectation for this location' : 'the purpose is not classified');
           continue;
@@ -346,7 +352,7 @@ export function behaviorCellsFrom(ev: Pick<TrackingEvaluation, 'locations' | 'in
             out.push({
               ...cell,
               status: 'mismatch',
-              reason: `${requests} data request(s)${activeStores.length ? ` and ${activeStores.length} cookie / storage item(s)` : ''} ${when}, where ${regime} rules expect it off`,
+              reason: `${requests} data request(s)${activeStores.length ? ` and ${activeStores.length} cookie / storage item(s)` : ''} ${when}, ${wiretap && regime !== 'opt-in' && p.categories.some(isWiretapCategory) && !CHOICE_SCENARIOS.has(sc.scenario) && sc.scenario !== 'gpc' ? 'before any choice, in a wiretap-litigation state where it is expected off until the visitor accepts (firing before a choice is what wiretap suits are built on)' : `where ${regime} rules expect it off`}`,
             });
           }
         }

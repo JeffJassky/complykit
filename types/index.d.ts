@@ -1307,6 +1307,10 @@ export function regimeFor(location: MeasuredPlace | undefined, onDate?: string):
 export function parseRegimeLocation(raw: unknown): MeasuredPlace | undefined;
 /** Whether a US state's law requires honoring GPC on a date. */
 export function isOptOutSignalState(region: string, onDate?: string): boolean;
+/** Whether a visitor from these jurisdiction codes carries wiretap-litigation exposure (CA, FL, PA — derived from the registry's wiretap requirements). */
+export function isWiretapJurisdiction(codes: readonly string[]): boolean;
+/** The wiretap-litigation state codes ("us-ca", "us-fl", "us-pa"). */
+export const WIRETAP_STATES: ReadonlySet<string>;
 /** EU-27 + EEA country codes (ePrivacy prior consent), shared with the client. */
 export const EU_EEA_COUNTRIES: readonly string[];
 /** Whether a US state has a comprehensive privacy act in force on a date. */
