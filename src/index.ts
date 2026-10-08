@@ -275,6 +275,9 @@ export {
 } from './report/index.js';
 export type { CompatibilityReport, CompatibilityRow, ChangeItem, ChangeGroup } from './report/index.js';
 export { reconcileCompatibility } from './consent-compatibility.js';
+// Multi-region scans: the collect-only handoff and the pure merge (no browser).
+export { COLLECTION_FILE, COLLECTION_KIND, COLLECTION_SCHEMA_VERSION, writeCollectionHandoff, readCollectionHandoff, mergeCollections, mergeEvidence } from './consent-collection.js';
+export type { ConsentCollectionHandoff } from './consent-collection.js';
 // D10: complykit's own tool — deployed config vs reality.
 export { evaluateConsentToolProof, configBehaviorCells } from './rules/tracking/consent-tool-proof.js';
 export type { ConsentToolProofInput } from './rules/tracking/consent-tool-proof.js';

@@ -2,13 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { runIdFromTimestamp, runDir, writeTrackingEvaluation, ScenarioId, type LocationSpec } from '../../record/index.js';
-import { buildKnowledgeBase, type KnowledgeEntryInput, type PartyCategory } from '../../registry/index.js';
+import { buildKnowledgeBase, registrableDomain, type KnowledgeEntryInput, type PartyCategory } from '../../registry/index.js';
 import { tracking } from '../../rules/index.js';
 import { buildConsentReportModel, renderConsentHtml, renderConsentMarkdown, diffConsentModels, renderChangeListMarkdown, reportRenderInfo, CHANGE_LIST_FILE } from '../../report/index.js';
 import { readWorkspaceFile, readConsentRunDir, findPreviousConsentRun, type PreviousRun } from '../previous-run.js';
 import type { WorkspaceSnapshot } from '../../site-workspace.js';
 import { readRunRemediation } from '../remediation-input.js';
-import { runConsentScan } from '../../pipeline.js';
+import { runConsentScan, collectConsentScan, analyzeConsentScan, type ConsentScanResult } from '../../pipeline.js';
+import { COLLECTION_KIND, COLLECTION_SCHEMA_VERSION, mergeCollections, mergeEvidence, readCollectionHandoff, writeCollectionHandoff, type ConsentCollectionHandoff } from '../../consent-collection.js';
 import { loadLocalCopy } from '../../local-copy.js';
 import { KbStore, defaultKbDir, ingestEvaluation } from '../../research/index.js';
 import { assembleAndWrite } from '../write-run.js';
@@ -59,6 +60,19 @@ records everything the browser does, and applies that location's rules.
                            With --events the owner report (owner-report.json, beside
                            the HTML report) is rewritten after every visit, from the
                            visits finished so far, and a \`live\` event points to it
+  --collect-only           multi-region worker: run the browser half only. Writes the
+                           evidence and collection.json (RAW timelines — transient,
+                           delete after merging) into the run dir; no findings, no
+                           report, no research queue. Prints the run dir.
+  --merge <dir>[,<dir>…]   multi-region primary: no browser. Merge the run dirs that
+                           hold a collection.json (from --collect-only runs of this
+                           site, same complykit version), run the rules over every
+                           location at once and write one normal run. Needs --url;
+                           not combined with --collect-only, --locations, --proxy,
+                           --scenarios, --quick, --runs, --concurrency, --local-copy.
+                           The input dirs are left untouched.
+  --failed id=reason       with --merge (repeatable): location \`id\` never arrived;
+                           the report lists it as not tested with this reason
   --local-copy <file>      TEST MODE: apply a change set to the site inside this
                            browser only (snippet first in <head>, tag rewrites,
                            local files at the tool's path, simulated tag-manager
@@ -96,6 +110,9 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
       workspace: { type: 'string' },
       previous: { type: 'string' },
       'local-copy': { type: 'string' },
+      'collect-only': { type: 'boolean' },
+      merge: { type: 'string' },
+      failed: { type: 'string', multiple: true },
       help: { type: 'boolean' },
     },
     allowPositionals: false,
@@ -106,6 +123,39 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
   }
   const cwd = values.cwd ?? process.cwd();
   const pkg = packageVersion();
+  // --merge (multi-region primary): no browser, so the visit-shaping flags make no sense with it.
+  const mergeArg = values.merge;
+  const merging = mergeArg !== undefined;
+  const collectOnly = values['collect-only'] === true;
+  if (merging) {
+    const refused: Array<[string, unknown]> = [['--collect-only', collectOnly || undefined], ['--locations', values.locations], ['--proxy', values.proxy?.length ? true : undefined], ['--scenarios', values.scenarios], ['--quick', values.quick], ['--runs', values.runs], ['--concurrency', values.concurrency], ['--local-copy', values['local-copy']]];
+    const bad = refused.find(([, v]) => v !== undefined && v !== false);
+    if (bad) {
+      process.stderr.write(`--merge cannot be combined with ${bad[0]} (a merge runs no browser)\n`);
+      return 2;
+    }
+    if (!values.url) {
+      process.stderr.write('--merge needs --url (the site the collections are of)\n');
+      return 2;
+    }
+  } else if (values.failed?.length) {
+    process.stderr.write('--failed only applies with --merge\n');
+    return 2;
+  }
+  const mergeDirs = merging ? mergeArg.split(',').map((d) => d.trim()).filter(Boolean).map((d) => path.resolve(cwd, d)) : [];
+  if (merging && !mergeDirs.length) {
+    process.stderr.write('--merge needs at least one run dir\n');
+    return 2;
+  }
+  const failed: Array<{ id: string; reason: string }> = [];
+  for (const f of values.failed ?? []) {
+    const i = f.indexOf('=');
+    if (i <= 0 || i === f.length - 1) {
+      process.stderr.write(`--failed expects locationId=reason, got: ${f}\n`);
+      return 2;
+    }
+    failed.push({ id: f.slice(0, i), reason: f.slice(i + 1) });
+  }
   const { config, source } = await loadConfig({ url: values.url, config: values.config }, cwd);
   const property = values.property ? config.properties.find((p) => p.id === values.property) : config.properties[0];
   if (!property) {
@@ -164,7 +214,9 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
   let locations: LocationSpec[];
   try {
     const ids = values.locations?.split(',').map((s) => s.trim()).filter(Boolean);
-    locations = ids?.length
+    locations = merging
+      ? [] // the merged collections say which locations there are
+      : ids?.length
       ? ids.map((id) => cc.locations?.find((l) => l.id === id) ?? tracking.locationPreset(id))
       : cc.locations?.length
         ? cc.locations
@@ -239,14 +291,15 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
   const runId = runIdFromTimestamp(now);
   const trace = values.quiet ? undefined : (line: string) => process.stdout.write(`    ${line}\n`);
   process.stdout.write(`consent evaluation: ${targetUrl} (config: ${source})\n`);
-  process.stdout.write(`  locations: ${locations.map((l) => `${l.id}${l.proxy ? ' [proxy]' : ''}`).join(', ')}${values.quick ? ' · quick' : ''}${runs && runs > 1 ? ` · ${runs} runs (repeats throttled)` : ''}\n`);
+  if (merging) process.stdout.write(`  merging ${mergeDirs.length} collection(s): ${mergeDirs.join(', ')}\n`);
+  else process.stdout.write(`  locations: ${locations.map((l) => `${l.id}${l.proxy ? ' [proxy]' : ''}`).join(', ')}${values.quick ? ' · quick' : ''}${runs && runs > 1 ? ` · ${runs} runs (repeats throttled)` : ''}\n`);
   if (localCopy) process.stdout.write(`  LOCAL COPY: ${localCopy.file} — documents from ${localCopy.origin} are rewritten in this browser; nothing is installed on the site\n`);
 
   const eventsFile = values.events ? path.resolve(cwd, values.events) : undefined;
   const event = (e: Record<string, unknown>): void => {
     if (eventsFile) fs.appendFileSync(eventsFile, JSON.stringify({ at: new Date().toISOString(), ...e }) + '\n');
   };
-  event({ type: 'start', runId: String(runId), url: targetUrl, locations: locations.map((l) => l.id) });
+  if (!merging) event({ type: 'start', runId: String(runId), url: targetUrl, locations: locations.map((l) => l.id) });
 
   // The owner report, live (plans/simple-report.md): with --events, rewritten
   // after every visit from the analysis of the visits finished so far, beside
@@ -269,7 +322,7 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
     event({ type: 'live', file: ownerFile, stage: report.stage, visitsDone: report.scan.visitsDone, visitsTotal: report.scan.visitsTotal });
   };
   const writeLive = (): void => {
-    if (!eventsFile) return;
+    if (!eventsFile || collectOnly) return; // a worker leaves no owner report
     try {
       const model = lastPartial ? buildConsentReportModel(lastPartial.evaluation, lastPartial.findings) : undefined;
       const pages = new Set((lastPartial?.timelines ?? []).flatMap((tl) => tl.snapshot.pages.map((p) => p.url)));
@@ -294,9 +347,7 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
     }
   };
 
-  let res: Awaited<ReturnType<typeof runConsentScan>>;
-  try {
-    res = await runConsentScan({
+  const scanOptions = {
     runId,
     property: property.id,
     targetUrl,
@@ -318,17 +369,69 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
     launchArgs: process.env.COMPLYKIT_BROWSER_ARGS ? process.env.COMPLYKIT_BROWSER_ARGS.split(/\s+(?=--)/) : undefined,
     trace,
     onEvent: onScanEvent,
-    onPartial: eventsFile
-      ? (partial) => {
-          lastPartial = partial;
-          liveSite = partial.evaluation.site;
-          writeLive();
+  };
+  let res: ConsentScanResult;
+  // The pages visited, for the final owner report: the live partials' (a normal scan) or the merged timelines'.
+  let pagesVisitedFrom = (): number => new Set((lastPartial?.timelines ?? []).flatMap((tl) => tl.snapshot.pages.map((p) => p.url))).size;
+  if (merging) {
+    // Multi-region primary: no browser. The workers' collections, merged, analyzed with this machine's KB.
+    try {
+      const handoffs = mergeDirs.map((d) => {
+        try {
+          return readCollectionHandoff(d);
+        } catch (err) {
+          throw new Error(`--merge ${d}: ${err instanceof Error ? err.message : String(err)}`);
         }
-      : undefined,
-  });
-  } catch (err) {
-    event({ type: 'error', message: err instanceof Error ? err.message : String(err) });
-    throw err;
+      });
+      const want = registrableDomain(new URL(targetUrl).hostname);
+      handoffs.forEach((h, i) => {
+        if (h.collection.site.registrableDomain !== want) throw new Error(`--merge ${mergeDirs[i]}: collection is of ${h.collection.site.registrableDomain}, not ${want} (--url)`);
+      });
+      const merged = mergeCollections(handoffs);
+      for (const f of failed) merged.notTested.push({ scope: 'location', id: f.id, location: f.id, reason: f.reason });
+      mergeEvidence(mergeDirs, runDir(runId, cwd));
+      locations = merged.locations.map((l) => l.spec);
+      event({ type: 'start', runId: String(runId), url: targetUrl, locations: locations.map((l) => l.id) });
+      for (const l of merged.locations) {
+        const observed = [l.verification.observed.country, l.verification.observed.region].filter(Boolean).join('-') || undefined;
+        live.locations.push({ id: l.spec.id, ...(l.spec.label ? { label: l.spec.label } : {}), verdict: l.verification.verdict, ...(observed ? { observed } : {}), ...(l.verification.note ? { note: l.verification.note } : {}) });
+      }
+      pagesVisitedFrom = () => new Set(merged.timelines.flatMap((tl) => tl.snapshot.pages.map((p) => p.url))).size;
+      res = analyzeConsentScan(merged, { ...scanOptions, locations });
+    } catch (err) {
+      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+      return 2;
+    }
+  } else if (collectOnly) {
+    // Multi-region worker: the browser half only. The primary runs the rules.
+    try {
+      const { artifacts: _artifacts, ...collection } = await collectConsentScan(scanOptions);
+      const handoff: ConsentCollectionHandoff = { kind: COLLECTION_KIND, schemaVersion: COLLECTION_SCHEMA_VERSION, packageVersion: pkg, property: property.id, targetUrl, runId: String(runId), collection };
+      const dir = runDir(runId, cwd);
+      writeCollectionHandoff(dir, handoff);
+      event({ type: 'collected', runId: String(runId), runDir: dir, locations: collection.locations.map((l) => l.spec.id) });
+      process.stdout.write(`run ${String(runId)}: collected ${collection.locations.length} location(s) · ${dir}\n`);
+      return 0;
+    } catch (err) {
+      event({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+      throw err;
+    }
+  } else {
+    try {
+      res = await runConsentScan({
+        ...scanOptions,
+        onPartial: eventsFile
+          ? (partial) => {
+              lastPartial = partial;
+              liveSite = partial.evaluation.site;
+              writeLive();
+            }
+          : undefined,
+      });
+    } catch (err) {
+      event({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+      throw err;
+    }
   }
 
   const { run, written } = assembleAndWrite({
@@ -370,7 +473,7 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
   // The owner report, final: the same model, every visit done.
   liveSite = res.evaluation.site;
   try {
-    writeOwner({ model, stage: 'final', locations: live.locations, finishedAt: res.evaluation.finishedAt, pagesVisited: new Set((lastPartial?.timelines ?? []).flatMap((tl) => tl.snapshot.pages.map((p) => p.url))).size || undefined });
+    writeOwner({ model, stage: 'final', locations: live.locations, finishedAt: res.evaluation.finishedAt, pagesVisited: pagesVisitedFrom() || undefined });
   } catch (err) {
     process.stderr.write(`owner report not written: ${err instanceof Error ? err.message : String(err)}\n`);
   }

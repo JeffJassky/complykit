@@ -1605,6 +1605,41 @@ export function renderChangeListMarkdown(m: { site: { host: string; url: string 
 /** Re-decide compatibility against the report's behavior matrix (after the site workspace is applied). `extraBehavior`: cells from another expected side (the deployed complykit config's, D10). */
 export function reconcileCompatibility(evaluation: TrackingEvaluation, opts?: { kb?: KnowledgeBase; extraBehavior?: BehaviorCell[] }): CompatibilitySection;
 
+// --- multi-region scans: collect on workers, merge on the primary -----------
+export const COLLECTION_FILE: 'collection.json';
+export const COLLECTION_KIND: 'complykit-consent-collection';
+export const COLLECTION_SCHEMA_VERSION: 1;
+/** Structurally the collect-browser `ConsentEvaluationCollection` (declared here so the root types do not import the collector's). */
+export interface MergedConsentCollection {
+  artifacts: Artifact[];
+  timelines: Timeline[];
+  locations: Array<{ spec: LocationSpec; verification: LocationVerification; scenarios: ScenarioSummary[] }>;
+  notTested: NotTestedItem[];
+  site: { url: string; host: string; registrableDomain: string };
+  autoconsentVersion?: string;
+  containers: ContainerCapture[];
+  startedAt: string;
+  finishedAt: string;
+}
+/** What a collect-only run leaves in its run dir. Contains RAW timelines: transient, never copied into a merged run. */
+export interface ConsentCollectionHandoff {
+  kind: typeof COLLECTION_KIND;
+  schemaVersion: typeof COLLECTION_SCHEMA_VERSION;
+  packageVersion: string;
+  property: string;
+  targetUrl: string;
+  runId: string;
+  collection: Omit<MergedConsentCollection, 'artifacts'>;
+}
+/** Writes <runDir>/collection.json; returns its path. */
+export function writeCollectionHandoff(runDir: string, handoff: ConsentCollectionHandoff): string;
+/** Throws on a missing file, a foreign file, or another schema version. */
+export function readCollectionHandoff(runDir: string): ConsentCollectionHandoff;
+/** Pure. Throws on version skew, different sites or properties, a location collected twice, or nothing to merge. */
+export function mergeCollections(handoffs: readonly ConsentCollectionHandoff[]): MergedConsentCollection;
+/** Copies each source's evidence/ into the destination (first source wins). Sources are untouched. */
+export function mergeEvidence(sourceRunDirs: readonly string[], destRunDir: string): { copied: number; skipped: number };
+
 // --- The proof step (D10): complykit's own tool, deployed config vs reality ---------
 /** Pure, over the evaluation record. See ConsentToolProof for the decision rules. */
 export function evaluateConsentToolProof(ev: TrackingEvaluation, input?: { workspaceConfig?: { value: unknown; at?: string; runId?: string } }): ConsentToolProof;
