@@ -225,7 +225,7 @@ export function buildTrackingEvaluation(input: EvaluationInput): TrackingEvaluat
 
   // The compatibility verdict per tool (B1), from everything above. Behavior
   // outranks implementation; missing inputs weaken verdicts, never strengthen.
-  const compatibility = evaluateCompatibility({ inventory, locations, markup: markup?.section, containers, consentApi, platform, behaviorObservations, kb });
+  const compatibility = evaluateCompatibility({ inventory, locations, markup: markup?.section, containers, consentApi, platform, behaviorObservations, kb, startedAt: input.startedAt });
 
   return {
     schemaVersion: 1,

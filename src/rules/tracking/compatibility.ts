@@ -16,8 +16,7 @@ import type {
   TagContainer,
   TrackingEvaluation,
 } from '../../record/index.js';
-import { DEFAULT_KB, hostOf, lookupEntry, type KnowledgeBase, type KnowledgeEntry, type TagControl } from '../../registry/index.js';
-import { optOutSignalStates } from './plan.js';
+import { DEFAULT_KB, hostOf, regimeForCodes, lookupEntry, type KnowledgeBase, type KnowledgeEntry, type TagControl } from '../../registry/index.js';
 import { PHASE_LABEL, WITHDRAW_GRACE_MS, graceCount, type Phase } from './analyze.js';
 import { GOOGLE_TAG_SETTINGS_FOR, googleTagIdOf, googleTagSettingOn } from './implementation.js';
 
@@ -241,14 +240,9 @@ const PRE_CHOICE: Phase[] = ['no-banner', 'before-banner', 'before-choice'];
 
 type Regime = 'opt-in' | 'opt-out-signal' | 'opt-out' | 'unknown';
 
-/** Same mapping as the matrix (report/consent-matrix.ts regimeFor), from the registry. */
-export function regimeOf(jurisdictions: readonly string[]): Regime {
-  if (jurisdictions.includes('eu') || jurisdictions.includes('uk')) return 'opt-in';
-  if (jurisdictions.includes('us')) {
-    const states = optOutSignalStates();
-    return jurisdictions.some((j) => states.has(j)) ? 'opt-out-signal' : 'opt-out';
-  }
-  return 'unknown';
+/** The regime for a location's jurisdictions on a date (default today): the registry's shared rule, same as the matrix. */
+export function regimeOf(jurisdictions: readonly string[], onDate: string = new Date().toISOString().slice(0, 10)): Regime {
+  return regimeForCodes(jurisdictions, onDate, { unverifiedUs: 'baseline' });
 }
 
 /** Is the party expected OFF in this scenario under this regime? undefined = no expectation decidable here. */
@@ -268,12 +262,13 @@ function expectedOff(categories: string[], regime: Regime, scenario: string): bo
   return false;
 }
 
-export function behaviorCellsFrom(ev: Pick<TrackingEvaluation, 'locations' | 'inventory' | 'behaviorObservations'>): BehaviorCell[] {
+export function behaviorCellsFrom(ev: Pick<TrackingEvaluation, 'locations' | 'inventory' | 'behaviorObservations'> & Partial<Pick<TrackingEvaluation, 'startedAt'>>): BehaviorCell[] {
+  const onDate = ev.startedAt?.slice(0, 10);
   const out: BehaviorCell[] = [];
   const observations = ev.behaviorObservations ?? [];
   for (const loc of ev.locations) {
     const verified = loc.verification.verdict === 'verified';
-    const regime = regimeOf(loc.verification.jurisdictions);
+    const regime = regimeOf(loc.verification.jurisdictions, onDate);
     for (const sc of loc.scenarios) {
       const visits = observations.map((o, i) => ({ o, i })).filter(({ o }) => o.location === loc.spec.id && o.scenario === sc.scenario);
       const phases = SCENARIO_PHASES[sc.scenario] ?? PRE_CHOICE;
@@ -1062,12 +1057,12 @@ export function compatibilityFor(party: PartyInventoryItem, input: Compatibility
 
 // --- Whole-evaluation -----------------------------------------------------------
 
-export type CompatibilityEvaluationInput = Pick<TrackingEvaluation, 'inventory' | 'locations'> & Partial<Pick<TrackingEvaluation, 'markup' | 'containers' | 'consentApi' | 'platform' | 'behaviorObservations'>> & { kb?: KnowledgeBase };
+export type CompatibilityEvaluationInput = Pick<TrackingEvaluation, 'inventory' | 'locations'> & Partial<Pick<TrackingEvaluation, 'markup' | 'containers' | 'consentApi' | 'platform' | 'behaviorObservations' | 'startedAt'>> & { kb?: KnowledgeBase };
 
 export function evaluateCompatibility(ev: CompatibilityEvaluationInput): CompatibilitySection {
-  const behavior = ev.behaviorObservations ? behaviorCellsFrom({ locations: ev.locations, inventory: ev.inventory, behaviorObservations: ev.behaviorObservations }) : [];
+  const behavior = ev.behaviorObservations ? behaviorCellsFrom({ locations: ev.locations, inventory: ev.inventory, behaviorObservations: ev.behaviorObservations, startedAt: ev.startedAt }) : [];
   const consentTool = consentToolDefaultFinding(ev.locations);
-  const regimes = Object.fromEntries(ev.locations.map((l) => [l.spec.id, l.verification.verdict === 'verified' ? regimeOf(l.verification.jurisdictions) : ('unknown' as const)]));
+  const regimes = Object.fromEntries(ev.locations.map((l) => [l.spec.id, l.verification.verdict === 'verified' ? regimeOf(l.verification.jurisdictions, ev.startedAt?.slice(0, 10)) : ('unknown' as const)]));
   const parties = ev.inventory.map((p, i) =>
     compatibilityFor(p, { markup: ev.markup, containers: ev.containers, consentApi: ev.consentApi, platform: ev.platform, behavior, kb: ev.kb, partyIndex: i, regimes }),
   );

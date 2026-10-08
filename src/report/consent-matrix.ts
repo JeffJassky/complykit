@@ -1,5 +1,5 @@
 import type { ConsentReportModel, ScenarioId, BehaviorMatrix, BehaviorMatrixCell } from '../../types/index.js';
-import { ALL_REQUIREMENTS, DEFAULT_KB, lookupStore } from '../registry/index.js';
+import { DEFAULT_KB, lookupStore, regimeForCodes, describeLocationRules } from '../registry/index.js';
 import { escapeHtml as esc } from './human.js';
 import { workspaceId } from './workspace.js';
 import { compareCookieBehavior, cookiePurposes, type ComparisonFacts, type PrivacyRegime } from './cookie-purpose.js';
@@ -14,27 +14,9 @@ const PHASE_LABEL: Record<string,string> = {'no-banner':'while no consent banner
 const SCENARIO_LABEL: Record<string,string> = {'do-nothing':'Before a choice',browse:'Browse without choosing',dismiss:'Banner closed without choosing',reject:'After rejection',accept:'After acceptance',partial:'After accepting analytics only',withdraw:'After withdrawal','return-visit':'Returning after rejection',gpc:'Privacy signal (GPC)','opt-out-all':'After opting out every way','opt-out-link':'After the opt-out link',markers:'Sample information test'};
 const SCENARIO_PHASES: Record<string,string[]> = {reject:['after-reject'],'return-visit':['after-reject'],withdraw:['after-withdraw'],dismiss:['after-dismiss'],accept:['after-accept'],partial:['after-partial'],'opt-out-link':['after-opt-out-link']};
 
-// US states whose law requires honoring an opt-out signal — derived from the
-// registry the same way the finding rules do (rules/tracking/plan.ts).
-function optOutSignalStates(): Set<string> {
-  const out = new Set<string>();
-  for (const r of ALL_REQUIREMENTS) {
-    const inst = String(r.instrument);
-    if (inst !== 'ccpa' && inst !== 'us-state-privacy') continue;
-    for (const j of r.jurisdictions ?? []) if (j.code.startsWith('us-')) out.add(j.code);
-  }
-  return out;
-}
-export function regimeFor(jurisdictions: readonly string[]): { regime: PrivacyRegime; label: string } {
-  if (jurisdictions.includes('eu') || jurisdictions.includes('uk')) return { regime: 'opt-in', label: 'EU/UK opt-in rules' };
-  if (jurisdictions.includes('us')) {
-    const states = optOutSignalStates();
-    const state = jurisdictions.find((j) => j.startsWith('us-'));
-    return jurisdictions.some((j) => states.has(j))
-      ? { regime: 'opt-out-signal', label: `${state ? state.slice(3).toUpperCase() : 'US'} rules (opt-out signals must be honored)` }
-      : { regime: 'opt-out', label: `${state ? state.slice(3).toUpperCase() : 'US'} rules (no opt-out-signal law)` };
-  }
-  return { regime: 'unknown', label: 'this location' };
+/** The regime and its label for a location's jurisdictions on a date (the shared registry rule; default today). */
+export function regimeFor(jurisdictions: readonly string[], onDate: string = new Date().toISOString().slice(0, 10)): { regime: PrivacyRegime; label: string } {
+  return { regime: regimeForCodes(jurisdictions, onDate, { unverifiedUs: 'baseline' }), label: describeLocationRules(jurisdictions, onDate).label };
 }
 
 /** "active in 1 of 2 runs" — the repeat-visit qualifier (A7). Never "clean": zero is "active in 0 of N runs". */
@@ -52,7 +34,7 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
   // Only visitor actions that actually ran somewhere: an action that couldn't
   // happen (no banner to reject) is one line in "not tested", not a column of dashes.
   const scenarios = m.scenarios.filter((sc) => m.locations.some((l) => m.grid[l.id]?.[sc]?.status === 'tested'));
-  const regimes = new Map(m.locations.map((l) => [l.id, regimeFor(l.jurisdictions)]));
+  const regimes = new Map(m.locations.map((l) => [l.id, regimeFor(l.jurisdictions, m.startedAt.slice(0, 10))]));
   // A column whose visitor action did not run, or whose choice did not succeed,
   // is ONE gap for the whole column — not a per-cookie "needs a look".
   const columnGap=(location:string,scenario:ScenarioId):string|undefined=>{
