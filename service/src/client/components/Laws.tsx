@@ -32,13 +32,13 @@ export function AuthorizedBox({ checked, onChange, disabled }: { checked: boolea
 }
 
 /** A running job's laws, one row each with its live state. Nothing when the job has no laws. */
-export function LawProgress({ job, report }: { job: JobSummary; report?: OwnerReport | null }) {
+export function LawProgress({ job, report }: { job: Pick<JobSummary, 'laws' | 'metrics' | 'progress'>; report?: OwnerReport | null }) {
   const rows = lawRows(job, report);
   if (!rows.length) return null;
   return (
     <ul className="law-progress" aria-label="Progress by law" data-testid="law-progress">
       {rows.map((r) => (
-        <li key={r.id} data-state={r.state}>
+        <li key={r.id} data-state={r.state} title={r.state === 'failed' ? r.error : undefined}>
           <span>{r.label}</span>
           <span className="muted">{r.text}</span>
         </li>

@@ -1,5 +1,5 @@
 import { DEFAULT_LAWS, LAWS, isLawId, type LawId } from '../../shared/laws';
-import type { JobSummary, OwnerReport } from '../../shared/api';
+import type { JobSummary, LawScanProgress, LawScanState, OwnerReport } from '../../shared/api';
 
 // The law checkboxes' logic (plans/multi-region-scans.md "The law checkboxes"):
 // the remembered selection, the order sent to the server, why a scan can't be
@@ -89,21 +89,49 @@ export function scanRequestOf(s: ScanFormState): ScanRequest {
 export interface LawRow {
   id: LawId;
   label: string;
-  state: 'waiting' | 'scanning' | 'done';
+  /** Where its scans run from ("Frankfurt"). */
+  region: string;
+  state: LawScanState;
   text: string;
+  /** failed: why. */
+  error?: string;
 }
 
-/** One row per law the job scans under, with live state from the owner report's matrix columns (one per location and scenario). Missing data reads as waiting. */
-export function lawRows(job: Pick<JobSummary, 'laws'>, report: OwnerReport | null | undefined): LawRow[] {
+function metricsText(p: LawScanProgress, regionLabel: string, analyzing: boolean): string {
+  switch (p.state) {
+    case 'waiting':
+      return 'Waiting';
+    case 'starting':
+      return p.local ? 'Starting' : `Starting the worker in ${regionLabel}`;
+    case 'verifying':
+      return 'Checking the location';
+    case 'scanning':
+      return p.visitsTotal > 0 ? `Scanning ${p.visitsDone} of ${p.visitsTotal}` : 'Scanning';
+    case 'collected':
+      return analyzing ? 'Preparing findings' : 'Collected';
+    case 'done':
+      return 'Done';
+    case 'failed':
+      return 'Failed';
+  }
+}
+
+/** One row per law the job scans under. Reads `job.metrics.laws` when the job has it; otherwise derives live state from the owner report's matrix columns (one per location and scenario). Missing data reads as waiting. */
+export function lawRows(job: Pick<JobSummary, 'laws'> & Partial<Pick<JobSummary, 'metrics' | 'progress'>>, report: OwnerReport | null | undefined): LawRow[] {
   const laws = job.laws ?? [];
   const columns = report?.matrix?.columns ?? [];
-  return laws.filter(isLawId).map((id) => {
+  const progress = job.metrics?.laws;
+  const analyzing = job.progress?.phase === 'analyzing';
+  return laws.filter(isLawId).map((id): LawRow => {
     const law = LAWS.find((l) => l.id === id)!;
+    const base = { id, label: law.label, region: law.regionLabel };
+    const p = progress?.find((x) => x.id === id);
+    if (p) return { ...base, state: p.state, text: metricsText(p, law.regionLabel, analyzing), ...(p.error !== undefined ? { error: p.error } : {}) };
     const cols = columns.filter((c) => c.location === law.locationId);
     const finished = cols.filter((c) => c.state === 'done' || c.state === 'not-checked').length;
-    if (!cols.length) return { id, label: law.label, state: 'waiting', text: 'Waiting' };
-    if (finished === cols.length) return { id, label: law.label, state: 'done', text: 'Done' };
-    if (cols.some((c) => c.state === 'running') || finished > 0) return { id, label: law.label, state: 'scanning', text: `Scanning (${finished} of ${cols.length})` };
-    return { id, label: law.label, state: 'waiting', text: 'Waiting' };
+    if (!cols.length) return { ...base, state: 'waiting', text: 'Waiting' };
+    if (finished === cols.length) return { ...base, state: 'done', text: 'Done' };
+    if (cols.some((c) => c.state === 'running') || finished > 0) return { ...base, state: 'scanning', text: `Scanning (${finished} of ${cols.length})` };
+    return { ...base, state: 'waiting', text: 'Waiting' };
   });
 }

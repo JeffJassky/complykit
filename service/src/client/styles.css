@@ -3586,15 +3586,116 @@ span.rp-cell {
   list-style: none;
   margin: 12px 0 0;
   padding: 0;
-  display: grid;
-  gap: 4px;
-  font-size: 14px;
-}
-.law-progress li {
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 4px 12px;
+  gap: 8px;
+  font-size: 13px;
+}
+.law-progress li {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  min-width: 0;
+}
+.law-progress li > span:first-child {
+  font-weight: 600;
+}
+.law-progress li[data-state='scanning'],
+.law-progress li[data-state='starting'],
+.law-progress li[data-state='verifying'] {
+  border-color: var(--blue-bd);
+  background: var(--blue-bg);
+}
+.law-progress li[data-state='collected'],
+.law-progress li[data-state='done'] {
+  border-color: var(--green-bd);
+  background: var(--green-bg);
+}
+.law-progress li[data-state='failed'] {
+  border-color: var(--red-bd);
+  background: var(--red-bg);
+}
+
+/* law tabs: one tab per law above that law's banner and matrix */
+.law-tabs {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.law-tabs [role='tablist'] {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  max-width: 100%;
+}
+.law-tabs [role='tab'] {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.law-tabs [role='tab']:hover {
+  color: var(--text);
+}
+.law-tabs [role='tab'][aria-selected='true'] {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+.law-tabs [role='tab']:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.law-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--faint);
+}
+.law-dot[data-state='scanning'],
+.law-dot[data-state='starting'],
+.law-dot[data-state='verifying'] {
+  background: var(--accent);
+}
+.law-dot[data-state='collected'],
+.law-dot[data-state='done'] {
+  background: var(--green);
+}
+.law-dot[data-state='failed'] {
+  background: var(--red);
+}
+.law-tabs [role='tabpanel'] {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+.law-tabs [role='tabpanel']:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+@media (max-width: 640px) {
+  .law-tabs [role='tablist'] {
+    margin: 0 -16px;
+    padding: 0 16px;
+  }
 }
 .law-summary {
   display: block;

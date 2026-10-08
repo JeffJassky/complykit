@@ -1,8 +1,10 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { JobReportResponse, OwnerCell, OwnerToolActivity, OwnerToolRow, RemediationTask } from '../../shared/api';
-import type { LawId } from '../../shared/laws';
+import { LAWS, type LawId } from '../../shared/laws';
 import { api } from '../lib/api';
 import { JobLaws, LawProgress, RescanButton } from './Laws';
+import { lawRows } from '../lib/laws';
+import { tabReport } from '../lib/lawReport';
 import { formatClock, jobDuration } from '../lib/format';
 import { openDecisions, STATUS_LABEL as TASK_STATUS_LABEL, TASK_CHANGE_PREFIX } from '../lib/checklist';
 import { copyText, useReviewer } from '../lib/useKb';
@@ -65,7 +67,8 @@ export function ScanStatus({ data, now, onCancel }: { data: JobReportResponse; n
   const done = report?.scan.visitsDone ?? job.progress.done;
   const total = report?.scan.visitsTotal || job.progress.total;
   const pct = Math.round(Math.max(0, Math.min(1, total ? done / total : job.progress.fraction)) * 100);
-  const current = report?.scan.current ?? (job.progress.phase === 'verifying-location' ? 'Checking the test location' : job.progress.phase === 'analyzing' ? 'Preparing your findings' : undefined);
+  const manyLaws = (job.laws?.length ?? 0) >= 2;
+  const current = manyLaws ? undefined : report?.scan.current ?? (job.progress.phase === 'verifying-location' ? 'Checking the test location' : job.progress.phase === 'analyzing' ? 'Preparing your findings' : undefined);
   return (
     <section className="rp-section rp-status" aria-labelledby="rp-status-title" data-testid="scan-status">
       <div className="rp-status-head">
@@ -682,6 +685,75 @@ export function Unreachable({ data, ui, actions }: { data: JobReportResponse; ui
   );
 }
 
+// --- law tabs (plans/per-law-report-contract.md, C3) ---------------------------------
+
+/** The tabs for a multi-law job: stateless, so render tests can pick the selected law. */
+export function LawTabsView({ data, selected, onSelect, ui = {}, actions = {} }: { data: JobReportResponse; selected: LawId; onSelect: (id: LawId) => void; ui?: ReportUiState; actions?: ReportActions }) {
+  const base = useId();
+  const rows = lawRows(data.job, data.report);
+  const tabId = (id: LawId) => `${base}-tab-${id}`;
+  const panelId = `${base}-panel`;
+  const row = rows.find((r) => r.id === selected) ?? rows[0];
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const i = rows.findIndex((r) => r.id === selected);
+    const next = rows[(i + (e.key === 'ArrowRight' ? 1 : rows.length - 1)) % rows.length];
+    if (!next) return;
+    e.preventDefault();
+    onSelect(next.id);
+    document.getElementById(tabId(next.id))?.focus();
+  };
+  let body: ReactNode = null;
+  if (row) {
+    const report = tabReport(data, row.id);
+    if (row.state === 'failed') {
+      body = (
+        <div className="rp-section rp-alert" role="alert">
+          <p>
+            <strong>This law could not be scanned.</strong> {row.error ? <span className="muted">{row.error}</span> : null}
+          </p>
+        </div>
+      );
+    } else if (!report && (row.state === 'waiting' || row.state === 'starting' || row.state === 'verifying')) {
+      body = <p className="muted">{row.text}…</p>;
+    } else {
+      const lawData: JobReportResponse = { ...data, report };
+      body = (
+        <>
+          <BannerLine data={lawData} />
+          <Matrix data={lawData} ui={ui} actions={actions} />
+        </>
+      );
+    }
+  }
+  return (
+    <div className="law-tabs" data-testid="law-tabs">
+      <div role="tablist" aria-label="Laws scanned" onKeyDown={onKeyDown}>
+        {rows.map((r) => (
+          <button key={r.id} type="button" role="tab" id={tabId(r.id)} aria-selected={r.id === row?.id} aria-controls={panelId} tabIndex={r.id === row?.id ? 0 : -1} onClick={() => onSelect(r.id)}>
+            {r.label}
+            <span className="law-dot" data-state={r.state} aria-hidden="true" />
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" id={panelId} aria-labelledby={row ? tabId(row.id) : undefined} tabIndex={0}>
+        {body}
+      </div>
+    </div>
+  );
+}
+
+/** Initial tab: the first law scanning, else the first. */
+function initialLaw(data: JobReportResponse): LawId {
+  const rows = lawRows(data.job, data.report);
+  return (rows.find((r) => r.state === 'scanning') ?? rows[0])?.id ?? LAWS[0].id;
+}
+
+export function LawTabs({ data, ui, actions }: { data: JobReportResponse; ui?: ReportUiState; actions?: ReportActions }) {
+  const [selected, setSelected] = useState<LawId>(() => initialLaw(data));
+  return <LawTabsView data={data} selected={selected} onSelect={setSelected} ui={ui} actions={actions} />;
+}
+
 // --- the page -----------------------------------------------------------------------
 
 export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: JobReportResponse; now: number; ui?: ReportUiState; actions?: ReportActions }) {
@@ -712,8 +784,14 @@ export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: Job
       {consent && data.report?.scan.unreachable ? <Unreachable data={data} ui={ui} actions={actions} /> : null}
       {consent && !data.report?.scan.unreachable ? (
         <>
-          <BannerLine data={data} />
-          <Matrix data={data} ui={ui} actions={actions} />
+          {(job.laws?.length ?? 0) >= 2 ? (
+            <LawTabs data={data} ui={ui} actions={actions} />
+          ) : (
+            <>
+              <BannerLine data={data} />
+              <Matrix data={data} ui={ui} actions={actions} />
+            </>
+          )}
           <TodoList data={data} ui={ui} actions={actions} />
         </>
       ) : null}
