@@ -7,6 +7,9 @@ import { COLLECTION_FILE, COLLECTION_KIND, COLLECTION_SCHEMA_VERSION, mergeColle
 import { asRunId, runDir, type Finding, type LocationSpec } from '../src/record/index.js';
 import { buildKnowledgeBase } from '../src/registry/index.js';
 import { cmdConsent } from '../src/cli/commands/consent.js';
+import { buildOwnerReport } from '../src/report/owner-report.js';
+import { buildConsentReportModel } from '../src/report/consent-model.js';
+import type { ConsentScanPartial } from '../src/pipeline.js';
 import { loadConfigFor } from '../src/cli/config-load.js';
 import { startTrackingSite, type TrackingSite } from './fixtures/tracking-site.js';
 
@@ -47,6 +50,7 @@ suite('collect on workers, merge on the primary', () => {
   let whole: ConsentScanResult;
   let merged: ConsentScanResult;
   const handoffDirs: string[] = [];
+  const partials = new Map<string, ConsentScanPartial[]>();
 
   beforeAll(async () => {
     site = await startTrackingSite();
@@ -77,7 +81,7 @@ suite('collect on workers, merge on the primary', () => {
     for (const loc of [DE, CA]) {
       const cwd = mk();
       const runId = asRunId(`worker-${loc.id}`);
-      const { artifacts: _a, ...collection } = await collectConsentScan({ ...base, runId, cwd, locations: [loc] });
+      const { artifacts: _a, ...collection } = await collectConsentScan({ ...base, runId, cwd, locations: [loc], onPartial: (p) => partials.set(loc.id, [...(partials.get(loc.id) ?? []), p]) });
       const h: ConsentCollectionHandoff = { kind: COLLECTION_KIND, schemaVersion: COLLECTION_SCHEMA_VERSION, packageVersion: '0.0.0-test', property: 'fixture', targetUrl: site.url, runId: String(runId), collection };
       const dir = runDir(runId, cwd);
       writeCollectionHandoff(dir, h);
@@ -97,6 +101,23 @@ suite('collect on workers, merge on the primary', () => {
       expect(fs.existsSync(path.join(d, COLLECTION_FILE))).toBe(true);
       expect(fs.existsSync(path.join(d, 'evidence', 'tracking'))).toBe(true);
       for (const f of ['findings.jsonl', 'run.json', 'tracking.json', 'consent-report.html']) expect(fs.existsSync(path.join(d, f)), f).toBe(false);
+    }
+  });
+
+  // plans/per-law-report-contract.md, PR A1: a collector analyzes as it goes (onPartial,
+  // once per finished visit) so the CLI can leave a live owner report for the primary to
+  // show that law's banner and tools while the other laws still run. The collection
+  // handed off is unchanged by it.
+  it('collect-only reports a live analysis after every visit when asked', () => {
+    for (const loc of [DE, CA]) {
+      const got = partials.get(loc.id)!;
+      expect(got.length, loc.id).toBe(loc.scenarios!.length);
+      const last = got[got.length - 1];
+      expect(last.evaluation.locations.map((l) => l.spec.id)).toEqual([loc.id]);
+      expect(last.evaluation.inventory.length).toBeGreaterThan(0);
+      const owner = buildOwnerReport({ model: buildConsentReportModel(last.evaluation, last.findings), stage: 'live', runId: 'r', site: last.evaluation.site, startedAt: 'x' });
+      expect(owner.locations?.map((l) => l.id)).toEqual([loc.id]);
+      expect(owner.matrix.tools.length).toBeGreaterThan(0);
     }
   });
 

@@ -1,11 +1,12 @@
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import type { JobReportResponse, JobSummary, OwnerReport, RemediationTask, SiteSummary } from '../../shared/api';
+import type { JobReportResponse, JobSummary, LawScanProgress, OwnerReport, RemediationTask, SiteSummary } from '../../shared/api';
+import { LAWS, type LawId } from '../../shared/laws';
 import { parseHash, reportHref } from '../lib/useHashView';
 import { createRerenderQueue, isMoving } from '../lib/useJobReport';
 import { HomeView, siteRows, siteStatus } from './Home';
-import { BannerLine, Matrix, ReportPageView, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
+import { BannerLine, LawTabsView, Matrix, ReportPageView, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
 
 // The report page (plans/simple-report.md), rendered per section and state.
 
@@ -315,5 +316,91 @@ describe('home', () => {
     expect(out).toContain('href="#report/b"');
     expect(out).not.toContain('scenario');
     expect(text(<HomeView rows={[]} now={NOW} loaded onSubmit={() => {}} />)).toContain('No sites yet.');
+  });
+});
+
+// plans/per-law-report-contract.md, PR C3: a job with two or more laws shows one tab per
+// law (its banner and matrix), above one to-do list; one law or none: the page as before.
+describe('law tabs', () => {
+  const progress = (id: LawId, state: LawScanProgress['state'], over: Partial<LawScanProgress> = {}): LawScanProgress => {
+    const l = LAWS.find((x) => x.id === id)!;
+    return { id, locationId: l.locationId, region: l.flyRegion, local: !!l.local, state, visitsDone: 0, visitsTotal: 0, ...over };
+  };
+  const fiveLaws = (eu: OwnerReport | null = owner()): JobReportResponse => {
+    const laws: JobReportResponse['laws'] = [
+      { id: 'eu', progress: progress('eu', 'scanning', { visitsDone: 1, visitsTotal: 3 }), report: eu },
+      { id: 'uk', progress: progress('uk', 'failed', { error: 'worker in lhr failed: did not become healthy' }), report: null },
+      { id: 'ca', progress: progress('ca', 'collected'), report: null },
+      { id: 'tx', progress: progress('tx', 'starting'), report: null },
+      { id: 'us', progress: progress('us', 'waiting'), report: null },
+    ];
+    const j = job({ laws: laws.map((l) => l.id), progress: { ...job().progress, phase: 'verifying-location', current: 'verifying de, uk' }, metrics: { ...job().metrics, laws: laws.map((l) => l.progress) } });
+    return running({ job: j, report: null, laws });
+  };
+  const panel = (out: string) => out.slice(out.indexOf('role="tabpanel"'));
+
+  it('five tabs in catalog order, the chosen one selected, one panel', () => {
+    const out = html(<LawTabsView data={fiveLaws()} selected="eu" onSelect={() => {}} />);
+    expect([...out.matchAll(/role="tab"[^>]*>/g)]).toHaveLength(5);
+    expect(text(<LawTabsView data={fiveLaws()} selected="eu" onSelect={() => {}} />)).toMatch(/EU law.*UK law.*California law.*Texas law.*US, no state privacy law/s);
+    expect(out.match(/aria-selected="true"/g)).toHaveLength(1);
+    expect(out).toMatch(/role="tab"[^>]*aria-selected="true"[^>]*>(?:(?!role="tab").)*EU law/s);
+    expect(out.match(/role="tabpanel"/g)).toHaveLength(1);
+  });
+
+  it('a scanning law shows its own banner line and matrix', () => {
+    const p = panel(html(<LawTabsView data={fiveLaws()} selected="eu" onSelect={() => {}} />));
+    expect(p).toContain('data-testid="banner"');
+    expect(p).toContain('data-testid="matrix"');
+    expect(p).toContain('Meta Pixel');
+  });
+
+  it('a failed law says it could not be scanned, and why', () => {
+    const p = panel(html(<LawTabsView data={fiveLaws()} selected="uk" onSelect={() => {}} />));
+    expect(p).toContain('role="alert"');
+    expect(p).toContain('This law could not be scanned.');
+    expect(p).toContain('worker in lhr failed: did not become healthy');
+    expect(p).not.toContain('data-testid="matrix"');
+  });
+
+  it('a starting remote law with nothing yet says where its worker is starting', () => {
+    const p = panel(html(<LawTabsView data={fiveLaws()} selected="tx" onSelect={() => {}} />));
+    expect(p).toContain('Starting the worker in Dallas');
+    expect(p).not.toContain('data-testid="matrix"');
+  });
+
+  it('a finished job’s tab shows the final report cut to that law’s location', () => {
+    const final = owner({
+      stage: 'final',
+      matrix: {
+        columns: [
+          { id: 'de:do-nothing', location: 'de', scenario: 'do-nothing', label: 'Before a choice', state: 'done' },
+          { id: 'us-ca:gpc', location: 'us-ca', scenario: 'gpc', label: 'Privacy signal (GPC)', state: 'done' },
+        ],
+        tools: [{ id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', cells: [bad, ok], cookies: [] }],
+        counts: { ok: 1, mismatch: 1, needsDecision: 0, pending: 0, notChecked: 0 },
+      },
+    });
+    const d = fiveLaws(null);
+    const doneLaws = d.laws!.map((l) => ({ ...l, progress: { ...l.progress, state: l.id === 'uk' ? ('failed' as const) : ('done' as const) }, report: null }));
+    const data = { ...d, job: job({ status: 'done', laws: d.job.laws }), report: final, laws: doneLaws };
+    const p = panel(html(<LawTabsView data={data} selected="eu" onSelect={() => {}} />));
+    expect(p).toContain('Before a choice');
+    expect(p).not.toContain('Privacy signal (GPC)');
+  });
+
+  it('the page: two or more laws get the tabs and one to-do list; one law gets the page as before', () => {
+    const many = html(<ReportPageView data={fiveLaws()} now={NOW} />);
+    expect(many).toContain('role="tablist"');
+    expect(many.match(/data-testid="todo"/g)).toHaveLength(1);
+    expect(many.indexOf('role="tablist"')).toBeLessThan(many.indexOf('data-testid="todo"'));
+    const one = html(<ReportPageView data={running({ job: job({ laws: ['eu'] }) })} now={NOW} />);
+    expect(one).not.toContain('role="tablist"');
+    expect(one).toContain('data-testid="matrix"');
+  });
+
+  it('with several laws the status drops the "Now" line (it would flip between locations)', () => {
+    expect(html(<ReportPageView data={fiveLaws()} now={NOW} />)).not.toContain('data-testid="current"');
+    expect(html(<ReportPageView data={running()} now={NOW} />)).toContain('data-testid="current"');
   });
 });

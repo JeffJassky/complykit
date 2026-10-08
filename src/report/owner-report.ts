@@ -102,6 +102,18 @@ export interface OwnerToolActivity {
   hostedOn?: { provider: string; name: string; matchesSite: boolean };
 }
 
+/** One location of the scan: its verdict, its visits, and the banner its visits saw. */
+export interface OwnerLocationSummary {
+  id: string;
+  label: string;
+  verified: boolean;
+  observed?: string;
+  note?: string;
+  visitsDone: number;
+  visitsTotal: number;
+  banner: { state: 'pending' | 'detected' | 'none'; provider?: string; visitsWithBanner: number; visitsChecked: number };
+}
+
 export interface OwnerReport {
   version: 1;
   /** live: built from the visits finished so far; final: the finished run (re-rendered with the site's classifications). */
@@ -145,6 +157,8 @@ export interface OwnerReport {
   decisions: Array<{ partyId: string; label: string; domain: string; classKey: string }>;
   /** The checklist this run's report carries (the generated config's tasks), when there is one. The service replaces it with the site workspace's, with live status. */
   todo?: { tasks: RemediationTask[]; configAt?: string; runId?: string };
+  /** Every location of the scan, in plan order. Absent on reports written before it existed. */
+  locations?: OwnerLocationSummary[];
 }
 
 type InventoryItem = ConsentReportModel['inventory'][number];

@@ -40,6 +40,9 @@ the files A will produce, so B does not wait for A. Branch base: `multi-region` 
 `main`). One worktree per PR, `service/node_modules` and `node_modules` symlinked from the
 main checkout, never committed. **Never `git stash`**; park work with a WIP commit.
 
+Browser tests: Playwright's pinned Chromium is not installed on this Mac; run them with
+`COMPLYKIT_BROWSER_CHANNEL=chrome` or they skip silently.
+
 Run before reporting done: `npx tsc --noEmit` (root, where files under `src/` change) and
 `cd service && npx tsc --noEmit -p tsconfig.server.json && npx tsc --noEmit -p
 tsconfig.client.json`; `npx vitest run <the test files named in your PR>`; `npm run
@@ -52,7 +55,7 @@ one looks wrong, stop and report which assertion and why.
 
 ### 0a. `service/src/shared/laws.ts`
 
-Add to `Law`: `regionLabel: string` — Frankfurt, London, Los Angeles, Dallas, Chicago.
+Add to `Law`: `regionLabel: string` — Frankfurt, London, Los Angeles, Dallas, Chicago. **Done in PR 0.**
 
 ### 0b. `service/src/shared/api.ts`
 
@@ -125,17 +128,19 @@ how `OwnerReport` is kept in sync today and follow it).
 Add `{ type: 'collected'; at: string; runId: string; runDir: string; locations: string[] }`
 (the CLI already emits it in collect-only mode).
 
-### 0e. Contract tests (written failing, by Fable)
+### 0e. Contract tests (written failing, by Fable) — **done in PR 0**
 
 - `test/owner-report-locations.test.ts` (root) — PR A.
-- `test/consent-merge-browser.test.ts` — one new assertion in the existing collect-only
-  case — PR A.
+- `test/consent-merge-browser.test.ts` — new case "collect-only reports a live analysis
+  after every visit when asked" — PR A.
 - `service/test/events-laws.test.ts` — PR B.
 - `service/test/multi-region-live.test.ts` — PR B.
-- `service/src/client/lib/lawReport.test.ts` and additions to `Laws.test.tsx`,
-  `ReportPage.test.tsx` — PR C.
+- `service/src/client/lib/lawReport.test.tsx` (`.tsx`: the service's vitest only picks
+  up `.test.tsx` under `src/client`), the `per-law chips from metrics.laws` block in
+  `Laws.test.tsx`, the `law tabs` block in `ReportPage.test.tsx` — PR C.
 
-Their contents are specified under each PR. Sonnet does not edit them.
+Types 0a–0d are in the tree and compile. The tests are the spec where this document and
+a test disagree; read them before coding. Sonnet does not edit them.
 
 ---
 
@@ -189,12 +194,12 @@ existing tests).
    `report.banner` minus `consentTools`.
 4. Existing `test/owner-report*.test.ts` unchanged and green.
 
-`test/consent-merge-browser.test.ts`, case "collect-only writes evidence but no findings,
-report or evaluation": additionally asserts `owner-report.json` exists in each handoff dir
-with `stage === 'live'`, `scan.visitsDone === scan.visitsTotal > 0`, one `locations`
-entry, and `matrix.tools.length > 0` (the fixture site loads a tracker). Still asserts no
-`findings.jsonl`, `run.json`, `tracking.json`, `consent-report.html`. The CLI `--merge`
-case still ends with a `done` event and a `final` owner report.
+`test/consent-merge-browser.test.ts`, new case: `collectConsentScan` with `onPartial`
+calls it once per visit (DE 3, CA 2); the last partial's evaluation has the one location
+and a non-empty inventory, and an owner report built from it has one `locations` entry and
+tools. Tested at the library level because the CLI's local location calls real
+geolocation services. The CLI wiring in A1 (`writeLive` in collect-only) is small and is
+checked by the end-of-line review on Fly; keep it the same code path as the normal scan's.
 
 ### Invariants
 - A collect-only run still writes exactly one `collection.json` and no findings/report
@@ -281,6 +286,10 @@ touching disk). The existing `report` field keeps its meaning.
 
 ### B5. Fixtures
 
+Both fake CLIs gain hostname rule `hold.*`: wait ~500 ms before the first visit and
+~1500 ms after the last, before `collected` (lets a test see a law mid-scan). The tests
+default to `hold.example.com`.
+
 - `fake-worker-cli-regional.mjs`: after each `scenario-done`, write
   `<run>/owner-report.json` — a minimal valid `OwnerReport` (`version 1, stage 'live'`,
   one location = `--locations`, `scan.visitsDone` = visits so far, `visitsTotal 2`,
@@ -315,9 +324,11 @@ touching disk). The existing `report` field keeps its meaning.
 2. Worker `GET /internal/jobs/:id/report` → 404 before the first visit, 200 with the
    JSON after; 401 without the secret.
 3. After the job is `done`: `laws[].report` all null, `live/` deleted, `gather/` deleted.
-4. `fail.` host on a worker: that law `failed` with the worker's message; its `report`
-   is whatever was written before (may be null); job still `done`.
-5. Cancel mid-scan: `live/` kept; `laws` states frozen (no entry flips to `done`).
+4. `fail.` host (both collectors fail, job `failed`): every law `failed`, each `error`
+   contained in `job.error`; eu's starts `worker in fra failed:` and carries the worker's
+   stderr.
+5. Cancel mid-scan: `laws` still returned; no entry flips to `done`.
+6. Jobs without laws: no `laws` field.
 
 ### Invariants
 - One write path to `job.metrics` (`ConsentProgress`); the runner never pokes entries
@@ -340,8 +351,8 @@ listed below.
 
 ### C1. `lawRows` from `metrics.laws`
 
-`lawRows(job, report)` keeps its signature and output type, adds `region` and `error?` to
-`LawRow`, and reads `job.metrics.laws` when present (fall back to today's column-derived
+`lawRows(job, report)` keeps its signature and output type, adds `region` (the law's
+`regionLabel`, "Frankfurt") and `error?` to `LawRow`; tolerates `job.metrics` absent, and reads `job.metrics.laws` when present (fall back to today's column-derived
 logic for jobs without it). `state` widens to `LawScanState`. Text per state:
 
 | state | text |
@@ -381,7 +392,8 @@ LAWS[id].locationId) : null)`.
   job has ≥ 2 laws (it flips between locations); keep it otherwise. `LawProgress` becomes
   a chip row (`ul.law-progress`, `li[data-state]`): label + text; `failed` chips carry
   `title={error}`.
-- New `LawTabs({ data, ui, actions })`, used by `ReportPageView` **instead of** the flat
+- New `LawTabs({ data, ui, actions })` in `ReportPage.tsx` (it needs `BannerLine` and
+  `Matrix`), used by `ReportPageView` **instead of** the flat
   `BannerLine` + `Matrix` when `job.laws.length >= 2` (one law or none: page unchanged).
   Structure: `div.law-tabs` → `div[role=tablist]` with one `button[role=tab]` per law in
   catalog order (`aria-selected`, `aria-controls`, `id`; label + a small state dot
@@ -407,7 +419,7 @@ failed red). Dark mode via the existing tokens only. No new colours.
 
 ### Tests (Fable writes; must pass)
 
-`service/src/client/lib/lawReport.test.ts`:
+`service/src/client/lib/lawReport.test.tsx`:
 1. `reportForLocation` on a two-location final report keeps only that location's columns
    and the matching cell indices for tools and cookies; counts recomputed; banner and
    `scan.location` from `locations`; drops a tool whose cells there are all pending.
@@ -425,7 +437,8 @@ five tabs in catalog order, `aria-selected` on the chosen one, one tabpanel; fai
 panel has the alert and the error text; starting law panel has the "Starting the worker
 in Frankfurt" line; scanning law panel renders `[data-testid=banner]` and
 `[data-testid=matrix]` with that law's columns only; `ReportPageView` with one law renders
-no tablist; with two laws renders a tablist and exactly one `[data-testid=todo]`.
+no tablist; with two laws renders a tablist and exactly one `[data-testid=todo]`; with
+several laws `[data-testid=current]` is absent even when the job's phase would show it.
 
 ### Invariants
 - `BannerLine`, `Matrix`, `TodoList` are not modified.

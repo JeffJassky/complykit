@@ -57,6 +57,37 @@ export interface JobMetrics {
   scenarios: Array<{ location: string; scenario: string; run?: number; status: 'running' | 'tested' | 'not-tested' | 'not-applicable'; reason?: string; durationMs?: number }>;
   /** Every planned visit, in run order, as each location's plan arrives (absent on jobs from before it existed). */
   planned?: Array<{ location: string; scenario: string; run?: number }>;
+  /** One entry per law the job scans under, in catalog order. Absent on jobs without laws and on jobs from before it existed. */
+  laws?: LawScanProgress[];
+}
+
+/**
+ * One law's collection (plans/per-law-report-contract.md):
+ * waiting → starting (worker or child) → verifying (location) → scanning → collected → done (merged).
+ * failed is terminal and carries `error`.
+ */
+export type LawScanState = 'waiting' | 'starting' | 'verifying' | 'scanning' | 'collected' | 'done' | 'failed';
+
+export interface LawScanProgress {
+  id: LawId;
+  /** The complykit location ('de', 'us-ca', …). */
+  locationId: string;
+  /** Fly region ('fra'); the client labels it from LAWS. */
+  region: string;
+  /** Runs on the primary itself. */
+  local: boolean;
+  state: LawScanState;
+  /** failed: why (the same text passed to the merge as --failed, or the location's verdict and note). */
+  error?: string;
+  visitsDone: number;
+  /** 0 until the location announces its plan. */
+  visitsTotal: number;
+  verdict?: string;
+  observed?: string;
+  /** Consent tool id as the events carry it, once a visit saw one. */
+  banner?: string;
+  /** The visit running now at this location. */
+  current?: { scenario: string; run?: number };
 }
 
 export interface JobResult {
@@ -623,6 +654,18 @@ export interface OwnerToolActivity {
   hostedOn?: { provider: string; name: string; matchesSite: boolean };
 }
 
+/** One location of the scan: its verdict, its visits, and the banner its visits saw. */
+export interface OwnerLocationSummary {
+  id: string;
+  label: string;
+  verified: boolean;
+  observed?: string;
+  note?: string;
+  visitsDone: number;
+  visitsTotal: number;
+  banner: { state: 'pending' | 'detected' | 'none'; provider?: string; visitsWithBanner: number; visitsChecked: number };
+}
+
 export interface OwnerReport {
   version: 1;
   stage: 'live' | 'final';
@@ -649,6 +692,8 @@ export interface OwnerReport {
   /** Tools whose purpose is not known yet (the to-do list's first items while the checklist does not exist yet). */
   decisions: Array<{ partyId: string; label: string; domain: string; classKey: string }>;
   todo?: { tasks: RemediationTask[]; configAt?: string; runId?: string };
+  /** Every location of the scan, in plan order. Absent on reports written before it existed. */
+  locations?: OwnerLocationSummary[];
 }
 
 /** GET /api/jobs/:id/report — everything the report page shows, in one poll. */
@@ -658,6 +703,13 @@ export interface JobReportResponse {
   domain: string;
   /** The owner report: live while the scan runs (null until the first one is written), final when done. Null for an accessibility-only job. */
   report: OwnerReport | null;
+  /**
+   * Multi-law jobs: one entry per law, catalog order. `report` is that law's live owner
+   * report (its collector's, one location) while the job runs, or after it failed or was
+   * cancelled; null before its first visit finishes, and null once the job is done (the
+   * final `report` covers every location: see OwnerReport.locations).
+   */
+  laws?: Array<{ id: LawId; progress: LawScanProgress; report: OwnerReport | null }>;
   todo: {
     /**
      * waiting   — the scan is running; the list is made when it finishes

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { JobSummary, OwnerReport } from '../../shared/api';
+import type { JobSummary, LawScanProgress, OwnerReport } from '../../shared/api';
 import { DEFAULT_LAWS, LAWS } from '../../shared/laws';
 import { LAWS_STORAGE_KEY, lawRows, orderLaws, readStoredLaws, scanBlockedReason, scanRequestOf, writeStoredLaws } from '../lib/laws';
 import { HomeView } from './Home';
@@ -132,5 +132,53 @@ describe('rescan authorization', () => {
     expect(html).toContain('I am authorized to scan this site');
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Rescan site</);
     expect(renderToStaticMarkup(<RescanPanel canRescan remaining={0} />)).toContain('this service’s own connection');
+  });
+});
+
+// plans/per-law-report-contract.md, PR C1: the chips read job.metrics.laws when the job has it.
+describe('per-law chips from metrics.laws', () => {
+  const entry = (id: LawScanProgress['id'], over: Partial<LawScanProgress> = {}): LawScanProgress => {
+    const l = LAWS.find((x) => x.id === id)!;
+    return { id, locationId: l.locationId, region: l.flyRegion, local: !!l.local, state: 'waiting', visitsDone: 0, visitsTotal: 0, ...over };
+  };
+  const withLaws = (laws: LawScanProgress[], phase: JobSummary['progress']['phase'] = 'scenarios') =>
+    ({ id: 'j', laws: laws.map((l) => l.id), progress: { fraction: 0, done: 0, total: 0, phase }, metrics: { requests: 0, thirdPartyRequests: 0, parties: 0, cookies: 0, scenarios: [], laws } }) as unknown as JobSummary;
+
+  it('one text per state; remote start names the city, local does not', () => {
+    const rows = lawRows(
+      withLaws([
+        entry('eu', { state: 'starting' }),
+        entry('uk', { state: 'verifying' }),
+        entry('ca', { state: 'starting' }),
+        entry('tx', { state: 'scanning', visitsDone: 2, visitsTotal: 5 }),
+        entry('us', { state: 'scanning' }),
+      ]),
+      null,
+    );
+    expect(rows.map((r) => [r.id, r.state, r.text])).toEqual([
+      ['eu', 'starting', 'Starting the worker in Frankfurt'],
+      ['uk', 'verifying', 'Checking the location'],
+      ['ca', 'starting', 'Starting'],
+      ['tx', 'scanning', 'Scanning 2 of 5'],
+      ['us', 'scanning', 'Scanning'],
+    ]);
+    expect(rows.map((r) => r.region)).toEqual(['Frankfurt', 'London', 'Los Angeles', 'Dallas', 'Chicago']);
+  });
+
+  it('waiting, collected (then preparing findings while the merge runs), done, failed with its reason', () => {
+    const laws = [entry('eu'), entry('uk', { state: 'collected' }), entry('ca', { state: 'done' }), entry('tx', { state: 'failed', error: 'worker in dfw failed: boom' })];
+    expect(lawRows(withLaws(laws), null).map((r) => r.text)).toEqual(['Waiting', 'Collected', 'Done', 'Failed']);
+    expect(lawRows(withLaws(laws, 'analyzing'), null)[1].text).toBe('Preparing findings');
+    expect(lawRows(withLaws(laws), null)[3].error).toBe('worker in dfw failed: boom');
+  });
+
+  it('the failed chip carries its reason as a tooltip and its state as data', () => {
+    const html = renderToStaticMarkup(<LawProgress job={withLaws([entry('eu', { state: 'failed', error: 'worker in fra failed: x' })])} />);
+    expect(html).toMatch(/<li[^>]*data-state="failed"[^>]*title="worker in fra failed: x"|<li[^>]*title="worker in fra failed: x"[^>]*data-state="failed"/);
+  });
+
+  it('jobs without metrics.laws keep the column-derived rows', () => {
+    const rows = lawRows(job(), report([{ location: 'de', state: 'done' }, { location: 'de', state: 'running' }]));
+    expect(rows.map((r) => [r.state, r.text])).toEqual([['scanning', 'Scanning (1 of 2)'], ['waiting', 'Waiting']]);
   });
 });

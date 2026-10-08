@@ -43,6 +43,8 @@ export type ConsentEvent =
       parties: number;
       unrecognized: number;
     }
+  /** A collect-only run finished: its collection.json is in runDir. */
+  | { type: 'collected'; at: string; runId: string; runDir: string; locations: string[] }
   | { type: 'error'; at: string; message: string }
   /** The owner report (owner-report.json) was rewritten: after each visit (live), and once more when the run is written (final). GET /api/jobs/:id/report reads it. */
   | { type: 'live'; at: string; file: string; stage: 'live' | 'final'; visitsDone: number; visitsTotal: number };
