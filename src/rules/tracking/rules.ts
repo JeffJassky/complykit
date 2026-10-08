@@ -11,6 +11,9 @@ import {
   CONTEXT_CATEGORIES,
   SALE_SHARE_CATEGORIES,
   WIRETAP_CATEGORIES,
+  WIRETAP_REQUIREMENTS,
+  US_STATE_NAMES,
+  citationLabel,
   DEFAULT_KB,
   type PartyCategory,
   type RuleId,
@@ -558,10 +561,21 @@ export const optOutLink: Rule<readonly ['consent-timeline']> = {
   },
 };
 
-// --- 6. Wiretap exposure (CA, FL, PA) ---------------------------------------------
+// --- 6. Wiretap exposure (the registry's wiretap states) ---------------------------
 
 const WIRETAP_ID = asRuleId('tracking.wiretap-exposure');
-const WIRETAP_REQS = ['cipa.631', 'cipa.638.51', 'fsca.934.03', 'wesca.5703'] as const;
+const WIRETAP_REQS = WIRETAP_REQUIREMENTS.map((r) => String(r.id));
+
+/** California splits contents (§631) from addressing data (§638.51); every other state has one statute, labelled from its registry entry. */
+function wiretapTheory(scope: string, contents: boolean): { requirementId: string; theory: string } {
+  if (scope === 'us-ca')
+    return contents
+      ? { requirementId: 'cipa.631', theory: 'California wiretap theory (Penal Code §631 — contents)' }
+      : { requirementId: 'cipa.638.51', theory: 'California pen-register theory (Penal Code §638.51 — addressing data; volatile, SB 690)' };
+  const req = WIRETAP_REQUIREMENTS.find((r) => (r.jurisdictions ?? []).some((j) => j.code === scope))!;
+  const state = US_STATE_NAMES[scope.slice(3).toUpperCase()] ?? scope;
+  return { requirementId: String(req.id), theory: `${state} wiretap theory (${citationLabel(req)})` };
+}
 export const wiretapExposure: Rule<readonly ['consent-timeline']> = {
   id: WIRETAP_ID,
   requirements: WIRETAP_REQS.map((r) => asRequirementId(r)) as [RequirementId, ...RequirementId[]],
@@ -592,18 +606,7 @@ export const wiretapExposure: Rule<readonly ['consent-timeline']> = {
         const contents = reqs.some((r) => r.markers.some((m) => m.marker !== 'click-id') || r.kinds.includes('page-title') || r.kinds.includes('search-term')) || cats.includes('session-recording') || cats.includes('chat');
         const addressing = reqs.some((r) => r.kinds.includes('page-address') && (r.kinds.includes('browser-id') || r.kinds.includes('identifier')));
         if (!contents && !addressing) continue;
-        let requirementId: string;
-        let theory: string;
-        if (scope === 'us-ca') {
-          requirementId = contents ? 'cipa.631' : 'cipa.638.51';
-          theory = contents ? 'California wiretap theory (Penal Code §631 — contents)' : 'California pen-register theory (Penal Code §638.51 — addressing data; volatile, SB 690)';
-        } else if (scope === 'us-fl') {
-          requirementId = 'fsca.934.03';
-          theory = 'Florida wiretap theory (Fla. Stat. §934.03)';
-        } else {
-          requirementId = 'wesca.5703';
-          theory = 'Pennsylvania wiretap theory (18 Pa. C.S. §5703)';
-        }
+        const { requirementId, theory } = wiretapTheory(scope, contents);
         const notes: string[] = [];
         if (reqs.some((r) => r.phase === 'after-reject')) notes.push('Some of it was sent after the visitor rejected — a California federal court has treated a rejection that leaks as evidence for the plaintiff (S.D. Cal. 2026-08-12).');
         if (reqs.some((r) => r.markers.some((m) => m.marker !== 'click-id'))) notes.push('What the scan typed into a form (and never submitted) reached this party.');

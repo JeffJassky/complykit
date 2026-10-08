@@ -275,14 +275,18 @@ without signature.
 
 ### 2.5 Other states
 
+Researched 2026-10-08 for WA, MD, IL and MT (sources: court opinion PDFs and official statute pages; Baker https://www.courts.wa.gov/opinions/pdf/1045905.pdf, MedStar https://www.courts.state.md.us/sites/default/files/unreported-opinions/1033s24.pdf, Kurowski https://www.govinfo.gov/content/pkg/USCOURTS-ilnd-1_22-cv-05380/pdf/USCOURTS-ilnd-1_22-cv-05380-1.pdf, Dawson https://cases.justia.com/federal/district-courts/illinois/ilndce/1:2025cv03497/475832/52/0.pdf).
+
 | Statute | Status |
 |---|---|
 | **Florida FSCA** (§934.10: greater of $1,000 or $100/day + punitive + fees; 2-year SOL from discovery) | 2021 session-replay wave failed (*Jacome v. Spirit*; *Goldstein v. Costco*). Revived after *W.W. v. Orlando Health* (M.D. Fla. 2025-03-06); **hundreds of small-claims chat suits** under the $8,000 limit with pretrial within 1–2 weeks of service ([S](https://www.fisherphillips.com/print/v2/content/44684/is-florida-the-new-hotbed-for-digital-wiretapping-lawsuits.pdf)); *Magenheim v. Nike* (S.D. Fla., filed 2025-12-16: no banner, ignored GPC, sharing after opt-out, identity resolution). **High and rising.** |
 | **Pennsylvania WESCA** | Interception occurs at the user's browser (*Popa v. Harriet Carter*, 3d Cir. 2022); federal standing now defeats non-sensitive cases (*Cook*). Moderate–low. |
 | **Massachusetts** | Closed by *Vita v. New England Baptist* (SJC 2024-10-24); bill S.1266 pending. |
-| **Washington** | Privacy Act pixel case at the state supreme court (review granted 2026-01-08). Email-subject CEMA suits curbed by HB 2274 (eff. 2026-06-11) — relevant to Klaviyo senders. |
+| **Washington** (RCW 9.73.030; §9.73.060: actual or $100/day capped at $1,000, fees; injury to business, person or reputation required — *Jones v. Ford*, 9th Cir. 2023) | **Closed for pixels by *Baker v. Seattle Children's Hospital*** (Wash. 2026-10-08, en banc): searches and clicks producing an automated response from a corporate site are not a communication "between two or more individuals". Fn. 6 leaves chat with a human agent open. Email-subject CEMA suits curbed by HB 2274 (eff. 2026-06-11). **Low** (live chat moderate–low). Not in the wiretap posture. |
 | **Arizona** email "spy pixels" | Dead: *Smith v. Target* (Ct. App. 2025-11-13). |
-| **Illinois** | BIPA only if a client uses face scanning (virtual try-on). |
+| **Illinois** Eavesdropping Act (720 ILCS 5/14-2(a)(3), private electronic communication; §14-6: actual + punitive damages against the eavesdropper or its principal; no statutory damages or fees) | Pixel claims proceed against the site as the vendor's principal: *Kurowski v. Rush* (N.D. Ill. 2023-07-24), *Dawson v. University of Phoenix* (N.D. Ill. 2026-01-13); *Doe v. Southern Illinois Healthcare* settled 2026-04. **Moderate.** In the wiretap posture (ilea.14-2). BIPA separately if a client uses face scanning (virtual try-on). |
+| **Maryland** Wiretap Act (Cts. & Jud. Proc. §10-402(c)(3), all-party prior consent; §10-410: not less than $100/day or $1,000, punitive, fees) | URLs, IPs, cookies and login events are not "contents" (*Doe II v. MedStar*, Md. App. 2026-03-13, unreported, summary judgment for the site); session replay dismissed on standing (*Straubmuller v. JetBlue*, D. Md. 2023). Form input, searches and chat text remain. **Moderate–low.** In the wiretap posture (mdwa.10-402). |
+| **Montana** (Mont. Code Ann. §45-8-213) | Criminal only; no private right of action; no website suits found. **Low.** Not in the wiretap posture. |
 
 ### 2.6 VPPA (pixel + video)
 

@@ -92,6 +92,18 @@ export const INSTRUMENTS: Instrument[] = [
     textLicense: 'US state government text — paraphrased',
   },
   {
+    id: asInstrumentId('mdwa'),
+    name: 'Maryland Wiretapping and Electronic Surveillance Act (Cts. & Jud. Proc. §10-401 et seq.) — litigation exposure',
+    jurisdiction: ['us-md'],
+    textLicense: 'US state government text — paraphrased',
+  },
+  {
+    id: asInstrumentId('ilea'),
+    name: 'Illinois Eavesdropping Act (720 ILCS 5/14) — litigation exposure',
+    jurisdiction: ['us-il'],
+    textLicense: 'US state government text — paraphrased',
+  },
+  {
     id: asInstrumentId('enforcement-practice'),
     name: 'Regulator-ordered practices (not statutes)',
     jurisdiction: ['any'],

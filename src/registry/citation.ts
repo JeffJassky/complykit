@@ -15,6 +15,8 @@ const SHORT_INSTRUMENT: Record<string, string> = {
   cipa: 'CIPA',
   fsca: 'Fla. ch. 934',
   wesca: 'PA WESCA',
+  mdwa: 'MD Wiretap Act',
+  ilea: 'IL Eavesdropping Act',
   'enforcement-practice': 'Regulator orders',
 };
 

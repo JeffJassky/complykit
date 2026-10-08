@@ -27,6 +27,16 @@ describe('registry: which jurisdictions carry wiretap-litigation exposure', () =
     expect(isWiretapJurisdiction([])).toBe(false);
   });
 
+  it('Maryland and Illinois are added; Washington (Baker, 2026-10-08) and Montana (no civil remedy) are researched and held out', () => {
+    expect(isWiretapJurisdiction(['us', 'us-md'])).toBe(true);
+    expect(isWiretapJurisdiction(['us', 'us-il'])).toBe(true);
+    expect(isWiretapJurisdiction(['us', 'us-wa'])).toBe(false);
+    expect(isWiretapJurisdiction(['us', 'us-mt'])).toBe(false);
+    const md = describeLocationRules(['us', 'us-md'], '2026-10-08');
+    expect([md.summary, ...md.mustHave].join('\n')).toMatch(/until the visitor accepts/i);
+    expect(md.laws.map((l) => l.requirementId)).toContain('mdwa.10-402');
+  });
+
   it('California’s location rules say ad, recording, chat and identity tools are held until the visitor accepts, and why', () => {
     const ca = describeLocationRules(['us', 'us-ca'], '2026-10-08');
     const text = [ca.label, ca.summary, ...ca.mustHave].join('\n');

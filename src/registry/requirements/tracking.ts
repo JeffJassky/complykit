@@ -28,6 +28,8 @@ const US_STATES = asInstrumentId('us-state-privacy');
 const CIPA = asInstrumentId('cipa');
 const FSCA = asInstrumentId('fsca');
 const WESCA = asInstrumentId('wesca');
+const MDWA = asInstrumentId('mdwa');
+const ILEA = asInstrumentId('ilea');
 const PRACTICE = asInstrumentId('enforcement-practice');
 
 export const TRACKING_REQUIREMENTS: Requirement[] = [
@@ -265,6 +267,40 @@ export const TRACKING_REQUIREMENTS: Requirement[] = [
     urls: [{ href: 'https://www.legis.state.pa.us/cfdocs/legis/LI/consCheck.cfm?txtType=HTM&ttl=18&div=0&chpt=57&sctn=3&subsctn=0' }],
     effective: { from: '1978-10-04' },
     jurisdictions: [{ code: 'us-pa' }],
+    kind: 'exposure',
+    severity: 'moderate',
+  },
+  {
+    id: asRequirementId('mdwa.10-402'),
+    instrument: MDWA,
+    citation: { kind: 'statute', code: 'Md. Code, Cts. & Jud. Proc.', section: '§10-402' },
+    title: 'Wiretap theory: interception without all-party prior consent (MD)',
+    text:
+      'Maryland requires the prior consent of all parties to intercept a wire, oral or electronic communication (§10-402(c)(3)); §10-410 gives actual damages of not less than $100/day or $1,000, punitive damages and fees. Metadata-only claims are weak: URLs, IP addresses, cookie values and login events are not "contents" (Doe II v. MedStar, Md. App. 2026-03-13, unreported); federal session-replay suits have failed on standing. Form input, search terms and chat text sent to a third party remain the exposure. Moderate–low — see research-consent-law.md §2.5.',
+    authority: [
+      { ref: 'doe-ii-v-medstar-2026', note: 'URLs, IPs, cookies, login events are not contents (summary judgment for the site)' },
+      { ref: 'straubmuller-v-jetblue-2023', note: 'session replay dismissed for lack of standing (D. Md.)' },
+    ],
+    urls: [{ href: 'https://mgaleg.maryland.gov/mgawebsite/Laws/StatuteText?article=gcj&section=10-402&enactments=false', verified: '2026-10-08' }],
+    effective: { from: '1977-07-01' },
+    jurisdictions: [{ code: 'us-md' }],
+    kind: 'exposure',
+    severity: 'moderate',
+  },
+  {
+    id: asRequirementId('ilea.14-2'),
+    instrument: ILEA,
+    citation: { kind: 'statute', code: '720 ILCS', section: '5/14-2' },
+    title: 'Eavesdropping theory: a private electronic communication intercepted without all-party consent (IL)',
+    text:
+      'Illinois prohibits a non-party from surreptitiously intercepting a private electronic communication without the consent of all parties (720 ILCS 5/14-2(a)(3)), and §14-6 makes the eavesdropper’s principal liable for actual and punitive damages; there are no statutory damages or fee shifting. N.D. Ill. courts let pixel claims proceed against the site owner as the principal (Kurowski v. Rush, 2023; Dawson v. University of Phoenix, 2026-01-13). Moderate — see research-consent-law.md §2.5.',
+    authority: [
+      { ref: 'kurowski-v-rush-2023', note: 'site owner liable as principal for the pixel vendor (N.D. Ill.)' },
+      { ref: 'dawson-v-university-of-phoenix-2026', note: 'principal theory followed; pixel claim proceeds (N.D. Ill.)' },
+    ],
+    urls: [{ href: 'https://www.ilga.gov/Documents/legislation/ilcs/documents/072000050K14-2.htm', verified: '2026-10-08', botBlocked: true }],
+    effective: { from: '2014-12-30' },
+    jurisdictions: [{ code: 'us-il' }],
     kind: 'exposure',
     severity: 'moderate',
   },
