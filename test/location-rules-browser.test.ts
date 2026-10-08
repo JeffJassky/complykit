@@ -74,6 +74,20 @@ suite('location rules disclosure in a browser', () => {
     expect(await pop.isVisible()).toBe(true);
   });
 
+  it('stays open while the mouse crosses from the button into the popover (its links are reachable by mouse)', async () => {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+    await page.setContent(html);
+    const btnLoc = page.locator('[data-location="de"] .ck-rules-btn');
+    await btnLoc.scrollIntoViewIfNeeded();
+    await page.evaluate(() => window.scrollBy(0, 200));
+    const b = (await btnLoc.boundingBox())!;
+    const x = b.x + 20;
+    for (let y = b.y + b.height / 2; y < b.y + b.height + 30; y += 2) {
+      await page.mouse.move(x, y);
+      expect(await page.locator('#rules-pop-de').isVisible(), `y=${y}`).toBe(true);
+    }
+  });
+
   it('fits a phone and prints expanded', async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await page.setContent(html);

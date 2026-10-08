@@ -49,6 +49,7 @@ export const LOCATION_RULES_CSS = `
 .ck-rules-btn{font-size:14px;font-weight:600;padding:3px 10px;border:1px solid var(--accent);border-radius:20px;color:var(--accent);background:var(--card);max-width:100%;text-align:left}
 .ck-rules-pop{display:none;position:absolute;z-index:20;left:0;top:calc(100% + 6px);width:min(520px,80vw);padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg);box-shadow:0 8px 24px rgba(0,0,0,.18);font-size:14px;line-height:1.5;font-weight:400}
 .ck-loc-rules:hover .ck-rules-pop,.ck-loc-rules:focus-within .ck-rules-pop,.ck-rules-pop[data-open="true"]{display:block}
+.ck-rules-pop::before{content:'';position:absolute;left:0;right:0;top:-8px;height:8px}
 .ck-rules-pop p{margin:6px 0}.ck-rules-pop ul,.ck-rules-pop ol{margin:6px 0;padding-left:20px}.ck-rules-pop li{margin:4px 0}
 .ck-rules-state{padding-top:6px;border-top:1px solid var(--line)}.ck-rules-note{color:var(--muted)}
 @media(max-width:600px){.ck-loc-rules{display:block;margin-top:6px}.ck-rules-pop{position:static;width:auto;max-width:100%;margin-top:6px;box-shadow:none}}
