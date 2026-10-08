@@ -5,7 +5,7 @@ import { buildBehaviorMatrix } from '../src/report/consent-matrix.js';
 import { buildConsentReportModel } from '../src/report/consent-model.js';
 import { TrackingEvaluation, Timeline } from '../src/record/index.js';
 import { summarizeBehavior } from '../src/rules/tracking/summary.js';
-import { isCookieDeletion } from '../src/rules/tracking/analyze.js';
+import { isCookieDeletion, analyzeTimeline } from '../src/rules/tracking/analyze.js';
 import { purposeNeedsReview } from '../src/report/consent-view.js';
 
 const inventory={partyId:'meta.pixel',label:'Meta Pixel',domain:'facebook.com',hosts:['facebook.com'],recognized:true,kbStatus:'proposed',categories:['advertising'],behavesLikeTracker:true,trackerSignals:[],sends:[],stores:[{name:'_fbp',kind:'cookie',lifetimeDays:90},{name:'unknown_cookie',kind:'cookie',lifetimeDays:1}],sources:['injected'],loadedBy:[],seenIn:[]};
@@ -89,6 +89,22 @@ describe('consent behavior matrix',()=>{
   expect(status(m(tl([cookie('fr','.facebook.com')])),'storage','fr','reject').status).toBe('match');
   // The site's own cookie left behind is still the site's.
   expect(status(m(tl([cookie('_fbp','.shop.example')])),'storage','_fbp','reject').status).toBe('mismatch');
+ });
+ it('each cookie sits under one tool: the one its name belongs to, not the tag loader that wrote it (storyfolder.com, 2026-10-08)',()=>{
+  const gtag='https://www.googletagmanager.com/gtag/js?id=G-TEST';
+  const t=Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'accept',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies:[{name:'GCL_AW_P',value:'x',domain:'.googleadservices.com',path:'/',expires:-1,httpOnly:false,secure:true}],storage:[],frames:[]},events:[
+   {type:'request',t:10,id:'g',url:gtag,method:'GET',resourceType:'script',origin:'page',pageUrl:evaluation.site.url,pageIndex:0,initiator:{type:'parser',chain:[]}},
+   {type:'request',t:20,id:'a',url:'https://www.googleadservices.com/pagead/conversion/1/?x=1',method:'GET',resourceType:'image',origin:'page',pageUrl:evaluation.site.url,pageIndex:0,initiator:{type:'script',chain:[gtag]}},
+   {type:'cookie-write',t:30,name:'_ga',value:'redacted',chain:[gtag],frameUrl:evaluation.site.url,pageIndex:0},
+   {type:'cookie-write',t:31,name:'_gcl_au',value:'redacted',chain:[gtag],frameUrl:evaluation.site.url,pageIndex:0},
+   {type:'storage-write',t:32,area:'local',key:'_gcl_ls',value:'redacted',chain:[gtag],frameUrl:evaluation.site.url,pageIndex:0},
+  ]});
+  const owners=new Map<string,string[]>();
+  for(const [id,f] of analyzeTimeline(t).parties)for(const st of f.stores)owners.set(st.name,[...(owners.get(st.name)??[]),id]);
+  expect(owners.get('_ga')).toEqual(['google.analytics']);
+  expect(owners.get('_gcl_au')).toEqual(['google.ads.doubleclick']);
+  expect(owners.get('_gcl_ls')).toEqual(['google.ads.doubleclick']);
+  expect(owners.get('GCL_AW_P')).toHaveLength(1);
  });
  it('a cookie deletion after the choice (consent-tool cleanup, a vendor dropping its id) is not a write (E4)',()=>{
   const ev=(t:number,attributes?:string)=>({type:'cookie-write',t,name:'_fbp',value:attributes?'':'redacted',...(attributes?{attributes}:{}),chain:['https://connect.facebook.net/pixel.js'],frameUrl:evaluation.site.url,pageIndex:0});

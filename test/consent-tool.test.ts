@@ -51,6 +51,13 @@ describe('detectConsentTool', () => {
     const r = detect([ck('cmplz_consent_status', 'dismiss')]);
     expect(r).toMatchObject({ vendor: 'Complianz', decoded: false, defaultGrants: {} });
   });
+  it('vanilla-cookieconsent v3: decodes cc_cookie; categories absent from the accepted list were refused (storyfolder.com, 2026-10-08)', () => {
+    const json = '{"categories":["necessary","analytics"],"revision":1,"data":null,"consentTimestamp":"2026-10-08T22:33:41.313Z","consentId":"x","services":{"necessary":[],"functional":[],"analytics":[],"advertising":[]}}';
+    const c = detect([ck('cc_cookie', encodeURIComponent(json))]);
+    expect(c).toMatchObject({ vendor: 'CookieConsent (orestbida)', decoded: true, choiceRecorded: true, source: 'cookie:cc_cookie' });
+    expect(c.defaultGrants).toEqual({ necessary: true, preferences: false, analytics: true, marketing: false });
+    expect(detect([ck('cc_cookie', 'not json')]).decoded).toBe(false);
+  });
   it('Klaro: decodes the per-service cookie and localStorage forms', () => {
     const json = '{"google-analytics":true,"matomo":false}';
     const c = detect([ck('klaro', encodeURIComponent(json))]);

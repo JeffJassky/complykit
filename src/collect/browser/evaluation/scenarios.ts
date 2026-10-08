@@ -581,7 +581,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
           await v.shot('after-partial');
           if (!p.ok) {
             status = 'not-tested';
-            reason = 'could not grant a single category (no recognizable analytics-only control)';
+            reason = p.reason ?? 'could not grant a single category (no recognizable analytics-only control)';
             break;
           }
           await v.readout('after-choice');

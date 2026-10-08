@@ -379,6 +379,15 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
     return undefined;
   };
   const cookieExpiry = new Map(snapshot.cookies.map((c) => [c.name, c.expires]));
+  // A name the knowledge base assigns to a vendor belongs to that vendor, whichever
+  // script wrote it: gtag.js writes _ga and _gcl_au, but they are Google Analytics'
+  // and Google Ads' identifiers, and listing them under the tag loader as well put
+  // the same cookie on two rows (storyfolder.com, 2026-10-08). The writing script
+  // decides only for names the knowledge base does not know.
+  const storeOwner = (name: string, chain: string[]) => {
+    const entry = lookupStore(kb, name);
+    return entry ? ensure({ id: entry.id, entry, domain: entry.match.hosts[0] }, entry.match.hosts[0]) : writerParty(chain);
+  };
   for (const e of events) {
     if (e.type === 'cookie-write') {
       // Expiring a cookie (Max-Age<=0, or an expiry at or before the write) deletes
@@ -386,10 +395,7 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
       // refusal is not the vendor storing anything (E4: counted as "storage writes
       // after rejecting", which turned held vendors red).
       if (isCookieDeletion(e.attributes, startEpoch + e.t / 1000)) continue;
-      const f = writerParty(e.chain) ?? (() => {
-        const entry = lookupStore(kb, e.name);
-        return entry ? ensure({ id: entry.id, entry, domain: entry.match.hosts[0] }, entry.match.hosts[0]) : undefined;
-      })();
+      const f = storeOwner(e.name, e.chain);
       if (!f) continue;
       const previous = f.stores.find(s=>s.name===e.name&&s.kind==='cookie');
       const write = { t: e.t, pageIndex: e.pageIndex ?? 0, phase: phaseAt(e.t, bannerShownT, choices) };
@@ -399,10 +405,7 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
       const lifetimeDays = exp !== undefined && exp > 0 ? (exp - startEpoch) / 86400 : maxAge ? Number(maxAge) / 86400 : 0;
       f.stores.push({ name: e.name, kind: 'cookie', lifetimeDays: Math.round(lifetimeDays), setBy: 'script', setByUrl: e.chain[0], t: e.t, phase: write.phase, writes: [write] });
     } else if (e.type === 'storage-write') {
-      const f = writerParty(e.chain) ?? (() => {
-        const entry = lookupStore(kb, e.key);
-        return entry ? ensure({ id: entry.id, entry, domain: entry.match.hosts[0] }, entry.match.hosts[0]) : undefined;
-      })();
+      const f = storeOwner(e.key, e.chain);
       if (!f) continue;
       const previous = f.stores.find(s=>s.name===e.key&&s.kind===e.area);
       const write = { t: e.t, pageIndex: e.pageIndex ?? 0, phase: phaseAt(e.t, bannerShownT, choices) };
@@ -410,12 +413,15 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
       f.stores.push({ name: e.key, kind: e.area, lifetimeDays: e.area === 'local' ? null : 0, setBy: 'script', setByUrl: e.chain[0], t: e.t, phase: write.phase, writes: [write] });
     }
   }
+  // One owner per cookie in the jar: GCL_AW_P on .googleadservices.com is Google Ads'
+  // by name and also matched the Ads party's domain, so it was listed twice.
+  const cookieClaimed = (name: string) => [...parties.values()].some((p) => p.stores.some((s) => s.name === name && s.kind === 'cookie'));
   // Known first-party cookie names (e.g. _ga, _fbp) the shim didn't see written.
   for (const c of snapshot.cookies) {
     const entry = lookupStore(kb, c.name);
     if (!entry) continue;
+    if (cookieClaimed(c.name)) continue;
     const f = parties.get(entry.id) ?? ensure({ id: entry.id, entry, domain: entry.match.hosts[0] }, entry.match.hosts[0]);
-    if (f.stores.some((s) => s.name === c.name && s.kind === 'cookie')) continue;
     f.stores.push({ name: c.name, kind: 'cookie', lifetimeDays: c.expires > 0 ? Math.round((c.expires - startEpoch) / 86400) : 0, setBy: 'known-name' });
   }
   // Third-party cookies in the jar, by domain.
@@ -423,7 +429,7 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
     const d = registrableDomain(c.domain.replace(/^\./, ''));
     if (d === siteDomain) continue;
     const f = [...parties.values()].find((p) => p.domain === d);
-    if (!f || f.stores.some((s) => s.name === c.name && s.kind === 'cookie')) continue;
+    if (!f || cookieClaimed(c.name)) continue;
     f.stores.push({ name: c.name, kind: 'cookie', lifetimeDays: c.expires > 0 ? Math.round((c.expires - startEpoch) / 86400) : 0, setBy: 'header' });
   }
 

@@ -271,6 +271,24 @@ function decodeComplykit(raw: string): Decoded | undefined {
   return { grants, choiceRecorded: true, note };
 }
 
+// vanilla-cookieconsent v3 (orestbida): cc_cookie = urlencoded JSON
+//   {"categories":["necessary","analytics"],"revision":1,"consentTimestamp":"<ISO>",
+//    "services":{"necessary":[],"functional":[],"analytics":[],"advertising":[]},…}
+// `categories` lists the accepted ones; `services` is keyed by every configured category, so
+// the rest were refused. Written only on a visitor's choice, in opt-in and opt-out mode alike.
+// The site names its own categories; the usual words are mapped, others are kept as named.
+const COOKIECONSENT_MAP: Array<[RegExp, string]> = [[/^(necessary|essential|required)$/i, 'necessary'], [/analytic|statistic|performance|measurement/i, 'analytics'], [/advertis|marketing|^ads?$|targeting/i, 'marketing'], [/functional|preference/i, 'preferences']];
+function decodeCookieconsentV3(raw: string): Decoded | undefined {
+  const j = parseJson(raw);
+  if (!isObj(j) || !Array.isArray(j.categories) || !j.categories.every((c) => typeof c === 'string')) return undefined;
+  const name = (c: string): string => COOKIECONSENT_MAP.find(([re]) => re.test(c))?.[1] ?? c;
+  const grants: Record<string, boolean> = {};
+  if (isObj(j.services)) for (const c of Object.keys(j.services)) grants[name(c)] = false;
+  for (const c of j.categories as string[]) grants[name(c)] = true;
+  const at = typeof j.consentTimestamp === 'string' ? j.consentTimestamp : undefined;
+  return { grants, choiceRecorded: true, ...(at ? { note: `choice recorded ${at}` } : {}) };
+}
+
 // --- the table -----------------------------------------------------------------
 
 export const CONSENT_TOOLS: ConsentToolSpec[] = [
@@ -289,6 +307,7 @@ export const CONSENT_TOOLS: ConsentToolSpec[] = [
   { vendor: 'Shopify customer privacy', kind: 'cookie', key: '_tracking_consent', decode: (r) => decodeShopify(r) },
   { vendor: 'Shopify customer privacy', kind: 'cookie', key: '_cmp_a', decode: (r) => decodeShopify(r) },
   { vendor: 'complykit', kind: 'cookie', key: 'complykit_consent', decode: (r) => decodeComplykit(r) },
+  { vendor: 'CookieConsent (orestbida)', kind: 'cookie', key: 'cc_cookie', decode: (r) => decodeCookieconsentV3(r) },
 ];
 
 function matches(key: string | RegExp, name: string): boolean {

@@ -93,6 +93,13 @@ async function readConsentStateUnbounded(page: Page): Promise<Record<string, unk
         return s ? { purposes: s.purposes, vendors: undefined } : undefined;
       });
       safe('cookieconsent', () => w.CookieConsent?.getUserPreferences?.());
+      // A bundled cookieconsent v3 has no window global; its record is the cc_cookie (JSON).
+      safe('cookieconsentCookie', () => {
+        const m = /(?:^|; )cc_cookie=([^;]*)/.exec(document.cookie);
+        if (!m) return undefined;
+        const v = JSON.parse(decodeURIComponent(m[1])) as { categories?: unknown; revision?: unknown };
+        return Array.isArray(v.categories) ? { categories: v.categories, revision: v.revision } : undefined;
+      });
       safe('oneTrustClosed', () => (w.OnetrustActiveGroups !== undefined ? /(?:^|; )OptanonAlertBoxClosed=/.test(document.cookie) : undefined));
       safe('trustarc', () => {
         const m = /(?:^|; )notice_preferences=([^;]*)/.exec(document.cookie);
@@ -176,6 +183,16 @@ export function readoutConfirms(choice: 'accept' | 'reject', readout: Record<str
   const cky = readout.cookieyes as { categories?: Record<string, boolean>; isUserActionCompleted?: boolean } | undefined;
   if (cky?.categories && typeof cky.categories.advertisement === 'boolean') {
     tool.push(Boolean(cky.isUserActionCompleted) && (choice === 'accept' ? cky.categories.advertisement : !cky.categories.advertisement));
+  }
+  // cookieconsent v3: the accepted categories. Its cookie first — written only on a choice, and the
+  // only record when the tool is bundled with no window global; the API reports opt-out-mode
+  // defaults as accepted before anyone chose.
+  const ccStored = (readout.cookieconsentCookie as { categories?: unknown } | undefined)?.categories;
+  const ccPrefs = readout.cookieconsent as { acceptedCategories?: unknown } | undefined;
+  const ccCats = Array.isArray(ccStored) ? ccStored : ccPrefs?.acceptedCategories;
+  if (Array.isArray(ccCats)) {
+    const optional = ccCats.filter((c) => c !== 'necessary');
+    tool.push(choice === 'accept' ? optional.length > 0 : optional.length === 0);
   }
   if (tool.length) return tool.every(Boolean);
   const g = readout.googleConsent as Record<string, { update?: string }> | undefined;
@@ -353,10 +370,11 @@ export async function dismissBanner(page: Page): Promise<{ ok: boolean; method: 
 const ANALYTICS_LABEL = /analytic|statistic|performance|measurement|mesure|statistik/i;
 const SAVE_LABEL = /save|confirm|allow selection|accept selected|submit|apply|speichern|enregistrer/i;
 
-export async function partialConsent(page: Page): Promise<{ ok: boolean; method: string }> {
+export async function partialConsent(page: Page): Promise<{ ok: boolean; method: string; reason?: string }> {
   // complykit (D10): exact toggles and buttons, no text matching — also when its
   // banner is not showing (the tool is running): never fall through to heuristics.
   if ((await page.$(CK.banner).catch(() => null)) || (await complykitRunning(page))) return complykitPartial(page);
+  if (await page.$('#cc-main').catch(() => null)) return cookieconsentPartial(page);
   // OneTrust: open preferences, toggle Performance (C0002), confirm.
   if (await page.$('#onetrust-pc-btn-handler').catch(() => null)) {
     await page.click('#onetrust-pc-btn-handler', { timeout: 4000 }).catch(() => {});
@@ -429,6 +447,46 @@ export async function partialConsent(page: Page): Promise<{ ok: boolean; method:
     )
     .catch(() => false);
   return done ? { ok: true, method: 'heuristic:analytics-only' } : { ok: false, method: 'none' };
+}
+
+/** cookieconsent v3 (orestbida): each category toggle is `input.section__toggle` whose value is the
+ *  category key, and the preferences modal saves through `[data-role="save"]`. The generic path
+ *  missed both — the toggle's label is a sibling button, not a <label> (storyfolder.com, 2026-10-08).
+ *  Opened the way a visitor opens it, through the banner's own settings control: when that control
+ *  does nothing, the visitor cannot choose per category either, and the reason says so. */
+async function cookieconsentPartial(page: Page): Promise<{ ok: boolean; method: string; reason?: string }> {
+  const open = (): Promise<boolean> => page.evaluate(() => document.documentElement.classList.contains('show--preferences')).catch(() => false);
+  if (!(await open())) {
+    const control = await page
+      .evaluate(() => {
+        const c = Array.from(document.querySelectorAll<HTMLElement>('#cc-main [data-role="show"], #cc-main [data-cc="show-preferencesModal"], [data-cc="show-preferencesModal"]')).find((e) => e.checkVisibility());
+        if (!c) return null;
+        c.setAttribute('data-complykit-cc-show', '1');
+        return (c.textContent ?? '').trim().slice(0, 40);
+      })
+      .catch(() => null);
+    if (control === null) return { ok: false, method: 'cookieconsent3:no-settings-control', reason: 'the banner offers no control that opens per-category settings' };
+    await page.click('[data-complykit-cc-show]', { timeout: 4000 }).catch(() => {});
+    await page.waitForTimeout(900);
+    if (!(await open())) return { ok: false, method: 'cookieconsent3:settings-did-not-open', reason: `the banner’s “${control}” control did not open the cookie settings, so a visitor cannot choose per category` };
+  }
+  const toggled = await page
+    .evaluate((a) => {
+      const analytics = new RegExp(a, 'i');
+      let hit = false;
+      for (const box of Array.from(document.querySelectorAll<HTMLInputElement>('#cc-main .pm input.section__toggle'))) {
+        if (box.disabled) continue;
+        const title = box.closest('.pm__section, .pm__section--toggle')?.querySelector('.pm__section-title')?.textContent ?? '';
+        const want = analytics.test(`${box.value} ${title}`);
+        if (want) hit = true;
+        if (box.checked !== want) box.click();
+      }
+      return hit;
+    }, ANALYTICS_LABEL.source)
+    .catch(() => false);
+  if (!toggled) return { ok: false, method: 'cookieconsent3:no-analytics-category', reason: 'the cookie settings have no analytics category to grant on its own' };
+  const saved = await page.click('#cc-main .pm [data-role="save"]', { timeout: 4000 }).then(() => true, () => false);
+  return saved ? { ok: true, method: 'cookieconsent3:analytics' } : { ok: false, method: 'cookieconsent3:no-save', reason: 'the cookie settings have no save control' };
 }
 
 // --- Withdraw: reopen settings, reject, save ---------------------------------------
