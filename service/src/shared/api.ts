@@ -3,6 +3,8 @@
 // except the pure URL-list parser both sides use (so the textarea preview and
 // the server agree exactly on what will be scanned).
 
+import type { LawId } from './laws.js';
+
 export type CheckKind = 'consent' | 'accessibility';
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
@@ -18,6 +20,11 @@ export interface CreateBatchRequest {
   /** Also repeat every visitor choice on a slowed connection (Slow 3G, CPU x4) to catch timing races; about 3x longer.
    *  Consent only; ignored with quick (quick is always one pass). Default false. */
   slowRepeat?: boolean;
+  /** Consent only: the laws to scan under, one location each (shared/laws.ts). Absent = today's single
+   *  scan from the service's own location. When present: non-empty, valid ids, and `authorized` must be true. */
+  laws?: LawId[];
+  /** "I am authorized to scan this site." Required with `laws`; the server stamps the time on the job. */
+  authorized?: boolean;
 }
 
 export interface CreateBatchResponse {
@@ -82,6 +89,10 @@ export interface JobSummary {
   quick: boolean;
   /** The consent scan repeats every visitor choice on a slowed connection (see CreateBatchRequest.slowRepeat). */
   slowRepeat: boolean;
+  /** The laws this consent job scans under (one location each); absent on single-location jobs. */
+  laws?: LawId[];
+  /** When the submitter confirmed they are authorized to scan the site (ISO). */
+  authorizedAt?: string;
   status: JobStatus;
   createdAt: string; // ISO
   startedAt?: string;
@@ -463,6 +474,9 @@ export interface RescanRequest {
   quick?: boolean;
   /** Repeat on a slowed connection (full scans only); default: as the site's latest job. Always false when the rescan is quick. */
   slowRepeat?: boolean;
+  /** Laws to scan under; default: as the site's latest job. Requires `authorized` when the result has laws. */
+  laws?: LawId[];
+  authorized?: boolean;
 }
 
 /** POST /api/sites/:domain/rescan: a new consent job with the options of the site's latest one (quick / full as the request chooses). */
@@ -471,7 +485,7 @@ export interface RescanResponse {
   /** The new job (queued). */
   job: JobSummary;
   /** What it repeats: the latest job's URL, checks, quick and slowRepeat flags (or the workspace's newest run URL when no job is left). The new job's own `quick` / `slowRepeat` are the request's choice when it made one. */
-  from: { jobId?: string; url: string; checks: CheckKind[]; quick: boolean; slowRepeat: boolean };
+  from: { jobId?: string; url: string; checks: CheckKind[]; quick: boolean; slowRepeat: boolean; laws?: LawId[] };
 }
 
 /** The job's consent report re-rendered from its saved run with the site's current workspace (R2). */
