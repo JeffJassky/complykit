@@ -62,10 +62,11 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
     const store=row.kind==='storage'?facts?.stores.find(s=>s.name===row.label&&s.kind===row.storageKind):undefined;
     const phases = SCENARIO_PHASES[col.scenario] ?? ['no-banner','before-banner','before-choice'];
     const requests = facts ? phases.reduce((n,phase)=>n+(facts.dataRequestPhases[phase]??0),0) : 0;
-    const isActiveStore=(s:NonNullable<typeof store>)=>s.presentAtEnd||s.writePhases.some(phase=>phases.includes(phase));
+    // A leftover on another company's domain (IDE, fr) is not something the site can remove: only writing it counts.
+    const isActiveStore=(s:NonNullable<typeof store>)=>(s.presentAtEnd&&!s.thirdParty)||s.writePhases.some(phase=>phases.includes(phase));
     const hasActivity=row.kind==='tool'?!!facts&&(requests>0||facts.stores.some(isActiveStore)):!!store&&isActiveStore(store);
     const actual=!observed?'Detailed observations unavailable':row.kind==='tool'?`${requests} data request(s) observed during this part of the visit; ${facts?.stores.filter(isActiveStore).length??0} cookie or storage item(s) active`:
-      !store?'No writes or saved value recorded at the end of this visit':`${store.writePhases.length?'Written '+store.writePhases.map(phase=>PHASE_LABEL[phase]??phase).join(', ')+'. ':''}${store.presentAtEnd?'Still saved in the browser at the end of the visit.':'Not saved in the browser at the end of the visit.'}${store.attribution==='known-name'?' Tool attributed by a known name pattern.':''}`;
+      !store?'No writes or saved value recorded at the end of this visit':`${store.writePhases.length?'Written '+store.writePhases.map(phase=>PHASE_LABEL[phase]??phase).join(', ')+'. ':''}${store.presentAtEnd?(store.thirdParty?'Still in the browser at the end of the visit, on the vendor’s own domain — only the vendor can remove it.':'Still saved in the browser at the end of the visit.'):'Not saved in the browser at the end of the visit.'}${store.attribution==='known-name'?' Tool attributed by a known name pattern.':''}`;
     let unavailable: ComparisonFacts['unavailable'];
     if(col.unavailable)unavailable={status:'not-tested',reason:`Not checked: ${col.unavailable.reason} This applies to the whole “${col.label}” column, not to ${row.label} specifically.`};
     else if(!observed||observed.durationMs<=0)unavailable={status:'unknown',reason:'Per-item observations are missing; a lack of findings is not a pass.'};

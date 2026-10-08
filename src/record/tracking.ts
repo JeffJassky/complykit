@@ -541,7 +541,7 @@ const BehaviorObservation = z.object({
     // pixel image, …) per phase: a load the consent tool's gate exists to
     // prevent. Absent on records from older builds (then unknown, not zero).
     loadRequestsByPhase: z.record(z.number().int()).optional(),
-    stores: z.array(z.object({name:z.string(),kind:z.string(),writePhase:z.string().optional(),writePhases:z.array(z.string()),presentAtEnd:z.boolean(),attribution:z.enum(['observed','known-name'])})),
+    stores: z.array(z.object({name:z.string(),kind:z.string(),writePhase:z.string().optional(),writePhases:z.array(z.string()),presentAtEnd:z.boolean(),thirdParty:z.boolean().optional(),attribution:z.enum(['observed','known-name'])})),
   })),
 });
 // --- Markup inspection (plans/client-consent-design.md §3 #1–#2, §5 item 2) ----------

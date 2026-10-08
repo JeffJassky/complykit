@@ -104,6 +104,8 @@ export interface PartyStore {
   t?: number;
   phase?: Phase;
   writePhases?: Phase[];
+  /** Every write: when, on which page, in which phase — so a write at the instant of a choice can be told from one after it. */
+  writes?: Array<{ t: number; pageIndex: number; phase: Phase }>;
 }
 
 export interface PartyFacts {
@@ -315,9 +317,13 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
       if ((c.maxAgeSec !== undefined && c.maxAgeSec <= 0) || (c.maxAgeSec === undefined && c.expires && Date.parse(c.expires) / 1000 <= startEpoch + e.t / 1000 + 1)) continue;
       const lifetimeDays = c.maxAgeSec !== undefined ? c.maxAgeSec / 86400 : c.expires ? Math.max(0, (Date.parse(c.expires) / 1000 - startEpoch) / 86400) : 0;
       const previous = f.stores.find(s=>s.name===c.name&&s.kind==='cookie');
-      if (previous) previous.writePhases = [...new Set([...(previous.writePhases ?? (previous.phase ? [previous.phase] : [])), phaseAt(e.t, bannerShownT, choices)])];
+      const write = { t: e.t, pageIndex: e.pageIndex ?? 0, phase: phaseAt(e.t, bannerShownT, choices) };
+      if (previous) {
+        previous.writePhases = [...new Set([...(previous.writePhases ?? (previous.phase ? [previous.phase] : [])), write.phase])];
+        previous.writes = [...(previous.writes ?? []), write];
+      }
       if (!previous) {
-        f.stores.push({ name: c.name, kind: 'cookie', lifetimeDays: Math.round(lifetimeDays), setBy: 'header', setByUrl: e.url, t: e.t, phase: phaseAt(e.t, bannerShownT, choices) });
+        f.stores.push({ name: c.name, kind: 'cookie', lifetimeDays: Math.round(lifetimeDays), setBy: 'header', setByUrl: e.url, t: e.t, phase: write.phase, writes: [write] });
       }
     }
   }
@@ -386,11 +392,12 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
       })();
       if (!f) continue;
       const previous = f.stores.find(s=>s.name===e.name&&s.kind==='cookie');
-      if(previous){previous.writePhases=[...new Set([...(previous.writePhases??(previous.phase?[previous.phase]:[])),phaseAt(e.t,bannerShownT,choices)])];continue;}
+      const write = { t: e.t, pageIndex: e.pageIndex ?? 0, phase: phaseAt(e.t, bannerShownT, choices) };
+      if(previous){previous.writePhases=[...new Set([...(previous.writePhases??(previous.phase?[previous.phase]:[])),write.phase])];previous.writes=[...(previous.writes??[]),write];continue;}
       const exp = cookieExpiry.get(e.name);
       const maxAge = /max-age=(\d+)/i.exec(e.attributes ?? '')?.[1];
       const lifetimeDays = exp !== undefined && exp > 0 ? (exp - startEpoch) / 86400 : maxAge ? Number(maxAge) / 86400 : 0;
-      f.stores.push({ name: e.name, kind: 'cookie', lifetimeDays: Math.round(lifetimeDays), setBy: 'script', setByUrl: e.chain[0], t: e.t, phase: phaseAt(e.t, bannerShownT, choices) });
+      f.stores.push({ name: e.name, kind: 'cookie', lifetimeDays: Math.round(lifetimeDays), setBy: 'script', setByUrl: e.chain[0], t: e.t, phase: write.phase, writes: [write] });
     } else if (e.type === 'storage-write') {
       const f = writerParty(e.chain) ?? (() => {
         const entry = lookupStore(kb, e.key);
@@ -398,8 +405,9 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
       })();
       if (!f) continue;
       const previous = f.stores.find(s=>s.name===e.key&&s.kind===e.area);
-      if(previous){previous.writePhases=[...new Set([...(previous.writePhases??(previous.phase?[previous.phase]:[])),phaseAt(e.t,bannerShownT,choices)])];continue;}
-      f.stores.push({ name: e.key, kind: e.area, lifetimeDays: e.area === 'local' ? null : 0, setBy: 'script', setByUrl: e.chain[0], t: e.t, phase: phaseAt(e.t, bannerShownT, choices) });
+      const write = { t: e.t, pageIndex: e.pageIndex ?? 0, phase: phaseAt(e.t, bannerShownT, choices) };
+      if(previous){previous.writePhases=[...new Set([...(previous.writePhases??(previous.phase?[previous.phase]:[])),write.phase])];previous.writes=[...(previous.writes??[]),write];continue;}
+      f.stores.push({ name: e.key, kind: e.area, lifetimeDays: e.area === 'local' ? null : 0, setBy: 'script', setByUrl: e.chain[0], t: e.t, phase: write.phase, writes: [write] });
     }
   }
   // Known first-party cookie names (e.g. _ga, _fbp) the shim didn't see written.

@@ -318,7 +318,7 @@ export function behaviorCellsFrom(ev: Pick<TrackingEvaluation, 'locations' | 'in
           }
           const requests = facts ? phases.reduce((n, ph) => n + (facts.dataRequestPhases[ph] ?? 0), 0) : 0;
           const limited = facts ? phases.reduce((n, ph) => n + (facts.limitedRequestsByPhase[ph] ?? 0), 0) : 0;
-          const activeStores = facts ? facts.stores.filter((s) => s.presentAtEnd || s.writePhases.some((ph) => phases.includes(ph as Phase))) : [];
+          const activeStores = facts ? facts.stores.filter((s) => (s.presentAtEnd && !s.thirdParty) || s.writePhases.some((ph) => phases.includes(ph as Phase))) : [];
           const active = requests > 0 || activeStores.length > 0;
           const limitedOnly = requests > 0 && limited === requests && !activeStores.length;
           const when = phases.map((ph) => PHASE_LABEL[ph]).join(' / ');

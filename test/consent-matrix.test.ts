@@ -41,6 +41,15 @@ describe('consent behavior matrix',()=>{
   expect(status({...model,notTested:[{scope:'scenario',id:'dismiss',location:'de',reason:'the banner offers no way to close it without choosing'}]},'storage','_fbp','reject').status).toBe('match');
   expect(status({...model,notTested:[{scope:'flow',id:'partial',location:'de',reason:'could not grant a single category (no recognizable analytics-only control)'}]},'tool','Meta Pixel','reject').status).toBe('match');
  });
+ it('wiretap states: consent-denied pings before a choice or after a refusal need a decision, as in the EU/UK; after an opt-out they are the expected restricted mode',()=>{
+  const f=(scenario:string,wiretap=true)=>compareCookieBehavior({scenario,regime:'opt-out-signal',regimeLabel:'California',wiretap,hasActivity:true,limitedOnly:true,captureGap:false},{categories:['advertising']});
+  expect(f('do-nothing').status).toBe('review');
+  expect(f('do-nothing').reason).toMatch(/wiretap/i);
+  expect(f('reject').status).toBe('review');
+  expect(f('gpc').status).toBe('match');
+  expect(f('opt-out-link').status).toBe('match');
+  expect(f('do-nothing',false).status).toBe('match'); // no wiretap posture: may run before a choice
+ });
  it('a failed opt-out link is one column-level gap that says why, not a "needs a look" per cookie',()=>{
   const loc=evaluation.locations[0];
   const optOut=(extra:object)=>buildConsentReportModel(TrackingEvaluation.parse({...evaluation,locations:[{...loc,scenarios:[...loc.scenarios,{scenario:'opt-out-link',status:'tested',choice:{kind:'opt-out-link',ok:false,method:'link — requires email — not submitted'},...extra}]}]}),[]);
@@ -62,6 +71,24 @@ describe('consent behavior matrix',()=>{
   const observations=summarizeBehavior([timeline]);
   expect(observations[0].parties[0].stores[0].writePhases).toEqual(['before-choice','after-reject']);
   expect(status({...model,behaviorObservations:observations},'storage','_fbp','reject').status).toBe('mismatch');
+ });
+ it('a write within 1 s of a withdrawal, on its page, is the choice taking effect (grace) — not a write after withdrawal; later writes count',()=>{
+  const w=(t:number)=>({type:'cookie-write',t,name:'_fbp',value:'redacted',chain:['https://connect.facebook.net/pixel.js'],frameUrl:evaluation.site.url,pageIndex:0});
+  const timeline=Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'withdraw',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies:[],storage:[],frames:[]},events:[{type:'banner',t:0,state:'shown',pageIndex:0},{type:'choice',t:100,choice:'accept',ok:true,method:'test',pageIndex:0},w(150),{type:'choice',t:1000,choice:'withdraw',ok:true,method:'test',pageIndex:0},w(1022)]});
+  expect(summarizeBehavior([timeline])[0].parties[0].stores[0].writePhases).toEqual(['after-accept','withdraw-grace']);
+  const later=Timeline.parse({...timeline,events:[...timeline.events,w(2500)]});
+  expect(summarizeBehavior([later])[0].parties[0].stores[0].writePhases).toEqual(['after-accept','withdraw-grace','after-withdraw']);
+ });
+ it('a cookie left in the jar on another company’s domain is not the site’s activity; writing one during the visit still is',()=>{
+  const inv={...inventory,stores:[...inventory.stores,{name:'fr',kind:'cookie',lifetimeDays:90}]};
+  const cookie=(name:string,domain:string)=>({name,value:'x',domain,path:'/',expires:-1,httpOnly:false,secure:true});
+  const tl=(cookies:object[],events:object[]=[])=>Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'reject',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies,storage:[],frames:[]},events:[{type:'banner',t:0,state:'shown',pageIndex:0},{type:'request',t:50,id:'r1',url:'https://www.facebook.com/tr/?ev=PageView',method:'GET',resourceType:'image',origin:'page',pageUrl:evaluation.site.url,pageIndex:0,initiator:{type:'other',chain:[]}},{type:'choice',t:200,choice:'reject',ok:true,method:'test',pageIndex:0},...events]});
+  const m=(t:ReturnType<typeof tl>)=>{const obs=summarizeBehavior([t]);return {...buildConsentReportModel({...evaluation,inventory:[inv]} as unknown as typeof evaluation,[]),behaviorObservations:obs};};
+  const third=summarizeBehavior([tl([cookie('fr','.facebook.com')])])[0].parties.find(p=>p.partyId==='meta.pixel')!.stores.find(s=>s.name==='fr')!;
+  expect(third).toMatchObject({presentAtEnd:true,thirdParty:true});
+  expect(status(m(tl([cookie('fr','.facebook.com')])),'storage','fr','reject').status).toBe('match');
+  // The site's own cookie left behind is still the site's.
+  expect(status(m(tl([cookie('_fbp','.shop.example')])),'storage','_fbp','reject').status).toBe('mismatch');
  });
  it('a cookie deletion after the choice (consent-tool cleanup, a vendor dropping its id) is not a write (E4)',()=>{
   const ev=(t:number,attributes?:string)=>({type:'cookie-write',t,name:'_fbp',value:attributes?'':'redacted',...(attributes?{attributes}:{}),chain:['https://connect.facebook.net/pixel.js'],frameUrl:evaluation.site.url,pageIndex:0});

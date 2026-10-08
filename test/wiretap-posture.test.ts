@@ -83,8 +83,9 @@ describe('compareCookieBehavior: wiretap posture (runs inside saved HTML, so it 
     expect(cmp('do-nothing', 'opt-out-signal', true, ['analytics']).status).toBe('match');
   });
 
-  it('limited-only pings (Consent Mode cookieless, Meta LDU) keep their existing treatment', () => {
-    expect(cmp('do-nothing', 'opt-out-signal', true, ['advertising'], { limitedOnly: true }).status).toBe('match');
+  it('limited-only pings (Consent Mode cookieless, Meta LDU) before a choice need a decision, as in the EU/UK (2026-10-08: no case law; they carry IP and page address); after an opt-out they are the expected restricted mode', () => {
+    expect(cmp('do-nothing', 'opt-out-signal', true, ['advertising'], { limitedOnly: true }).status).toBe('review');
+    expect(cmp('gpc', 'opt-out-signal', true, ['advertising'], { limitedOnly: true }).status).toBe('match');
   });
 
   it('a state without wiretap exposure is unchanged, and so are opt-in and reports saved without the flag', () => {

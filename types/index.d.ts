@@ -984,7 +984,7 @@ export interface BehaviorObservation {
   /** Per phase: pages the journey was on (pageIndex) and the steps it took ('navigate' | 'scroll' | 'search'). */
   journey?: Record<string, { pageIndexes: number[]; steps: string[] }>;
   /** Phase keys include 'withdraw-grace' (requests between the withdraw click and the reload not counted as post-withdraw activity). loadRequestsByPhase = requests that carried no data. */
-  parties: Array<{partyId:string;dataRequests:number;requestPhases:string[];dataRequestPhases:Record<string,number>;limitedRequestsByPhase:Record<string,number>;loadRequestsByPhase?:Record<string,number>;stores:Array<{name:string;kind:string;writePhase?:string;writePhases:string[];presentAtEnd:boolean;attribution:'observed'|'known-name'}>}>;
+  parties: Array<{partyId:string;dataRequests:number;requestPhases:string[];dataRequestPhases:Record<string,number>;limitedRequestsByPhase:Record<string,number>;loadRequestsByPhase?:Record<string,number>;stores:Array<{name:string;kind:string;writePhase?:string;writePhases:string[];presentAtEnd:boolean;thirdParty?:boolean;attribution:'observed'|'known-name'}>}>;
 }
 // Tag-manager containers (A2). A capture is the collector's fetch result; a
 // TagContainer is the parsed record. An unreadable container has no tags and a
