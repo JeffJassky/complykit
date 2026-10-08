@@ -5,7 +5,7 @@ import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { idleReason } from '../src/server/lifecycle.js';
 import { WORKER_SECRET_HEADER, createWorkerApp, loadWorkerConfig, type WorkerConfig, type WorkerService } from '../src/server/worker.js';
-import { binaryParser, tempDir, waitFor } from './helpers.js';
+import { binaryParser, tempDir } from './helpers.js';
 import { fileURLToPath } from 'node:url';
 
 const FAKE_WORKER_CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-worker-cli.mjs');
@@ -30,7 +30,6 @@ async function state(w: WorkerService, id: string): Promise<{ state: string; err
   return (await request(w.app).get(`/internal/jobs/${id}`).set(auth).expect(200)).body;
 }
 async function collected(w: WorkerService, id: string): Promise<void> {
-  await waitFor(async () => false, 1).catch(() => {});
   const start = Date.now();
   while ((await state(w, id)).state === 'running') {
     if (Date.now() - start > 10_000) throw new Error('timed out waiting for the job to settle');
