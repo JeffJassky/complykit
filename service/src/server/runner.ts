@@ -9,7 +9,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
-import type { JobDetail } from '../shared/api.js';
+import type { JobDetail, LawScanState } from '../shared/api.js';
 import { LAWS, type Law } from '../shared/laws.js';
 import { flyFleet, type Fleet, type WorkerHandle } from './fleet.js';
 import { WORKER_SECRET_HEADER } from './worker.js';
@@ -284,7 +284,16 @@ export class Runner {
     const eventsFile = path.join(dir, 'events.ndjson');
     await fsp.rm(eventsFile, { force: true });
 
-    const mapper = new ConsentProgress(job, extraUnits, laws.map((l) => l.locationId));
+    const liveRoot = path.join(dir, 'live');
+    await fsp.rm(liveRoot, { recursive: true, force: true });
+    await fsp.mkdir(liveRoot, { recursive: true });
+    const live = new LiveFiles(liveRoot);
+    const mapper = new ConsentProgress(job, extraUnits, laws);
+    // The runner's states for what events cannot carry (a worker starting, a law failing): persisted and broadcast like an event.
+    const setLaw: SetLaw = (law, patch) => {
+      if (mapper.setLaw(law.id, patch)) this.store.update(job);
+    };
+    let merged = false;
     // A collector's `error` is that law's failure (the merge says so with --failed); only the merge's counts for the job.
     let merging = false;
     const tail = new NdjsonTail(
@@ -303,7 +312,7 @@ export class Runner {
       this.store.appendLog(job, [`[consent] scanning under ${laws.map((l) => l.label).join(', ')} (authorized ${job.authorizedAt ?? 'at submission'})`]);
       const remote = laws.filter((l) => !l.local);
       const gathered = await Promise.all(
-        laws.map((law) => (law.local ? this.collectLocal(a, law, gatherRoot, quiet, appendLine) : this.collectRemote(a, law, gatherRoot, appendLine, remote.indexOf(law) * (this.options.staggerMs ?? REMOTE_STAGGER_MS)))),
+        laws.map((law) => (law.local ? this.collectLocal(a, law, gatherRoot, quiet, appendLine, setLaw, live) : this.collectRemote(a, law, gatherRoot, appendLine, remote.indexOf(law) * (this.options.staggerMs ?? REMOTE_STAGGER_MS), setLaw, live))),
       );
       if (a.reason) throw new Error(a.reason);
 
@@ -324,41 +333,57 @@ export class Runner {
       if (mapper.error) throw new Error(withTail(`consent check failed: ${mapper.error}`, res.stderr));
       if (res.code !== 0) throw new Error(withTail(`consent merge exited with ${exitText(res)}`, res.stderr));
       if (!mapper.done) throw new Error(withTail('consent merge exited without a result', res.stderr));
+      merged = true;
       if (site.domain) await this.recordRun(job, site.domain, mapper.done);
     } finally {
       await tail.stop(); // idempotent enough: clears the timer, one last read
+      await live.settled();
       // The raw collections hold unredacted request bodies and cookie values: never kept.
       await fsp.rm(gatherRoot, { recursive: true, force: true });
+      // The live reports are superseded by the merged report; after a failed or cancelled job they stay (the page shows what was collected).
+      if (merged) await fsp.rm(liveRoot, { recursive: true, force: true });
     }
   }
 
   /** The law this machine scans from: a collect-only child, its events forwarded into the job's. */
-  private async collectLocal(a: Active, law: Law, gatherRoot: string, quiet: string[], appendLine: (l: string) => void): Promise<Gathered> {
+  private async collectLocal(a: Active, law: Law, gatherRoot: string, quiet: string[], appendLine: (l: string) => void, setLaw: SetLaw, live: LiveFiles): Promise<Gathered> {
     const { job } = a;
     const cwd = path.join(gatherRoot, law.id);
     const events = path.join(gatherRoot, `${law.id}.events.ndjson`);
-    const fwd = new NdjsonTail(events, (ev) => appendLine(JSON.stringify(ev)), this.config.pollMs);
+    const fwd = new NdjsonTail(
+      events,
+      (ev) => {
+        appendLine(JSON.stringify(ev));
+        if (ev.type === 'live') live.copy(law.id, ev.file);
+      },
+      this.config.pollMs,
+    );
+    const failed = (error: string): Gathered => {
+      if (!a.reason) setLaw(law, { state: 'failed', error });
+      return { law, error };
+    };
     try {
       await fsp.mkdir(cwd, { recursive: true });
+      setLaw(law, { state: 'starting' });
       fwd.start();
       const args = ['consent', '--collect-only', '--url', job.url, '--locations', law.locationId, '--cwd', cwd, '--events', events, ...quiet, '--runs', String(consentRunsFor(job, this.config)), ...(job.quick ? ['--quick'] : [])];
       const res = await this.step(a, `collect:${law.id}`, args, cwd);
       await fwd.stop();
       if (a.reason) return { law, error: a.reason };
-      if (res.code !== 0) return { law, error: oneLine(withTail(`collection exited with ${exitText(res)}`, res.stderr)) };
+      if (res.code !== 0) return failed(oneLine(withTail(`collection exited with ${exitText(res)}`, res.stderr)));
       const runs = path.join(cwd, '.comply', 'runs');
       const dirs = (await fsp.readdir(runs, { withFileTypes: true }).catch(() => [])).filter((e) => e.isDirectory() && fs.existsSync(path.join(runs, e.name, 'collection.json')));
-      if (dirs.length !== 1) return { law, error: 'collection left no run directory with collection.json' };
+      if (dirs.length !== 1) return failed('collection left no run directory with collection.json');
       return { law, dir: path.join(runs, dirs[0].name) };
     } catch (err) {
-      return { law, error: (err as Error).message };
+      return failed((err as Error).message);
     } finally {
       await fwd.stop().catch(() => undefined);
     }
   }
 
   /** A law collected on its region's worker: acquire, collect, follow its events, fetch the run, clean up. */
-  private async collectRemote(a: Active, law: Law, gatherRoot: string, appendLine: (l: string) => void, delayMs: number): Promise<Gathered> {
+  private async collectRemote(a: Active, law: Law, gatherRoot: string, appendLine: (l: string) => void, delayMs: number, setLaw: SetLaw, live: LiveFiles): Promise<Gathered> {
     const { job } = a;
     const signal = a.abort.signal;
     const workerJob = `${job.id}-${law.id}`;
@@ -378,6 +403,7 @@ export class Runner {
       unlock = await this.lockRegion(law.flyRegion, signal, () => this.store.appendLog(job, [`[collect:${law.id}] waiting for the ${law.flyRegion} worker (another scan is using it)`]));
       check();
       this.store.appendLog(job, [`[collect:${law.id}] starting the worker in ${law.flyRegion}`]);
+      setLaw(law, { state: 'starting' });
       handle = await this.fleet.acquire(law.flyRegion);
       check();
       const post = await fetch(`${handle.baseUrl}/internal/collect`, {
@@ -394,11 +420,36 @@ export class Runner {
       const pollMs = this.options.remotePollMs ?? REMOTE_POLL_MS;
       const deadline = Date.now() + (this.options.remoteTimeoutMs ?? REMOTE_TIMEOUT_MS);
       let seen = 0;
+      // The worker's owner report, fetched on each `live` event: one fetch in flight; a live event meanwhile asks for one more after it. Errors (404 included) are ignored.
+      let fetching = false;
+      let again = false;
+      const liveReport = () => {
+        if (fetching) {
+          again = true;
+          return;
+        }
+        fetching = true;
+        const p = (async () => {
+          do {
+            again = false;
+            try {
+              const r = await fetch(url('/report'), { headers, signal });
+              if (r.ok) await live.put(law.id, Buffer.from(await r.arrayBuffer()));
+            } catch {
+              /* the next live event retries */
+            }
+          } while (again && !signal.aborted);
+        })().finally(() => (fetching = false));
+        live.track(p);
+      };
       const pull = async () => {
         const res = await fetch(url(`/events?from=${seen}`), { headers, signal });
         if (!res.ok) throw new Error(`events: HTTP ${res.status}`);
         const lines = (await res.text()).split('\n').filter((l) => l.trim());
-        for (const l of lines) appendLine(l);
+        for (const l of lines) {
+          appendLine(l);
+          if (isLiveLine(l)) liveReport();
+        }
         seen += lines.length;
       };
       let failures = 0;
@@ -441,7 +492,9 @@ export class Runner {
     } catch (err) {
       interrupted ||= signal.aborted;
       const message = signal.aborted ? (a.reason ?? 'cancelled') : (err as Error).message;
-      return { law, error: law.local ? message : `worker in ${law.flyRegion} failed: ${message}` };
+      const error = law.local ? message : `worker in ${law.flyRegion} failed: ${message}`;
+      if (!a.reason) setLaw(law, { state: 'failed', error });
+      return { law, error };
     } finally {
       if (handle && posted) {
         const quick = { headers, signal: AbortSignal.timeout(10_000) };
@@ -625,6 +678,51 @@ function exitText(r: StepResult): string {
 function withTail(message: string, stderr: string[]): string {
   const tail = stderr.slice(-STDERR_TAIL).join('\n').trim();
   return tail ? `${message}\n${tail}` : message;
+}
+
+type SetLaw = (law: Law, patch: { state?: LawScanState; error?: string }) => void;
+
+function isLiveLine(line: string): boolean {
+  try {
+    return (JSON.parse(line) as { type?: unknown }).type === 'live';
+  } catch {
+    return false;
+  }
+}
+
+/** <jobDir>/consent/live/<lawId>.json: each law's latest owner report while it scans. Written whole (tmp + rename), never half. */
+class LiveFiles {
+  private readonly pending = new Set<Promise<unknown>>();
+  private seq = 0;
+
+  constructor(private readonly dir: string) {}
+
+  track(p: Promise<unknown>): void {
+    const q = p.catch(() => undefined);
+    this.pending.add(q);
+    void q.then(() => this.pending.delete(q));
+  }
+
+  async put(id: string, body: Buffer): Promise<void> {
+    const file = path.join(this.dir, `${id}.json`);
+    const tmp = `${file}.${++this.seq}.tmp`;
+    await fsp.writeFile(tmp, body);
+    await fsp.rename(tmp, file);
+  }
+
+  /** Copy the collector's own report file in (fire and forget; a vanished source is ignored). */
+  copy(id: string, src: string): void {
+    this.track(
+      fsp
+        .readFile(src)
+        .then((body) => this.put(id, body))
+        .catch(() => undefined),
+    );
+  }
+
+  async settled(): Promise<void> {
+    while (this.pending.size) await Promise.allSettled([...this.pending]);
+  }
 }
 
 function oneLine(s: string): string {

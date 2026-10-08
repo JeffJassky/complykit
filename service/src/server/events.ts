@@ -3,7 +3,8 @@
 // metrics, and result as the API contract shapes them.
 
 import fsp from 'node:fs/promises';
-import type { JobDetail, JobResult } from '../shared/api.js';
+import type { JobDetail, JobResult, LawScanProgress } from '../shared/api.js';
+import type { Law, LawId } from '../shared/laws.js';
 
 // --- Event shapes written by `complykit consent --events` ---------------------
 
@@ -147,10 +148,37 @@ export class ConsentProgress {
   constructor(
     private readonly job: JobDetail,
     private readonly extraUnits: number,
-    /** Locations a multi-region job will collect, known before the collectors announce themselves. */
-    expectedLocations: string[] = [],
+    /** The laws a multi-law job scans under, in catalog order; known before the collectors announce themselves. */
+    laws: readonly Law[] = [],
   ) {
-    this.locations = [...expectedLocations];
+    this.locations = laws.map((l) => l.locationId);
+    // The one place job.metrics.laws is written (plans/per-law-report-contract.md, B1).
+    if (laws.length) {
+      job.metrics.laws = laws.map((l) => ({ id: l.id, locationId: l.locationId, region: l.flyRegion, local: !!l.local, state: 'waiting', visitsDone: 0, visitsTotal: 0 }));
+    }
+  }
+
+  private lawAt(location: string): LawScanProgress | undefined {
+    return this.job.metrics.laws?.find((l) => l.locationId === location);
+  }
+
+  /**
+   * Set a law's state for what events cannot say (a worker starting, a law failing).
+   * `failed` is terminal. Returns true when something changed.
+   */
+  setLaw(id: LawId, patch: Partial<Pick<LawScanProgress, 'state' | 'error'>>): boolean {
+    const law = this.job.metrics.laws?.find((l) => l.id === id);
+    if (!law || law.state === 'failed') return false;
+    let changed = false;
+    if (patch.state !== undefined && patch.state !== law.state) {
+      law.state = patch.state;
+      changed = true;
+    }
+    if (patch.error !== undefined && patch.error !== law.error) {
+      law.error = patch.error;
+      changed = true;
+    }
+    return changed;
   }
 
   /** Returns true when the job changed (so the caller persists + broadcasts). */
@@ -167,6 +195,10 @@ export class ConsentProgress {
           p.phase = 'verifying-location';
           p.current = this.locations.length ? `verifying ${this.locations.join(', ')}` : undefined;
         }
+        for (const l of ev.locations ?? []) {
+          const law = this.lawAt(l);
+          if (law && (law.state === 'waiting' || law.state === 'starting')) law.state = 'verifying';
+        }
         break;
       case 'location': {
         this.locationsSeen++;
@@ -181,6 +213,18 @@ export class ConsentProgress {
           }
         }
         m.location = { id: ev.location, verdict: ev.verdict, ...(ev.observed ? { observed: ev.observed } : {}) };
+        const lawHere = this.lawAt(ev.location);
+        if (lawHere && lawHere.state !== 'failed') {
+          lawHere.verdict = ev.verdict;
+          if (ev.observed) lawHere.observed = ev.observed;
+          if (ev.scenarios?.length) {
+            lawHere.state = 'scanning';
+            lawHere.visitsTotal = ev.scenarios.length * runs;
+          } else {
+            lawHere.state = 'failed';
+            lawHere.error = ev.verdict + (ev.note ? ` — ${ev.note}` : '');
+          }
+        }
         p.total = this.planned + this.extraUnits;
         if (ev.scenarios?.length) {
           p.phase = 'scenarios';
@@ -196,6 +240,13 @@ export class ConsentProgress {
         p.phase = 'scenarios';
         p.current = `${ev.location} · ${ev.scenario}${this.repeatLabel(ev.location, ev.run)}`;
         m.scenarios.push({ location: ev.location, scenario: ev.scenario, ...(isRepeat(ev.run) ? { run: ev.run } : {}), status: 'running' });
+        {
+          const law = this.lawAt(ev.location);
+          if (law && law.state !== 'failed') {
+            law.current = { scenario: ev.scenario, ...(isRepeat(ev.run) ? { run: ev.run } : {}) };
+            if (law.state === 'verifying') law.state = 'scanning';
+          }
+        }
         break;
       case 'scenario-done': {
         const run = isRepeat(ev.run) ? ev.run : undefined;
@@ -213,15 +264,30 @@ export class ConsentProgress {
         m.parties = Math.max(m.parties, ev.parties ?? 0);
         m.cookies = Math.max(m.cookies, ev.cookies ?? 0);
         if (ev.banner) m.banner = ev.banner;
+        {
+          const law = this.lawAt(ev.location);
+          if (law && law.state !== 'failed') {
+            law.visitsDone++;
+            law.current = undefined;
+            if (ev.banner) law.banner = ev.banner;
+          }
+        }
         if (this.allPlannedDone()) {
           p.phase = 'analyzing';
           p.current = 'analyzing evidence';
         }
         break;
       }
+      case 'collected':
+        for (const l of ev.locations ?? []) {
+          const law = this.lawAt(l);
+          if (law && law.state !== 'failed') law.state = 'collected';
+        }
+        break;
       case 'done':
         this.done = ev;
         p.current = undefined;
+        for (const law of m.laws ?? []) if (law.state === 'collected') law.state = 'done';
         job.result = {
           ...(job.result ?? { downloadUrl: `/api/jobs/${job.id}/download` }),
           consent: {
