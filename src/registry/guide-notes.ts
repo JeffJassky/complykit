@@ -93,7 +93,7 @@ export const GUIDE_WIRETAP = {
     'Advertising pixels, session recording, chat and identity-resolution tools stay off until the visitor accepts. Courts accept only consent given before the tracking starts; a footer policy link or “by using this site you agree” is not consent, and an opt-out banner never provides it.',
 } as const;
 
-const RESEARCH = 'plans/research-consent-law.md';
+const RESEARCH = 'https://github.com/JeffJassky/complykit/blob/main/plans/research-consent-law.md';
 const src = (label: string, href: string) => ({ label, href });
 
 /** Per instrument: chip label, plain summary, litigation risk (exposure laws), and notes that apply wherever it reaches. */
