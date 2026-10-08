@@ -6,7 +6,7 @@ import { LAWS, type LawId } from '../../shared/laws';
 import { parseHash, reportHref } from '../lib/useHashView';
 import { createRerenderQueue, isMoving } from '../lib/useJobReport';
 import { HomeView, siteRows, siteStatus } from './Home';
-import { BannerLine, LawTabsView, Matrix, ReportPageView, pagesVisited, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
+import { BannerLine, LawTabsView, Matrix, PingDecision, ReportPageView, pagesVisited, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
 
 // The report page (plans/simple-report.md), rendered per section and state.
 
@@ -247,6 +247,45 @@ describe('d. the to-do list', () => {
     expect(text(<TodoList data={data} />)).toContain('Only if they apply (1)');
     expect(text(<TodoList data={data} />)).toContain('Your answer: Analytics');
     expect(text(<TodoList data={done({ todo: { state: 'ready', tasks } })} />)).toContain('Your answer is saved for this site.');
+  });
+  it('the ping decision is the first item, with the checks it settles; the answer shows once recorded', () => {
+    const undecided = { key: 'decision:limited-pings', cells: 4 };
+    const t = text(<TodoList data={running({ report: owner({ pingDecision: undecided }) })} />);
+    expect(t).toContain('Google’s cookieless pings before consent');
+    expect(t).toContain('This settles 4 checks.');
+    expect(t).toContain('To decide');
+    expect(t.indexOf('Google’s cookieless pings')).toBeLessThan(t.indexOf('What is widgets.test for?'));
+    // Also with the checklist ready.
+    expect(html(<TodoList data={done({ report: { ...finalOwner, pingDecision: undecided } })} />)).toContain('data-testid="ping-decision"');
+    expect(text(<TodoList data={running({ report: owner({ pingDecision: { ...undecided, cells: 1 } }) })} />)).toContain('This settles 1 check.');
+    const held = text(<TodoList data={running({ report: owner({ pingDecision: { ...undecided, choice: 'hold', at: '2026-10-07T12:00:00Z' } }) })} />);
+    expect(held).toContain('Your answer: Hold them until consent');
+    expect(held).toContain('Decided ✓');
+    // A value saved on this page wins until the report carries it.
+    const saved = text(<TodoList data={running({ report: owner({ pingDecision: undecided }) })} ui={{ saved: { 'decision:limited-pings': 'allow' } }} />);
+    expect(saved).toContain('Your answer: Accept them');
+  });
+  it('the ping decision buttons write the answer, and are off with no handler or while saving', () => {
+    const onDecide = vi.fn();
+    const el = PingDecision({ decision: { key: 'decision:limited-pings', cells: 2 }, ui: {}, actions: { onDecide } });
+    const buttons: Array<{ props: { 'data-value'?: string; onClick?: () => void } }> = [];
+    const walk = (n: unknown): void => {
+      if (!n || typeof n !== 'object') return;
+      const node = n as { type?: unknown; props?: { children?: unknown; 'data-value'?: string } };
+      if (Array.isArray(n)) return n.forEach(walk);
+      if (node.type === 'button') buttons.push(node as never);
+      walk(node.props?.children);
+    };
+    walk(el);
+    buttons.find((b) => b.props['data-value'] === 'allow')?.props.onClick?.();
+    expect(onDecide).toHaveBeenCalledWith('decision:limited-pings', 'allow');
+    const none = { key: 'decision:limited-pings', cells: 2 };
+    expect(html(<PingDecision decision={none} ui={{}} actions={{}} />)).toMatch(/<fieldset[^>]*disabled=""/);
+    expect(html(<PingDecision decision={none} ui={{ saving: none.key }} actions={{ onDecide }} />)).toContain('Saving…');
+    expect(html(<PingDecision decision={{ ...none, choice: 'allow' }} ui={{}} actions={{ onDecide }} />)).toMatch(/aria-pressed="true"[^>]*data-value="allow"|data-value="allow"[^>]*aria-pressed="true"/);
+  });
+  it('no ping decision card when the report has none', () => {
+    expect(html(<TodoList data={running()} />)).not.toContain('ping-decision');
   });
   it('says so while the report updates with new answers, and when the list came from an earlier scan', () => {
     expect(html(<TodoList data={done()} ui={{ rerender: 'running' }} />)).toContain('data-testid="updating"');
