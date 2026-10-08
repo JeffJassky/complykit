@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fakeFleet, flyFleet } from '../src/server/fleet.js';
+import { authHeader, fakeFleet, flyFleet } from '../src/server/fleet.js';
 
 const TOKEN = 'fo1_supersecrettoken';
 const SECRET = 'worker-secret';
@@ -128,5 +128,12 @@ describe('fakeFleet', () => {
     expect(h.region).toBe('fra');
     await expect(f.release(h)).resolves.toBeUndefined();
     await expect(f.acquire('lhr')).rejects.toThrow(/lhr/);
+  });
+});
+
+describe('authHeader', () => {
+  it('sends Fly macaroon tokens as-is and plain tokens as Bearer', () => {
+    expect(authHeader('FlyV1 fm2_abc')).toBe('FlyV1 fm2_abc');
+    expect(authHeader('abc123')).toBe('Bearer abc123');
   });
 });

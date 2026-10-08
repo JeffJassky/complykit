@@ -43,6 +43,11 @@ interface Machine {
 const HEALTH_TIMEOUT_MS = 90_000;
 const HEALTH_POLL_MS = 1_000;
 
+/** Fly macaroon tokens ("FlyV1 fm2_…", from `fly tokens create`) carry their own scheme; older API tokens take Bearer. */
+export function authHeader(token: string): string {
+  return token.startsWith('FlyV1 ') ? token : `Bearer ${token}`;
+}
+
 export function flyFleet(cfg: FlyFleetConfig): Fleet {
   const doFetch = cfg.fetch ?? fetch;
   const now = cfg.now ?? Date.now;
@@ -55,7 +60,7 @@ export function flyFleet(cfg: FlyFleetConfig): Fleet {
   async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
     const res = await doFetch(url, {
       method,
-      headers: { authorization: `Bearer ${cfg.token}`, ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
+      headers: { authorization: authHeader(cfg.token), ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) {
