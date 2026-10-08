@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import express from 'express';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CreateBatchResponse, RescanResponse } from '../src/shared/api.js';
@@ -19,12 +20,19 @@ afterEach(async () => {
 });
 
 /** An in-process worker (fake collect-only CLI) on a real port; returns its base URL. */
-async function startWorker(): Promise<{ url: string; w: WorkerService }> {
+async function startWorker(): Promise<{ url: string; w: WorkerService; calls: string[] }> {
   const w = createWorkerApp({ ...loadWorkerConfig({ WORKER_SECRET: SECRET }), tmpDir: tempDir(), cliPath: FAKE_WORKER_CLI, killGraceMs: 500 });
-  const server = w.app.listen(0, '127.0.0.1');
+  const calls: string[] = [];
+  const outer = express();
+  outer.use((req, _res, next) => {
+    if ((req.method === 'POST' && req.path === '/internal/collect') || req.method === 'DELETE') calls.push(`${req.method} ${req.method === 'DELETE' ? req.path : 'collect'}`);
+    next();
+  });
+  outer.use(w.app);
+  const server = outer.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   workers.push({ w, close: () => new Promise((r) => server.close(() => r(undefined))) });
-  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, w };
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, w, calls };
 }
 
 const fast = { staggerMs: 10, remotePollMs: 25 };
@@ -151,6 +159,38 @@ describe('multi-region scan', () => {
     expect(job.status).toBe('cancelled');
     expect(eu.w.isBusy()).toBe(false);
     expect(fs.existsSync(path.join(s.store.jobDir(id), 'consent', 'gather'))).toBe(false);
+  });
+});
+
+describe('one worker per region at a time', () => {
+  it('two concurrent jobs both scanning eu run their collections one after the other', async () => {
+    const eu = await startWorker();
+    const s = await startService({ workerSecret: SECRET, concurrency: 2 }, { ...fast, fleet: fakeFleet({ fra: eu.url }) });
+    const a = await scan(s, { urls: 'https://a.example.com/', laws: ['eu'], authorized: true });
+    const b = await scan(s, { urls: 'https://b.example.org/', laws: ['eu'], authorized: true });
+    const [ja, jb] = await Promise.all([waitForStatus(s, a, ['done', 'failed']), waitForStatus(s, b, ['done', 'failed'])]);
+    expect([ja.status, jb.status]).toEqual(['done', 'done']);
+    expect(eu.calls.map((c) => c.split(' ')[0])).toEqual(['POST', 'DELETE', 'POST', 'DELETE']);
+    const waited = [ja, jb].filter((j) => j.log.some((l) => /waiting for the fra worker \(another scan is using it\)/.test(l)));
+    expect(waited).toHaveLength(1);
+  });
+
+  it('cancel while waiting for the region stops promptly and never starts a collection', async () => {
+    const eu = await startWorker();
+    const s = await startService({ workerSecret: SECRET, concurrency: 2 }, { ...fast, fleet: fakeFleet({ fra: eu.url }) });
+    const a = await scan(s, { urls: 'https://slow.a.example.com/', laws: ['eu'], authorized: true });
+    await waitFor(() => eu.w.isBusy(), 10_000, 'first job collecting');
+    const b = await scan(s, { urls: 'https://slow.b.example.org/', laws: ['eu'], authorized: true });
+    await waitFor(() => s.store.get(b)!.log.some((l) => /waiting for the fra worker/.test(l)), 10_000, 'second job waiting');
+    const t0 = Date.now();
+    await request(s.app).post(`/api/jobs/${b}/cancel`).expect(200);
+    await waitForStatus(s, b, ['cancelled']);
+    expect(Date.now() - t0).toBeLessThan(3_000);
+    expect(eu.calls.filter((c) => c.startsWith('POST'))).toHaveLength(1);
+    expect(eu.w.isBusy()).toBe(true); // the first job is untouched
+    await request(s.app).post(`/api/jobs/${a}/cancel`).expect(200);
+    await waitForStatus(s, a, ['cancelled']);
+    expect(eu.w.isBusy()).toBe(false);
   });
 });
 

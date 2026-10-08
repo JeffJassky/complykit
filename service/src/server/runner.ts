@@ -79,6 +79,46 @@ export class Runner {
   }
 
   private readonly fleet?: Fleet;
+  /** Per-region lock: a worker runs one collection at a time, and this process may run several jobs. */
+  private readonly regionTails = new Map<string, Promise<void>>();
+  private readonly regionHolders = new Map<string, number>();
+
+  /** Waits for the region's worker to be free (or the signal to abort); returns the unlock function. */
+  private async lockRegion(region: string, signal: AbortSignal, onWait: () => void): Promise<() => void> {
+    const prev = this.regionTails.get(region) ?? Promise.resolve();
+    const contended = (this.regionHolders.get(region) ?? 0) > 0;
+    this.regionHolders.set(region, (this.regionHolders.get(region) ?? 0) + 1);
+    let open!: () => void;
+    const gate = new Promise<void>((r) => (open = r));
+    // The next waiter queues behind this one even if this one gives up early.
+    this.regionTails.set(region, prev.then(() => gate));
+    let unlocked = false;
+    const unlock = () => {
+      if (unlocked) return;
+      unlocked = true;
+      open();
+      const n = (this.regionHolders.get(region) ?? 1) - 1;
+      if (n <= 0) {
+        this.regionHolders.delete(region);
+        this.regionTails.delete(region);
+      } else this.regionHolders.set(region, n);
+    };
+    if (contended) onWait();
+    await new Promise<void>((resolve) => {
+      if (signal.aborted) return resolve();
+      const done = () => {
+        signal.removeEventListener('abort', done);
+        resolve();
+      };
+      signal.addEventListener('abort', done, { once: true });
+      void prev.then(done);
+    });
+    if (signal.aborted) {
+      unlock();
+      throw new Error('cancelled');
+    }
+    return unlock;
+  }
 
   get running(): number {
     return this.active.size;
@@ -326,6 +366,7 @@ export class Runner {
     let handle: WorkerHandle | undefined;
     let posted = false;
     let interrupted = false;
+    let unlock: (() => void) | undefined;
     const url = (p: string) => `${handle!.baseUrl}/internal/jobs/${workerJob}${p}`;
     const check = () => {
       if (signal.aborted) throw new Error(a.reason ?? 'cancelled');
@@ -333,6 +374,8 @@ export class Runner {
     try {
       if (!this.fleet) throw new Error('multi-region scanning is not configured on this server');
       await sleepAbortable(delayMs, signal);
+      check();
+      unlock = await this.lockRegion(law.flyRegion, signal, () => this.store.appendLog(job, [`[collect:${law.id}] waiting for the ${law.flyRegion} worker (another scan is using it)`]));
       check();
       this.store.appendLog(job, [`[collect:${law.id}] starting the worker in ${law.flyRegion}`]);
       handle = await this.fleet.acquire(law.flyRegion);
@@ -406,6 +449,7 @@ export class Runner {
         await fetch(url(''), { method: 'DELETE', headers, signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
       }
       if (handle) await this.fleet!.release(handle).catch(() => undefined);
+      unlock?.();
     }
   }
 
