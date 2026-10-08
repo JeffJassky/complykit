@@ -1,4 +1,7 @@
 import { useEffect, useId, useState } from 'react';
+import type { LawId } from '../../shared/laws';
+import { orderLaws, scanBlockedReason } from '../lib/laws';
+import { AuthorizedBox, JobLaws, LawPicker } from './Laws';
 import type { JobSummary, RemediationStatus, RemediationTask, SiteSummary, SiteWorkspace, WorkspaceRun } from '../../shared/api';
 import { formatAbsolute, formatRelative } from '../lib/format';
 import { api } from '../lib/api';
@@ -151,6 +154,7 @@ function RunReport({ run, jobs }: { run: WorkspaceRun; jobs: Record<string, JobS
             <a href={job.result.downloadUrl}>Download</a>
           </>
         ) : null}
+        {job ? <JobLaws job={job} /> : null}
       </>
     );
   }
@@ -327,22 +331,29 @@ export function RescanPanel({
   remaining,
   defaultQuick = false,
   defaultSlowRepeat = false,
+  defaultLaws,
   job,
 }: {
   rescan?: RescanState;
-  onRescan?: (opts: { quick: boolean; slowRepeat: boolean }) => void;
+  onRescan?: (opts: { quick: boolean; slowRepeat: boolean; laws?: LawId[]; authorized?: true }) => void;
   canRescan: boolean;
   remaining: number;
   /** The site's latest scan was quick: preselect it. */
   defaultQuick?: boolean;
   /** The site's latest scan repeated on a slow connection: preselect it. */
   defaultSlowRepeat?: boolean;
+  /** The laws the site's latest scan ran under (none: a single scan from the service's own location). */
+  defaultLaws?: readonly LawId[];
   /** The started rescan's job, live (undefined until the stream has it). */
   job?: JobSummary;
 }) {
   const id = useId();
   const [quick, setQuick] = useState(defaultQuick);
   const [slowRepeat, setSlowRepeat] = useState(defaultSlowRepeat);
+  const [laws, setLaws] = useState<LawId[]>(() => orderLaws(defaultLaws ?? []));
+  const [authorized, setAuthorized] = useState(false);
+  const withLaws = Boolean(defaultLaws?.length);
+  const blocked = withLaws ? scanBlockedReason({ consent: true, accessibility: false, laws, authorized }) : null;
   const running = Boolean(rescan.started) && (!job || job.status === 'queued' || job.status === 'running');
   return (
     <div className="checklist-rescan" data-testid="rescan">
@@ -356,9 +367,13 @@ export function RescanPanel({
         <>
           <fieldset className="checklist-rescan-options" disabled={rescan.busy || running}>
             <legend className="visually-hidden">Rescan options</legend>
-            <p className="muted" data-testid="rescan-location">
-              Location: <strong>this service’s own connection</strong> — the only place it scans from today.
-            </p>
+            {withLaws ? (
+              <LawPicker selected={laws} onChange={setLaws} />
+            ) : (
+              <p className="muted" data-testid="rescan-location">
+                Location: <strong>this service’s own connection</strong> — the only place it scans from today.
+              </p>
+            )}
             <label className="option">
               <input type="radio" name={`${id}-mode`} checked={!quick} onChange={() => setQuick(false)} /> <span>Full — every visitor choice, normal visits (best for the final check)</span>
             </label>
@@ -370,8 +385,10 @@ export function RescanPanel({
               <input type="radio" name={`${id}-mode`} checked={quick} onChange={() => setQuick(true)} /> <span>Quick — shorter visits, fewer visitor choices</span>
             </label>
           </fieldset>
+          {withLaws ? <AuthorizedBox checked={authorized} onChange={setAuthorized} disabled={rescan.busy || running} /> : null}
+          {blocked ? <p className="hint">{blocked}</p> : null}
           <p>
-            <button type="button" className="btn btn-sm" disabled={rescan.busy || running} onClick={() => onRescan?.({ quick, slowRepeat: !quick && slowRepeat })}>
+            <button type="button" className="btn btn-sm" disabled={rescan.busy || running || blocked !== null} onClick={() => onRescan?.({ quick, slowRepeat: !quick && slowRepeat, ...(withLaws ? { laws: orderLaws(laws), authorized: true as const } : {}) })}>
               {rescan.busy ? 'Starting…' : rescan.started && !running ? 'Rescan again' : 'Rescan site'}
             </button>
           </p>
@@ -415,7 +432,7 @@ export function ChecklistPanel({
   onVerify?: (t: RemediationTask) => void;
   onMarkDone?: (t: RemediationTask) => void;
   rescan?: RescanState;
-  onRescan?: (opts: { quick: boolean; slowRepeat: boolean }) => void;
+  onRescan?: (opts: { quick: boolean; slowRepeat: boolean; laws?: LawId[]; authorized?: true }) => void;
 }) {
   const tasks = checklistFromWorkspace(workspace);
   const report = reportChecklistHref(workspace, jobs);
@@ -459,6 +476,7 @@ export function ChecklistPanel({
             remaining={p.required - p.verified - p.doneUnverified}
             defaultQuick={latestSiteJob(workspace, jobs)?.quick ?? false}
             defaultSlowRepeat={latestSiteJob(workspace, jobs)?.slowRepeat ?? false}
+            defaultLaws={latestSiteJob(workspace, jobs)?.laws}
             job={rescan?.started ? jobs?.[rescan.started.jobId] : undefined}
           />
         </>
@@ -493,7 +511,7 @@ export function SitePageView({
   onVerify?: (t: RemediationTask) => void;
   onMarkDone?: (t: RemediationTask) => void;
   rescan?: RescanState;
-  onRescan?: (opts: { quick: boolean; slowRepeat: boolean }) => void;
+  onRescan?: (opts: { quick: boolean; slowRepeat: boolean; laws?: LawId[]; authorized?: true }) => void;
 }) {
   const { runs, openTasks, doneTasks, classifications } = summarizeWorkspace(workspace);
   const tasks = checklistFromWorkspace(workspace);
@@ -685,11 +703,11 @@ export function SitePage({ domain, jobs }: { domain: string; jobs: Record<string
     }
   };
   const [rescan, setRescan] = useState<RescanState>({});
-  const onRescan = async (opts: { quick: boolean; slowRepeat: boolean }) => {
+  const onRescan = async (opts: { quick: boolean; slowRepeat: boolean; laws?: LawId[]; authorized?: true }) => {
     if (rescan.busy) return;
     setRescan({ busy: true });
     try {
-      const res = await api.rescan(domain, { quick: opts.quick, slowRepeat: opts.slowRepeat });
+      const res = await api.rescan(domain, { quick: opts.quick, slowRepeat: opts.slowRepeat, ...(opts.laws ? { laws: opts.laws, authorized: opts.authorized } : {}) });
       setRescan({ started: { jobId: res.job.id, url: res.job.url, quick: res.job.quick, slowRepeat: res.job.slowRepeat } });
     } catch (err) {
       setRescan({ error: err instanceof Error ? err.message : String(err) });

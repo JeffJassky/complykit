@@ -3537,3 +3537,59 @@ span.rp-cell {
     padding-right: 16px;
   }
 }
+
+/* Law checkboxes (multi-region scans): the new-scan form, a rescan, and per-law progress. */
+.law-picker {
+  border: 0;
+  margin: 4px 0 0;
+  padding: 0;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+.law-picker legend {
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.law-picker:disabled {
+  opacity: 0.55;
+}
+.law-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13.5px;
+}
+.law-option input {
+  margin-top: 3px;
+  flex: none;
+}
+.law-text {
+  display: grid;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.law-authorized {
+  margin: 8px 0;
+}
+.law-progress {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+}
+.law-progress li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+.law-summary {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+}
