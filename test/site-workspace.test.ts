@@ -7,7 +7,7 @@ import { buildBehaviorMatrix } from '../src/report/consent-matrix.js';
 import { diffConsentModels, diffIsEmpty, renderSinceHtml, renderSinceMarkdown, carriedTasks } from '../src/report/consent-diff.js';
 import { renderConsentHtml } from '../src/report/consent-html.js';
 import { workspaceId } from '../src/report/workspace.js';
-import { applyWorkspace, classificationCategories, classificationKey, doneTasks, parseWorkspaceSnapshot, resolveSiteClassifications, siteKnowledgeBase, workspaceSubjects } from '../src/site-workspace.js';
+import { applyWorkspace, siteDecisions, LIMITED_PINGS_KEY, classificationCategories, classificationKey, doneTasks, parseWorkspaceSnapshot, resolveSiteClassifications, siteKnowledgeBase, workspaceSubjects } from '../src/site-workspace.js';
 
 // C3: the site workspace applied to a scan (KB overrides from classifications,
 // done tasks carried), and the run-to-run diff. Fixtures only.
@@ -158,5 +158,18 @@ describe('run-to-run diff', () => {
 
   it('a matrix built without a workspace is unchanged', () => {
     expect(buildBehaviorMatrix(base).rows.find((r) => r.label === '_uw')?.categorySource).toBe('not classified (unidentified tool)');
+  });
+});
+
+describe('site workspace: the consent-denied ping decision', () => {
+  it('decision:limited-pings allow | hold becomes the record\'s decisions; anything else is undecided', () => {
+    const ws = (value: unknown) => parseWorkspaceSnapshot({ entries: { [LIMITED_PINGS_KEY]: { value, at: '2026-10-08T12:00:00Z', by: 'jeff' } } });
+    expect(LIMITED_PINGS_KEY).toBe('decision:limited-pings');
+    expect(siteDecisions(ws('allow'))).toEqual({ decisions: { limitedPings: { choice: 'allow', at: '2026-10-08T12:00:00Z', by: 'jeff' } } });
+    expect(siteDecisions(ws('hold')).decisions?.limitedPings?.choice).toBe('hold');
+    expect(siteDecisions(ws(null))).toEqual({});
+    expect(siteDecisions(ws('maybe'))).toEqual({});
+    expect(applyWorkspace([], DEFAULT_KB, ws('allow'), '2026-10-08T13:00:00Z').record.decisions).toEqual({ limitedPings: { choice: 'allow', at: '2026-10-08T12:00:00Z', by: 'jeff' } });
+    expect(applyWorkspace([], DEFAULT_KB, ws(null), '2026-10-08T13:00:00Z').record).not.toHaveProperty('decisions');
   });
 });

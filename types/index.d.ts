@@ -1934,6 +1934,8 @@ export interface SiteWorkspaceRecord {
   appliedAt: string;
   classifications: Array<{ key: string; kind: 'tool' | 'storage'; partyId: string; domain: string; storageKind?: string; name?: string; categories: string[]; at?: string; by?: string }>;
   doneTasks: Array<{ key: string; at?: string; by?: string }>;
+  /** Site-wide decisions (workspace `decision:*` keys). limitedPings: Google Consent Mode / Meta LDU pings where they would need a decision — 'allow' accepts them, 'hold' expects them to wait for consent. */
+  decisions?: { limitedPings?: { choice: 'allow' | 'hold'; at?: string; by?: string } };
 }
 
 /** Run-to-run diff of two consent evaluations of one site (C3). */

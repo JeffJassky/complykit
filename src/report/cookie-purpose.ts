@@ -43,6 +43,8 @@ export interface ComparisonFacts {
   regimeLabel?: string;
   /** The location carries wiretap-litigation exposure (CA, FL, PA): ad, recording, chat and identity tools are expected off until the visitor accepts. Absent in reports saved before this posture: today's behavior. */
   wiretap?: boolean;
+  /** The site's decision on consent-denied pings where they would need one (workspace `decision:limited-pings`): 'allow' accepts them, 'hold' expects nothing until the visitor accepts. Absent = undecided. */
+  limitedPings?: 'allow' | 'hold';
 }
 export interface PurposeDecision {
   categories: string[];
@@ -106,10 +108,15 @@ export function compareCookieBehavior(facts: ComparisonFacts, decision: PurposeD
   if (context && regime === 'opt-in' && !refused && s !== 'accept') return facts.hasActivity ? result('review','Allowed without consent only when strictly needed for a feature the visitor asked for. Check how the site uses it.') : result('match','Not active during this visit.');
   // "May run" is an expectation like any other: running (or not) meets it.
   if (!off) return result('match', 'Working as expected: ' + (facts.hasActivity ? 'it ran, and ' : 'it did not run; ') + 'it may run here under ' + where + '.');
-  if (facts.limitedOnly) return regime === 'opt-in' ? result('review','Only consent-denied pings were sent, with nothing stored (e.g. Google Consent Mode "advanced"). Whether that is acceptable without consent is contested in the EU/UK.')
-    // Wiretap states: the pings still carry the IP address and the page address, and no court has ruled on them — a decision, as in the EU/UK, not a pass. After an opt-out, restricted mode is the expected behavior.
-    : wiretap && (noChoice || refused) ? result('review','Only consent-denied pings were sent, with nothing stored (e.g. Google Consent Mode "advanced"). They still carry the IP address and the page address, and no court has ruled whether that is a transmission without consent under this state’s wiretap law. Decide whether to accept it.')
-    : result('match','Only restricted-mode requests were sent (e.g. Google restricted data processing, Meta limited data use), with nothing stored. That is the expected opt-out behavior.');
+  if (facts.limitedOnly) {
+    // Contested: the EU/UK, and wiretap states before a choice or after a refusal — the pings still carry the IP address and the page address, and no court has ruled on them. One site-wide decision answers it. After an opt-out elsewhere, restricted mode is the expected behavior.
+    const contested = regime === 'opt-in' || (wiretap && (noChoice || refused));
+    if (!contested) return result('match','Only restricted-mode requests were sent (e.g. Google restricted data processing, Meta limited data use), with nothing stored. That is the expected opt-out behavior.');
+    if (facts.limitedPings === 'allow') return result('match','Only consent-denied pings were sent, with nothing stored. Your team decided to accept these pings (a site decision); they still carry the IP address and the page address.');
+    if (facts.limitedPings === 'hold') return result('mismatch','Consent-denied pings were sent before the visitor accepted. Your team decided these pings wait for consent (a site decision): load the tags only after the visitor accepts (Google Consent Mode "basic").');
+    return result('review', regime === 'opt-in' ? 'Only consent-denied pings were sent, with nothing stored (e.g. Google Consent Mode "advanced"). Whether that is acceptable without consent is contested in the EU/UK. Decide once for the site whether to accept them.'
+      : 'Only consent-denied pings were sent, with nothing stored (e.g. Google Consent Mode "advanced"). They still carry the IP address and the page address, and no court has ruled whether that is a transmission without consent under this state’s wiretap law. Decide once for the site whether to accept them.');
+  }
   if (facts.hasActivity) return result('mismatch', wiretap && noChoice ? 'Active before any choice in a wiretap-litigation state, where this tool is expected off until the visitor accepts. This is a behavior mismatch and litigation exposure, not a legal verdict.' : 'Active when ' + where + ' expect it to be off. This is a behavior mismatch, not a legal verdict.');
   if (facts.captureGap) return result('unknown','Capture limits could hide activity; absence is not a pass.');
   return result('match','No activity was recorded, as expected. This covers the captured behavior and duration only.');

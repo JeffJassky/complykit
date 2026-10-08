@@ -965,6 +965,11 @@ export const TrackingEvaluation = z.object({
         }),
       ),
       doneTasks: z.array(z.object({ key: z.string(), at: z.string().optional(), by: z.string().optional() })), // keys without 'task:'
+      // Site-wide decisions (workspace 'decision:*' keys). limitedPings: consent-denied pings
+      // where they would need a decision (EU/UK, wiretap states before a choice or after a refusal).
+      decisions: z
+        .object({ limitedPings: z.object({ choice: z.enum(['allow', 'hold']), at: z.string().optional(), by: z.string().optional() }).optional() })
+        .optional(),
     })
     .optional(),
 });

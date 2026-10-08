@@ -5,6 +5,8 @@ import { createHash } from 'node:crypto';
 import { escapeHtml as esc } from './human.js';
 
 export const CATEGORIES = [...PartyCategory.options, 'performance', 'security', 'other'] as const;
+/** Site workspace key of the decision on consent-denied pings (src/site-workspace.ts): 'allow' | 'hold'. */
+export const LIMITED_PINGS_KEY = 'decision:limited-pings';
 export function workspaceId(type: string, identity: unknown): string {
   return `${type}-${createHash('sha256').update(JSON.stringify(identity)).digest('hex').slice(0, 32)}`;
 }

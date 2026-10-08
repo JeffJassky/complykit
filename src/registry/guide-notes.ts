@@ -90,7 +90,7 @@ export const GUIDE_WIRETAP = {
   summary:
     'In these states, all-party-consent wiretap laws are used to sue websites whose trackers send what a visitor does to a third party before the visitor agrees. The privacy statute may be opt-out, but prior consent is the defence in court — so complykit expects the targeted tools off until the visitor accepts.',
   holds:
-    'Advertising pixels, session recording, chat and identity-resolution tools stay off until the visitor accepts. Courts accept only consent given before the tracking starts; a footer policy link or “by using this site you agree” is not consent, and an opt-out banner never provides it. Cookieless “consent-denied” pings before a choice or after a refusal (Google Consent Mode “advanced”) still carry the IP address and the page address; no court has ruled on them, so they are reported as needing your decision, as in the EU and UK.',
+    'Advertising pixels, session recording, chat and identity-resolution tools stay off until the visitor accepts. Courts accept only consent given before the tracking starts; a footer policy link or “by using this site you agree” is not consent, and an opt-out banner never provides it. Cookieless “consent-denied” pings before a choice or after a refusal (Google Consent Mode “advanced”) still carry the IP address and the page address; no court has ruled on them, so they are reported as needing your decision, as in the EU and UK. You answer once for the site: accept them, or hold them until consent (Consent Mode “basic”), and later scans follow that answer.',
 } as const;
 
 const RESEARCH = 'https://github.com/JeffJassky/complykit/blob/main/plans/research-consent-law.md';
@@ -256,7 +256,7 @@ export const GUIDE_PLACE_NOTES: Readonly<Record<string, GuideNoteEntry[]>> = {
       kind: 'posture',
       title: 'Google Consent Mode “advanced” needs a decision',
       text:
-        'With Consent Mode “advanced”, Google tags send cookieless pings before consent. Whether that is allowed without consent is contested: the pings carry the IP address, browser details and the full page address, which EU guidance treats as gaining access. complykit reports them as needing your decision rather than as a pass or a violation.',
+        'With Consent Mode “advanced”, Google tags send cookieless pings before consent. Whether that is allowed without consent is contested: the pings carry the IP address, browser details and the full page address, which EU guidance treats as gaining access. complykit reports them as needing your decision rather than as a pass or a violation. You answer once for the site — accept them, or hold them until consent — and every later scan applies that answer.',
       sources: [src('EDPB Guidelines 2/2023', 'https://www.edpb.europa.eu/system/files/documents/2024-10/edpb_guidelines_202302_technical_scope_art_53_eprivacydirective_v2_en_0.pdf')],
     },
   ],

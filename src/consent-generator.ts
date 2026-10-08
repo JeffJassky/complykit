@@ -25,7 +25,7 @@ import {
 } from './report/index.js';
 import { cookiePurposes } from './report/cookie-purpose.js';
 import { reconcileRecord } from './consent-compatibility.js';
-import { doneTasks, resolveSiteClassifications, type WorkspaceSnapshot, type WorkspaceSubject } from './site-workspace.js';
+import { doneTasks, resolveSiteClassifications, siteDecisions, type WorkspaceSnapshot, type WorkspaceSubject } from './site-workspace.js';
 import { buildRemediationTasks, renderHeadSnippet, scriptJson } from './remediation.js';
 import type { RemediationTask } from './record/index.js';
 
@@ -237,7 +237,7 @@ export function applyWorkspaceToRecord(ev: TrackingEvaluation, ws: WorkspaceSnap
     const p = byId.get(c.partyId);
     if (p) p.categories = [...c.categories];
   }
-  ev.siteWorkspace = { ...(ws.domain ? { domain: ws.domain } : {}), appliedAt: at, classifications, doneTasks: doneTasks(ws) };
+  ev.siteWorkspace = { ...(ws.domain ? { domain: ws.domain } : {}), appliedAt: at, classifications, doneTasks: doneTasks(ws), ...siteDecisions(ws) };
 }
 
 /** Why this party is a known tracker, or undefined. Decided from the knowledge base and behavior — never from a site classification. */

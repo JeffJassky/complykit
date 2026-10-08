@@ -7,6 +7,7 @@
 //   class:<workspaceId('tool', [partyId, domain])>                         a tool's classification
 //   class:<workspaceId('storage', [partyId, domain, storageKind, name])>   one cookie / storage key
 //   task:<data-action-key>                                                 a task; done = value.status 'done'
+//   decision:limited-pings                                                 'allow' | 'hold' — site-wide, see siteDecisions
 //
 // The keys are hashes, so a classification can't be read back into a party on
 // its own. Instead the scan computes the keys of everything it observed (a
@@ -25,13 +26,16 @@
 // the queue with the shared KB, so a site's own classification never "resolves"
 // a domain for every other site.
 
-import { workspaceId } from './report/workspace.js';
+import { LIMITED_PINGS_KEY, workspaceId } from './report/workspace.js';
 import { tracking } from './rules/index.js';
 import { KnowledgeEntry, PartyCategory, type KnowledgeBase } from './registry/kb/index.js';
 import type { Timeline, TrackingEvaluation } from './record/index.js';
 
 export const CLASS_PREFIX = 'class:';
 export const TASK_PREFIX = 'task:';
+/** Consent-denied pings (Google Consent Mode "advanced", Meta LDU) where they need a decision: the
+ *  EU/UK, and wiretap states before a choice or after a refusal. One answer for the site, not per cell. */
+export { LIMITED_PINGS_KEY };
 
 export interface WorkspaceEntrySnapshot {
   value: unknown;
@@ -157,6 +161,13 @@ export function doneTasks(ws: WorkspaceSnapshot): SiteWorkspaceRecord['doneTasks
   return out.sort((a, b) => a.key.localeCompare(b.key));
 }
 
+/** The site-wide decisions the workspace holds, as the record's `decisions` field (spread: absent when none). */
+export function siteDecisions(ws: WorkspaceSnapshot): { decisions?: NonNullable<SiteWorkspaceRecord['decisions']> } {
+  const e = ws.entries[LIMITED_PINGS_KEY];
+  if (e?.value !== 'allow' && e?.value !== 'hold') return {};
+  return { decisions: { limitedPings: { choice: e.value, ...(e.at ? { at: e.at } : {}), ...(e.by ? { by: e.by } : {}) } } };
+}
+
 /**
  * The run's knowledge base: the shared one with the site's tool classifications
  * applied. Storage classifications don't change the KB (see the header).
@@ -195,6 +206,6 @@ export function applyWorkspace(timelines: Timeline[], base: KnowledgeBase, ws: W
   const classifications = resolveSiteClassifications(workspaceSubjects(timelines, base), ws);
   return {
     kb: siteKnowledgeBase(base, classifications),
-    record: { ...(ws.domain ? { domain: ws.domain } : {}), appliedAt: at, classifications, doneTasks: doneTasks(ws) },
+    record: { ...(ws.domain ? { domain: ws.domain } : {}), appliedAt: at, classifications, doneTasks: doneTasks(ws), ...siteDecisions(ws) },
   };
 }
