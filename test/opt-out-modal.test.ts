@@ -47,8 +47,19 @@ const FOOTER = `<footer><ul><li><a href="#" data-open>Cookie Preferences</a></li
 const BUTTONS_FULL = `<button type="button" data-act="all">Accept all</button><button type="button" data-act="none">Reject all</button><button type="button" data-act="save">Save preferences</button>`;
 const BUTTONS_SAVE_ONLY = `<button type="button" data-act="save">Save preferences</button>`;
 
+// vanilla-cookieconsent keeps its first-layer banner in the DOM under implied consent, drawn but
+// visibility:hidden — full size, so a bounding-box check calls it visible. Its "Decline optional"
+// comes first in the DOM and is a refusal: the field run picked it, the click timed out unseen, and
+// the walk still said performed.
+const HIDDEN_BANNER = `<div class="cm-wrapper"><div class="cm" style="visibility:hidden"><p>We value your privacy</p>
+  <button type="button" onclick="window.__saved=['necessary']">Decline optional</button><button type="button">Got it</button></div></div>`;
+// A refusal that is on screen but whose click lands on an overlay: nothing is saved.
+const COVERED = `<div style="position:fixed;inset:0;z-index:9" id="veil"></div>`;
+
 const pages: Record<string, string> = {
   '/': `<!doctype html><title>StoryFolder</title><main><h1>Storyboards</h1></main>${FOOTER}${MODAL(BUTTONS_FULL)}`,
+  '/hidden-banner': `<!doctype html><title>StoryFolder</title><main><h1>Storyboards</h1></main>${FOOTER}${HIDDEN_BANNER}${MODAL(BUTTONS_FULL)}`,
+  '/covered': `<!doctype html><title>Shop</title><main><h1>Shop</h1></main>${FOOTER}${MODAL(BUTTONS_FULL)}<script>document.querySelectorAll('[data-open]').forEach(function(a){ a.addEventListener('click', function(){ document.body.insertAdjacentHTML('beforeend', '${COVERED}'); }); });</script>`,
   '/save-only': `<!doctype html><title>Shop</title><main><h1>Shop</h1></main>${FOOTER}${MODAL(BUTTONS_SAVE_ONLY)}`,
 };
 
@@ -85,5 +96,17 @@ suite('opt-out link walk: a preferences modal with toggles that start on', () =>
     const { result, saved } = await walk('/save-only');
     expect(result.performed).toBe(true);
     expect(saved).toEqual(['necessary']);
+  });
+
+  it('never picks a control hidden by visibility (a consent tool’s undrawn first layer): clicks Reject all in the open modal', async () => {
+    const { result, saved } = await walk('/hidden-banner');
+    expect(result.performed).toBe(true);
+    expect(saved).toEqual(['necessary']);
+  });
+
+  it('a click that does not land is not performed', async () => {
+    const { result, saved } = await walk('/covered');
+    expect(saved).toBeNull();
+    expect(result.performed).toBe(false);
   });
 });

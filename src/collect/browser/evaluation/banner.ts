@@ -646,7 +646,9 @@ export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptO
         const act = new RegExp(action, 'i');
         return Array.from(document.querySelectorAll('button, [role="button"], [role="switch"], input[type="checkbox"]')).some((el) => {
           const b = (el as HTMLElement).getBoundingClientRect();
-          return b.width > 0 && b.height > 0 && !el.hasAttribute('data-complykit-optout') && act.test(`${el.textContent ?? ''} ${el.getAttribute('aria-label') ?? ''}`);
+          // A drawn-but-hidden control (visibility:hidden, opacity 0) has a full box: ask the browser.
+          const seen = b.width > 0 && b.height > 0 && (typeof el.checkVisibility !== 'function' || el.checkVisibility({ visibilityProperty: true, opacityProperty: true }));
+          return seen && !el.hasAttribute('data-complykit-optout') && act.test(`${el.textContent ?? ''} ${el.getAttribute('aria-label') ?? ''}`);
         });
       },
       OPT_OUT_ACTION.source,
@@ -661,9 +663,11 @@ export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptO
         const refuse = new RegExp(refusal, 'i');
         const granting = new RegExp(grant, 'i');
         const pf = new RegExp(personal, 'i');
+        // A consent tool can keep a layer drawn but hidden (vanilla-cookieconsent's first-layer banner
+        // under implied consent is visibility:hidden at full size): a box alone is not "visible".
         const visible = (el: Element): boolean => {
           const b = (el as HTMLElement).getBoundingClientRect();
-          return b.width > 0 && b.height > 0;
+          return b.width > 0 && b.height > 0 && (typeof el.checkVisibility !== 'function' || el.checkVisibility({ visibilityProperty: true, opacityProperty: true }));
         };
         // Site chrome present on every page (a footer newsletter signup, a
         // header/drawer login form) is not part of the opt-out control.
@@ -716,9 +720,9 @@ export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptO
     // A save-type control keeps whatever the toggles say, and they start on under implied consent:
     // switch the optional ones off first (locked / disabled ones stay), as a visitor opting out would.
     if (!inspect.refusing) await uncheckOptionalToggles(page);
-    await page.click('[data-complykit-optout-action="1"]', { timeout: 4000 }).catch(() => {});
+    // Performed only when the click landed: a control that timed out (covered, hidden) did nothing.
+    performed = await page.click('[data-complykit-optout-action="1"]', { timeout: 4000 }).then(() => true, () => false);
     steps++;
-    performed = true;
     await page.waitForTimeout(1500);
   } else if (inspect.hasAction) {
     steps++; // the step a visitor would still have to take
