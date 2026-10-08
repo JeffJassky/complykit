@@ -509,7 +509,7 @@ export function PingDecision({ decision, ui, actions }: { decision: NonNullable<
         </p>
       ) : null}
       <fieldset className="rp-picker" disabled={busy || !actions.onDecide}>
-        <div className="rp-picker-buttons">
+        <div className="rp-picker-options">
           {PING_CHOICES.map((c) => (
             <button key={c.value} type="button" className={`btn btn-sm ${c.value === choice ? 'btn-primary' : 'btn-secondary'}`} data-value={c.value} aria-pressed={c.value === choice} onClick={() => actions.onDecide?.(key, c.value)}>
               {c.label}
