@@ -5,7 +5,9 @@ import { ALL_REQUIREMENTS } from './requirements/index.js';
 // wiretap requirements (kind 'exposure', one instrument per state statute) are
 // scoped to them. Adding a researched wiretap statute for a new state extends
 // the posture, the wiretap rule and its theory label without a second list.
-const WIRETAP_INSTRUMENTS = new Set(['cipa', 'fsca', 'wesca', 'wapa', 'mdwa', 'ilea', 'mtpc']);
+// Washington and Montana are researched and deliberately absent
+// (plans/research-consent-law.md §2.5: Baker 2026; no civil remedy).
+const WIRETAP_INSTRUMENTS = new Set(['cipa', 'fsca', 'wesca', 'mdwa', 'ilea']);
 
 /** The wiretap-theory requirements, in registry order (CA first). */
 export const WIRETAP_REQUIREMENTS: readonly Requirement[] = (ALL_REQUIREMENTS as Requirement[]).filter((r) => WIRETAP_INSTRUMENTS.has(String(r.instrument)));
