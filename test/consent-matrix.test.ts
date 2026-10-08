@@ -32,6 +32,9 @@ describe('consent behavior matrix',()=>{
   expect(status({...model,locations:[{...model.locations[0],verdict:'mismatch'}]}).status).toBe('unknown');
   expect(status({...model,notTested:[{scope:'frame',id:'frame',reason:'blocked'}]},'storage','_fbp','reject').status).toBe('unknown');
   expect(status({...model,notTested:[{scope:'flow',id:'do-nothing',reason:'unreadable frame in this visit'}]},'storage','_fbp','reject').status).toBe('match');
+  // A coverage note that cannot hide requests or cookies does not turn an expected absence into "not checked".
+  expect(status({...model,notTested:[{scope:'flow',id:'reject',reason:'navigator.globalPrivacyControl inside workers (init scripts do not run in workers; the Sec-GPC header is still sent)'}]},'storage','_fbp','reject').status).toBe('match');
+  expect(status({...model,notTested:[{scope:'flow',id:'reject',reason:'unreadable frame in this visit'}]},'storage','_fbp','reject').status).toBe('unknown');
  });
  it('a failed opt-out link is one column-level gap that says why, not a "needs a look" per cookie',()=>{
   const loc=evaluation.locations[0];

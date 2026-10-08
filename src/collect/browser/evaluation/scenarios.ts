@@ -501,10 +501,20 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
         break;
       }
       case 'opt-out-link': {
+        // The link alone: no banner choice, no signal. Use it, then browse, so the
+        // column shows what still runs after a visitor opts out this way.
         await v.land(landing);
-        const walk = await step('opt-out-link', () => walkOptOutLink(v.page, false));
+        const tLink = cap.now();
+        const walk = await step('opt-out-link', () => walkOptOutLink(v.page, true));
         v.ev({ type: 'opt-out-walk', ...walk });
+        v.ev({ type: 'choice', choice: 'opt-out-link', ok: walk.performed === true, method: walk.performed ? 'link+control' : walk.found ? 'link' : 'none', note: walk.requiredFields.length ? `requires ${walk.requiredFields.join(', ')} — not submitted` : undefined }, tLink);
         await v.shot('opt-out-link');
+        if (walk.performed) {
+          await navigate(v.page, cap, landing, journey);
+          await dwell(v.page, cap, journey.pageDwellMs);
+          await browse(v.page, cap, journey, landing, search);
+          await flush(v.page, cap, landing, journey);
+        }
         break;
       }
       case 'opt-out-all': {
