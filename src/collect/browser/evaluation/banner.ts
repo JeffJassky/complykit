@@ -608,6 +608,22 @@ export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptO
   ]);
   await page.waitForTimeout(1500);
 
+  // Platforms render the opt-out control with script after load (Shopify's
+  // /pages/data-sharing-opt-out does): wait for one before judging the page.
+  await page
+    .waitForFunction(
+      (action) => {
+        const act = new RegExp(action, 'i');
+        return Array.from(document.querySelectorAll('button, [role="button"], [role="switch"], input[type="checkbox"]')).some((el) => {
+          const b = (el as HTMLElement).getBoundingClientRect();
+          return b.width > 0 && b.height > 0 && !el.hasAttribute('data-complykit-optout') && act.test(`${el.textContent ?? ''} ${el.getAttribute('aria-label') ?? ''}`);
+        });
+      },
+      OPT_OUT_ACTION.source,
+      { timeout: 8000 },
+    )
+    .catch(() => {});
+
   const inspect = await page
     .evaluate(
       ({ action, personal }) => {
@@ -639,7 +655,9 @@ export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptO
           const chrome = f.closest(CHROME);
           if (chrome && !(ctl && chrome.contains(ctl))) return false;
           const fForm = f.form ?? f.closest('form');
-          if (!ctl) return true; // no control: report what the page's own content asks for
+          // No control: nothing on the page is the opt-out, so no field is its field
+          // (a newsletter signup's email is not what the opt-out asks for).
+          if (!ctl) return false;
           if (ctlForm) return fForm === ctlForm;
           if (fForm) return false;
           return Boolean(section && section.contains(f));

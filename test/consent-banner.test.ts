@@ -110,6 +110,15 @@ walkSuite('opt-out link walk: required fields belong to the opt-out control', ()
       <label><input type="checkbox" role="switch" aria-label="Opt out of data sharing" onchange="document.getElementById('s').textContent='Your preferences have been saved.'"> Opt out of data sharing</label>
       <p id="s"></p></section></main>${FOOTER}`,
     '/email-form': `<!doctype html><title>Shop</title>${CHROME}<main><h1>Shop</h1></main><footer><a href="/pages/request">Do Not Sell or Share My Personal Information</a></footer>`,
+    // georgesmusic.com: a newsletter SECTION (not the footer) with a required email,
+    // and Shopify's "Opt out" button drawn by script after load, in its own form.
+    '/late': `<!doctype html><title>Shop</title><main><h1>Shop</h1></main><footer><a href="/pages/late-opt-out">Your Privacy Choices</a></footer>`,
+    '/pages/late-opt-out': `<!doctype html><title>Your Privacy Choices</title><main><h1>Your Privacy Choices</h1><div id="slot"></div></main>
+      <section class="newsletter"><form id="NewsletterForm" action="/contact" method="post"><input type="email" name="contact[email]" required><button type="submit">Subscribe</button></form></section>
+      <script>setTimeout(function(){document.getElementById('slot').innerHTML='<form action="/dns_opt_out" method="post" onsubmit="event.preventDefault();document.getElementById(\\'slot\\').insertAdjacentHTML(\\'beforeend\\',\\'<p>You have opted out.</p>\\')"><button type="submit" name="pc--commit">Opt out</button></form>';},2500)</script>`,
+    '/nocontrol': `<!doctype html><title>Shop</title><main><h1>Shop</h1></main><footer><a href="/pages/info-only">Your Privacy Choices</a></footer>`,
+    '/pages/info-only': `<!doctype html><title>Privacy</title><main><h1>Privacy</h1><p>Email us to opt out.</p></main>
+      <section><form action="/contact" method="post"><input type="email" name="contact[email]" required><button type="submit">Join</button></form></section>`,
     '/pages/request': `<!doctype html><title>Request</title><main><form action="/submit-request" method="post"><label>Email <input type="email" name="email" required></label><button type="submit">Submit request</button></form></main>`,
   };
   const posted: string[] = [];
@@ -138,6 +147,26 @@ walkSuite('opt-out link walk: required fields belong to the opt-out control', ()
     expect(walk.performed).toBe(true);
     expect(walk.confirmation).toMatch(/preferences have been saved/);
     expect(posted).toEqual([]);
+    await context.close();
+  });
+
+  it('waits for an opt-out button drawn after load, and ignores a newsletter section on the page', async () => {
+    const { context, page } = await open();
+    await page.goto('http://shop.test/late');
+    const walk = await walkOptOutLink(page, true);
+    expect(walk.requiredFields).toEqual([]);
+    expect(walk.performed).toBe(true);
+    expect(walk.confirmation).toMatch(/opted out/);
+    await context.close();
+  });
+
+  it('a page with no opt-out control reports no fields (a newsletter email is not the opt-out)', async () => {
+    const { context, page } = await open();
+    await page.goto('http://shop.test/nocontrol');
+    const walk = await walkOptOutLink(page, true);
+    expect(walk.found).toBe(true);
+    expect(walk.requiredFields).toEqual([]);
+    expect(walk.performed).toBe(false);
     await context.close();
   });
 
