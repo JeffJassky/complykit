@@ -46,7 +46,7 @@ export const LAWS: readonly Law[] = [
     flyRegion: 'ord',
     label: 'US, no state privacy law',
     model: 'Opt-out (Illinois, no state privacy law in force)',
-    laws: 'No comprehensive state privacy law (Illinois)',
+    laws: 'No comprehensive state privacy law; Illinois Eavesdropping Act (wiretap)',
   },
 ];
 
