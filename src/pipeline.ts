@@ -299,6 +299,16 @@ export interface ConsentScanResult {
  * violation once counsel confirms the business is covered).
  */
 export async function runConsentScan(opts: ConsentScanOptions): Promise<ConsentScanResult> {
+  return analyzeConsentScan(await collect(opts, true), opts);
+}
+
+/** Browser half: verify locations, run scenarios, write evidence. No rules, no KB (so onPartial is ignored). */
+export function collectConsentScan(opts: ConsentScanOptions): Promise<import('./collect/browser/evaluation/index.js').ConsentEvaluationCollection> {
+  return collect(opts, false);
+}
+
+/** `live`: also run the analysis after every visit for onPartial (runConsentScan; needs the KB). */
+async function collect(opts: ConsentScanOptions, live: boolean): Promise<import('./collect/browser/evaluation/index.js').ConsentEvaluationCollection> {
   let mod: typeof import('./collect/browser/index.js');
   try {
     mod = await import('./collect/browser/index.js');
@@ -309,7 +319,7 @@ export async function runConsentScan(opts: ConsentScanOptions): Promise<ConsentS
   }
   const baseKb = opts.knowledgeBase ?? DEFAULT_KB;
   const journey = opts.quick ? { dwellMs: 4000, pageDwellMs: 2000, scrollSteps: 2, maxPages: 1, ...opts.journey } : opts.journey;
-  const collection = await mod.collectConsentEvaluation({
+  return mod.collectConsentEvaluation({
     property: opts.property,
     targetUrl: opts.targetUrl,
     runId: opts.runId,
@@ -329,7 +339,7 @@ export async function runConsentScan(opts: ConsentScanOptions): Promise<ConsentS
     bannerWaitMs: opts.bannerWaitMs,
     trace: opts.trace,
     onEvent: opts.onEvent,
-    onProgress: opts.onPartial
+    onProgress: live && opts.onPartial
       ? (partial) => {
           try {
             const r = analyzeConsentCollection(partial, opts, baseKb);
@@ -345,7 +355,14 @@ export async function runConsentScan(opts: ConsentScanOptions): Promise<ConsentS
       scenariosFor: (_spec, v) => (opts.quick ? tracking.quickScenarios(v.jurisdictions) : tracking.defaultScenarios(v.jurisdictions)),
     },
   });
+}
 
+/** Analysis half: rules + evaluation + matrix, from any collection (one run's, or merged). */
+export function analyzeConsentScan(
+  collection: import('./collect/browser/evaluation/index.js').ConsentEvaluationCollection,
+  opts: ConsentScanOptions,
+): ConsentScanResult {
+  const baseKb = opts.knowledgeBase ?? DEFAULT_KB;
   const { findings, evaluation } = analyzeConsentCollection(collection, opts, baseKb);
   const tested = collection.locations.flatMap((l) => l.scenarios.filter((s) => s.status === 'tested'));
   const matrix: MatrixCell[] = [

@@ -261,6 +261,7 @@ import {
   type KnowledgeBase,
   type ScenarioId,
 } from './index.js';
+import { COLLECTION_FILE, COLLECTION_KIND, COLLECTION_SCHEMA_VERSION, writeCollectionHandoff, readCollectionHandoff, mergeCollections, mergeEvidence, type ConsentCollectionHandoff } from './index.js';
 import { collectConsentEvaluation, DEFAULT_GEO_SOURCES, LOCAL_LOCATION, resolveJourney, contextOptionsFor, redactHar } from './collect-browser.js';
 
 const _tv: number = TRACKING_SCHEMA_VERSION + TRACKING_FILE.length + KB_VERSION.length + KB_ENTRIES.length + DEFAULT_KB.entries.length;
@@ -419,3 +420,11 @@ _use([verifyRewriteTag('', { page: '', element: _esig, category: 'analytics' }).
 _use([verifyGtmTagConsent('', { containerId: 'GTM-X', tagId: 1, consentTypes: [] }).result, verifyConsentDefault('', { page: '', consentTypes: [] }).result]);
 _use([verifyRemoveExistingTool('', { page: '', label: 'x' }).result, judgeSpotCheck({ page: '', partyId: 'x', hosts: [] }, { page: '', phases: [] }).result]);
 _use([runVerify(_tasks[0].verify, { html: '' }).result, elementMatches({ kind: 'script', line: 1, context: 'document', loads: 'executes', attributes: {}, hosts: [], ids: [] }, _esig), consentPluginPathPattern('complianz')]);
+
+// Multi-region: collect-only handoff + pure merge.
+declare const _handoff: ConsentCollectionHandoff;
+const _hf: string = writeCollectionHandoff('.', _handoff) + COLLECTION_FILE + COLLECTION_KIND + String(COLLECTION_SCHEMA_VERSION);
+const _hr: ConsentCollectionHandoff = readCollectionHandoff('.');
+const _mc = mergeCollections([_hr]);
+const _me: { copied: number; skipped: number } = mergeEvidence(['.'], '.');
+_use(_hf + _mc.site.url + String(_me.copied));

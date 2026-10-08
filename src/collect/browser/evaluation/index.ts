@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import type { Browser } from 'playwright';
 import {
   runDir,
+  timelineArtifact,
   ConsentToolRecord,
   ComplykitToolSnapshot,
   type Artifact,
@@ -480,22 +481,6 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
     containers,
     startedAt,
     finishedAt: new Date().toISOString(),
-  };
-}
-
-/** One visit's timeline as the rules consume it (a `consent-timeline` artifact). */
-function timelineArtifact(tl: Timeline, property: string, instanceUrl: string, capturedAt: string): Artifact {
-  const runSuffix = (tl.snapshot.run ?? 1) > 1 ? `-run${tl.snapshot.run}` : '';
-  return {
-    kind: 'consent-timeline',
-    subject: { property, routePattern: '*', instanceUrl, state: `${tl.location.id}/${tl.snapshot.scenario}${runSuffix}` },
-    capturedAt,
-    payloadPath: tl.snapshot.evidence.timeline,
-    scenario: tl.snapshot.scenario,
-    location: tl.location as unknown as Record<string, unknown>,
-    verification: tl.verification as unknown as Record<string, unknown>,
-    events: tl.events as unknown as Record<string, unknown>[],
-    snapshot: tl.snapshot as unknown as Record<string, unknown>,
   };
 }
 

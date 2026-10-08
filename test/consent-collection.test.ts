@@ -89,7 +89,7 @@ describe('mergeCollections', () => {
     const m = mergeCollections([
       handoff('de', { startedAt: '2026-10-08T10:02:00.000Z', finishedAt: '2026-10-08T10:09:00.000Z' }),
       handoff('uk', { startedAt: '2026-10-08T10:00:30.000Z', finishedAt: '2026-10-08T10:04:00.000Z', autoconsentVersion: '14.1.0' }),
-      handoff('us-tx', { autoconsentVersion: '9.9.9' }),
+      handoff('us-tx', { startedAt: '2026-10-08T10:01:00.000Z', autoconsentVersion: '9.9.9' }),
     ]);
     expect(m.startedAt).toBe('2026-10-08T10:00:30.000Z');
     expect(m.finishedAt).toBe('2026-10-08T10:09:00.000Z');

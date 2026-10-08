@@ -4,6 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { ConsentToolRecord } from './consent-tool.js';
 import { ComplykitToolSnapshot, ConsentToolProof } from './consent-tool-proof.js';
+import type { Artifact } from './artifact.js';
 import { MarkupDataUrl, MarkupPage, redactMarkupPages } from './markup.js';
 
 // Consent & tracking evaluation records (plans/consent-design.md §2.4, §3).
@@ -1032,4 +1033,20 @@ export function readTrackingEvaluation(dir: string): TrackingEvaluation | undefi
     throw new Error(`${file}: tracking schemaVersion ${raw.schemaVersion} is newer than this build understands (${TRACKING_SCHEMA_VERSION}).`);
   }
   return TrackingEvaluation.parse(raw);
+}
+
+/** One visit's timeline as the rules consume it (a `consent-timeline` artifact). */
+export function timelineArtifact(tl: Timeline, property: string, instanceUrl: string, capturedAt: string): Artifact {
+  const runSuffix = (tl.snapshot.run ?? 1) > 1 ? `-run${tl.snapshot.run}` : '';
+  return {
+    kind: 'consent-timeline',
+    subject: { property, routePattern: '*', instanceUrl, state: `${tl.location.id}/${tl.snapshot.scenario}${runSuffix}` },
+    capturedAt,
+    payloadPath: tl.snapshot.evidence.timeline,
+    scenario: tl.snapshot.scenario,
+    location: tl.location as unknown as Record<string, unknown>,
+    verification: tl.verification as unknown as Record<string, unknown>,
+    events: tl.events as unknown as Record<string, unknown>[],
+    snapshot: tl.snapshot as unknown as Record<string, unknown>,
+  };
 }
