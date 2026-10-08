@@ -551,7 +551,7 @@ site; before any npm publish (standing rule).
 | # | Question | Who |
 |---|---|---|
 | 1 | Exact cautious-fallback rules for location (§5) | agency |
-| 2 | Treat California, Florida, Pennsylvania, Washington as opt-in for session recording, chat and identity-resolution scripts, given wiretap-law exposure? | client + counsel |
+| 2 | Treat California, Florida, Pennsylvania, Washington as opt-in for session recording, chat and identity-resolution scripts, given wiretap-law exposure? | **Decided 2026-10-08 (Jeff): hold wiretap categories until accept in CA/FL/PA** — session recording, chat, identity resolution and advertising are expected off until the visitor accepts (scanner side: branch `wiretap-posture`, `isWiretapJurisdiction` in the registry, `compareCookieBehavior` / `behaviorCellsFrom`; Washington not included; the client consent tool's defaults are a separate change) |
 | 3 | Honor the do-not-sell signal everywhere in the US, or only where required? (recommended: everywhere) | client + counsel |
 | 4 | Fingerprint convention vs v2 (§8) | Jeff |
 | 5 | Exit provider tiers and written scanning authorization | Jeff + agency |
