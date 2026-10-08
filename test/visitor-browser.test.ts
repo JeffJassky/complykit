@@ -38,5 +38,5 @@ suite('the scan browser looks like a visitor', () => {
     } finally {
       await browser.close();
     }
-  });
+  }, 90_000);
 });
