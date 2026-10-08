@@ -166,11 +166,16 @@ export const DEFAULT_LAWS: readonly LawId[]; // all five
 export function isLawId(v: unknown): v is LawId;
 ```
 
-`model` is computed with `describeLocationRules(jurisdictionsOf(locationId), today)`
-from the package's registry subpath — or, if the service cannot import it, hard-coded
-with a test that compares it against `describeLocationRules` output. Test:
-`service/test/laws.test.ts` (implementer writes): five laws, unique ids/regions, exactly
-one `local` (`ca`/`lax`), models match the registry.
+The service never imports the package, so `model` and `laws` are hard-coded strings.
+Two tests (implementer writes):
+- `service/test/laws.test.ts`: five laws; unique ids, location ids and regions; exactly
+  one `local` (`ca`/`lax`); `DEFAULT_LAWS` = all five ids; `isLawId` accepts each id and
+  rejects `'va'`, `''`, `1`, `undefined`.
+- `test/service-laws.test.ts` (package root; imports `../service/src/shared/laws.js`):
+  for each law, `model` equals `describeLocationRules(jurisdictions, today).label`, with
+  jurisdictions from the location id (`de` → `['eu','eu-de']`, `uk` → `['uk']`,
+  `us-xx` → `['us','us-xx']`). If a label changes in the registry, this test fails and
+  the form copy is updated with it.
 
 ## PR 3 — worker mode (service)
 
