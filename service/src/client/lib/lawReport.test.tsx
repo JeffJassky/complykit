@@ -40,6 +40,7 @@ describe('reportForLocation', () => {
   it('keeps that location’s columns and the matching cells of every tool and cookie; recounts', () => {
     const r = reportForLocation(twoLocations('final'), 'us-ca');
     expect(r.matrix.columns.map((c) => c.id)).toEqual(['us-ca:do-nothing', 'us-ca:gpc']);
+    expect(r.matrix.columns.every((c) => c.locationLabel === undefined)).toBe(true); // the tab names the location
     const meta = r.matrix.tools.find((t) => t.partyId === 'meta')!;
     expect(meta.cells).toEqual([ok, bad]);
     expect(meta.cookies[0].cells).toEqual([wait, ok]);

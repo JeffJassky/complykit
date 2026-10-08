@@ -45,7 +45,11 @@ export function reportForLocation(report: OwnerReport, locationId: string): Owne
     ...report,
     scan,
     banner: loc ? loc.banner : report.banner,
-    matrix: { ...report.matrix, columns: keep.map((i) => report.matrix.columns[i]), tools, counts },
+    matrix: { ...report.matrix, // One location per tab: the per-column location label would only repeat the tab's name.
+    columns: keep.map((i) => {
+      const { locationLabel: _l, ...c } = report.matrix.columns[i];
+      return c;
+    }), tools, counts },
   };
 }
 

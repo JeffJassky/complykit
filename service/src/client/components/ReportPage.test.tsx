@@ -6,7 +6,7 @@ import { LAWS, type LawId } from '../../shared/laws';
 import { parseHash, reportHref } from '../lib/useHashView';
 import { createRerenderQueue, isMoving } from '../lib/useJobReport';
 import { HomeView, siteRows, siteStatus } from './Home';
-import { BannerLine, LawTabsView, Matrix, ReportPageView, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
+import { BannerLine, LawTabsView, Matrix, ReportPageView, pagesVisited, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
 
 // The report page (plans/simple-report.md), rendered per section and state.
 
@@ -397,6 +397,14 @@ describe('law tabs', () => {
     const one = html(<ReportPageView data={running({ job: job({ laws: ['eu'] }) })} now={NOW} />);
     expect(one).not.toContain('role="tablist"');
     expect(one).toContain('data-testid="matrix"');
+  });
+
+  it('pages: the merged report’s, else the most any one law has visited', () => {
+    const d = fiveLaws(owner({ scan: { ...owner().scan, pagesVisited: 6 } }));
+    d.laws![2] = { ...d.laws![2], report: owner({ scan: { ...owner().scan, pagesVisited: 9 } }) };
+    expect(pagesVisited(d)).toBe(9);
+    expect(pagesVisited({ ...d, report: owner({ scan: { ...owner().scan, pagesVisited: 11 } }) })).toBe(11);
+    expect(pagesVisited(fiveLaws(null))).toBe(0);
   });
 
   it('with several laws the status drops the "Now" line (it would flip between locations)', () => {

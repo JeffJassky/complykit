@@ -61,6 +61,12 @@ export interface ReportUiState {
 
 // --- a. Scan status -------------------------------------------------------------
 
+/** Pages visited: the report's; before a multi-law job's merged report exists, the most any one law has visited (laws mostly visit the same pages, so a sum would overcount). */
+export function pagesVisited(data: JobReportResponse): number {
+  if (data.report) return data.report.scan.pagesVisited;
+  return Math.max(0, ...(data.laws ?? []).map((l) => l.report?.scan.pagesVisited ?? 0));
+}
+
 export function ScanStatus({ data, now, onCancel }: { data: JobReportResponse; now: number; onCancel?: () => void }) {
   const { job, report } = data;
   if (job.status !== 'queued' && job.status !== 'running') return null;
@@ -93,7 +99,7 @@ export function ScanStatus({ data, now, onCancel }: { data: JobReportResponse; n
         </div>
         <div>
           <dt>Pages</dt>
-          <dd data-testid="pages">{report?.scan.pagesVisited ?? 0}</dd>
+          <dd data-testid="pages">{pagesVisited(data)}</dd>
         </div>
         <div>
           <dt>Time</dt>
