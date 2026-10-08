@@ -93,6 +93,16 @@ suite('the report page, end to end (real CLI, service, browser, fixture site)', 
       await page.getByPlaceholder('example.com').fill(site.url);
       await page.getByText('Options').click();
       await page.getByLabel(/Quick scan/).check();
+      // The form always sends laws (multi-region scans). This test server has no regional
+      // workers and the fixture site cannot be geolocated, so the request goes out as a
+      // classic single-location scan from this machine.
+      await page.getByTestId('authorized').check();
+      await page.route('**/api/batches', async (route) => {
+        const body = JSON.parse(route.request().postData() ?? '{}') as Record<string, unknown>;
+        delete body.laws;
+        delete body.authorized;
+        await route.continue({ postData: JSON.stringify(body) });
+      });
       await page.getByRole('button', { name: 'Scan', exact: true }).click();
       await page.waitForURL(/#report\//);
       const jobId = jobIdOf(page.url());

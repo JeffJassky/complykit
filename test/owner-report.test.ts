@@ -159,7 +159,7 @@ describe('owner report: the service’s mirror (service/src/shared/api.ts)', () 
   it('accepts the builder’s output (compile-time) and names the same top-level parts', () => {
     const model = buildConsentReportModel(evaluation({ scenarios: [doNothing], inventory: [meta, widget], observations: [obs('do-nothing', [fbpBeforeChoice])] }), []);
     const r: ServiceOwnerReport = buildOwnerReport({ ...base, model, done: [{ location: 'de', scenario: 'do-nothing' }] });
-    expect(Object.keys(r).sort()).toEqual(['banner', 'decisions', 'generatedAt', 'matrix', 'runId', 'scan', 'site', 'stage', 'version']);
+    expect(Object.keys(r).sort()).toEqual(['banner', 'decisions', 'generatedAt', 'locations', 'matrix', 'runId', 'scan', 'site', 'stage', 'version']);
     expect(Object.keys(r.matrix.counts).sort()).toEqual(['mismatch', 'needsDecision', 'notChecked', 'ok', 'pending']);
   });
 });
