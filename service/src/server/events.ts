@@ -132,7 +132,7 @@ export class NdjsonTail {
  */
 export class ConsentProgress {
   private planned = 0;
-  private locations: string[] = [];
+  private locations: string[];
   private locationsSeen = 0;
   /** Visits per scenario, by location (from its `location` event). */
   private runsAt = new Map<string, number>();
@@ -142,7 +142,11 @@ export class ConsentProgress {
   constructor(
     private readonly job: JobDetail,
     private readonly extraUnits: number,
-  ) {}
+    /** Locations a multi-region job will collect, known before the collectors announce themselves. */
+    expectedLocations: string[] = [],
+  ) {
+    this.locations = [...expectedLocations];
+  }
 
   /** Returns true when the job changed (so the caller persists + broadcasts). */
   apply(ev: ConsentEvent): boolean {
@@ -151,9 +155,13 @@ export class ConsentProgress {
     const m = job.metrics;
     switch (ev.type) {
       case 'start':
-        this.locations = ev.locations ?? [];
-        p.phase = 'verifying-location';
-        p.current = this.locations.length ? `verifying ${this.locations.join(', ')}` : undefined;
+        // Several collectors (multi-region) each announce their own location; a merge announces them all again.
+        for (const l of ev.locations ?? []) if (!this.locations.includes(l)) this.locations.push(l);
+        // Once scenarios are planned a later start (the merge's) must not move the phase back.
+        if (this.planned === 0) {
+          p.phase = 'verifying-location';
+          p.current = this.locations.length ? `verifying ${this.locations.join(', ')}` : undefined;
+        }
         break;
       case 'location': {
         this.locationsSeen++;

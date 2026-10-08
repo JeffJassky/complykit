@@ -6,7 +6,13 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import type { JobDetail } from '../shared/api.js';
+import { LAWS, type Law } from '../shared/laws.js';
+import { flyFleet, type Fleet, type WorkerHandle } from './fleet.js';
+import { WORKER_SECRET_HEADER } from './worker.js';
 import { consentRunsFor, jobTimeoutFor, type ServiceConfig } from './config.js';
 import { ConsentProgress, NdjsonTail, fraction } from './events.js';
 import type { JobStore } from './store.js';
@@ -18,7 +24,10 @@ type StopReason = 'cancelled' | 'stopped' | 'timeout';
 
 interface Active {
   job: JobDetail;
-  child?: ChildProcess;
+  /** Every running CLI child (a multi-region job runs several at once). */
+  children: Set<ChildProcess>;
+  /** Aborted when the job is stopped, so remote collections wind down too. */
+  abort: AbortController;
   reason?: StopReason;
   /** Resolves when the job's run loop has fully finished. */
   finished: Promise<void>;
@@ -26,6 +35,31 @@ interface Active {
 
 /** How many trailing stderr lines go into a failure message. */
 const STDERR_TAIL = 6;
+
+/** Multi-region timing; the tests shrink these. */
+export interface RunnerOptions {
+  /** The regional worker fleet (default: Fly Machines when FLY_API_TOKEN, WORKER_IMAGE and WORKER_SECRET are set). */
+  fleet?: Fleet;
+  /** Between remote starts, so the sites' bot walls don't see every region at once (3 s). */
+  staggerMs?: number;
+  /** Worker poll interval (2 s). */
+  remotePollMs?: number;
+  /** One remote collection's cap (30 min). */
+  remoteTimeoutMs?: number;
+}
+
+const REMOTE_STAGGER_MS = 3_000;
+const REMOTE_POLL_MS = 2_000;
+const REMOTE_TIMEOUT_MS = 30 * 60_000;
+/** Consecutive failed polls before a worker is given up on. */
+const REMOTE_MAX_POLL_FAILURES = 8;
+
+interface Gathered {
+  law: Law;
+  /** The run dir holding collection.json. */
+  dir?: string;
+  error?: string;
+}
 
 export class Runner {
   private readonly queue: string[] = [];
@@ -39,7 +73,12 @@ export class Runner {
     private readonly onSettled: (job?: JobDetail) => void = () => {},
     /** Site workspaces (C3): a consent job applies its site's workspace and records itself as a run. */
     private readonly workspaces?: WorkspaceStore,
-  ) {}
+    private readonly options: RunnerOptions = {},
+  ) {
+    this.fleet = options.fleet ?? (config.flyApiToken && config.workerImage && config.workerSecret ? flyFleet({ app: config.workersApp, token: config.flyApiToken, image: config.workerImage, secret: config.workerSecret }) : undefined);
+  }
+
+  private readonly fleet?: Fleet;
 
   get running(): number {
     return this.active.size;
@@ -98,7 +137,7 @@ export class Runner {
       const id = this.queue.shift()!;
       const job = this.store.get(id);
       if (!job || job.status !== 'queued') continue;
-      const a: Active = { job, finished: Promise.resolve() };
+      const a: Active = { job, children: new Set(), abort: new AbortController(), finished: Promise.resolve() };
       this.active.set(id, a);
       a.finished = this.run(a).finally(() => {
         this.active.delete(id);
@@ -110,7 +149,8 @@ export class Runner {
 
   private stop(a: Active, reason: StopReason, graceMs = this.config.killGraceMs): void {
     a.reason ??= reason;
-    if (a.child) killTree(a.child, graceMs);
+    for (const child of a.children) killTree(child, graceMs);
+    a.abort.abort();
   }
 
   private async run(a: Active): Promise<void> {
@@ -157,6 +197,7 @@ export class Runner {
 
   private async runConsent(a: Active, extraUnits: number): Promise<void> {
     const { job } = a;
+    if (job.laws?.length) return this.runConsentLaws(a, extraUnits);
     const dir = path.join(this.store.jobDir(job.id), 'consent');
     await fsp.mkdir(dir, { recursive: true });
     const eventsFile = path.join(dir, 'events.ndjson');
@@ -185,6 +226,187 @@ export class Runner {
     if (res.code !== 0) throw new Error(withTail(`consent check exited with ${exitText(res)}`, res.stderr));
     if (!mapper.done) throw new Error(withTail('consent check exited without a result', res.stderr));
     if (site.domain) await this.recordRun(job, site.domain, mapper.done);
+  }
+
+
+  /**
+   * A consent job with laws: one collection per law (the local law in a child
+   * process, the others on regional workers), all in parallel, then one merge
+   * on this machine that runs the rules over everything and writes the report.
+   */
+  private async runConsentLaws(a: Active, extraUnits: number): Promise<void> {
+    const { job } = a;
+    const laws = LAWS.filter((l) => job.laws!.includes(l.id));
+    const dir = path.join(this.store.jobDir(job.id), 'consent');
+    const gatherRoot = path.join(dir, 'gather');
+    await fsp.rm(gatherRoot, { recursive: true, force: true });
+    await fsp.mkdir(gatherRoot, { recursive: true });
+    const eventsFile = path.join(dir, 'events.ndjson');
+    await fsp.rm(eventsFile, { force: true });
+
+    const mapper = new ConsentProgress(job, extraUnits, laws.map((l) => l.locationId));
+    // A collector's `error` is that law's failure (the merge says so with --failed); only the merge's counts for the job.
+    let merging = false;
+    const tail = new NdjsonTail(
+      eventsFile,
+      (ev) => {
+        if (ev.type === 'error' && !merging) return;
+        if (mapper.apply(ev)) this.store.update(job);
+      },
+      this.config.pollMs,
+    );
+    const site = await this.siteArgs(job, dir);
+    const quiet = process.env.COMPLYKIT_DEBUG ? [] : ['--quiet'];
+    const appendLine = (line: string) => fs.appendFileSync(eventsFile, line.endsWith('\n') ? line : line + '\n');
+    tail.start();
+    try {
+      this.store.appendLog(job, [`[consent] scanning under ${laws.map((l) => l.label).join(', ')} (authorized ${job.authorizedAt ?? 'at submission'})`]);
+      const remote = laws.filter((l) => !l.local);
+      const gathered = await Promise.all(
+        laws.map((law) => (law.local ? this.collectLocal(a, law, gatherRoot, quiet, appendLine) : this.collectRemote(a, law, gatherRoot, appendLine, remote.indexOf(law) * (this.options.staggerMs ?? REMOTE_STAGGER_MS)))),
+      );
+      if (a.reason) throw new Error(a.reason);
+
+      const failed = gathered.filter((g) => !g.dir);
+      for (const g of failed) this.store.appendLog(job, [`[consent] ${g.law.label} (${g.law.locationId}) could not be scanned: ${g.error}`]);
+      const ok = gathered.filter((g) => g.dir);
+      if (!ok.length) throw new Error(`no law could be scanned: ${failed.map((g) => `${g.law.label}: ${g.error}`).join('; ')}`);
+
+      job.progress.phase = 'analyzing';
+      job.progress.current = 'combining the regions';
+      this.store.update(job);
+      merging = true;
+      const failedArgs = failed.flatMap((g) => ['--failed', `${g.law.locationId}=${g.error}`]);
+      const args = ['consent', '--merge', ok.map((g) => g.dir).join(','), '--url', job.url, '--cwd', dir, '--events', eventsFile, ...quiet, ...failedArgs, ...site.args];
+      const res = await this.step(a, 'consent', args, dir);
+      await tail.stop();
+      if (a.reason) throw new Error(a.reason);
+      if (mapper.error) throw new Error(withTail(`consent check failed: ${mapper.error}`, res.stderr));
+      if (res.code !== 0) throw new Error(withTail(`consent merge exited with ${exitText(res)}`, res.stderr));
+      if (!mapper.done) throw new Error(withTail('consent merge exited without a result', res.stderr));
+      if (site.domain) await this.recordRun(job, site.domain, mapper.done);
+    } finally {
+      await tail.stop(); // idempotent enough: clears the timer, one last read
+      // The raw collections hold unredacted request bodies and cookie values: never kept.
+      await fsp.rm(gatherRoot, { recursive: true, force: true });
+    }
+  }
+
+  /** The law this machine scans from: a collect-only child, its events forwarded into the job's. */
+  private async collectLocal(a: Active, law: Law, gatherRoot: string, quiet: string[], appendLine: (l: string) => void): Promise<Gathered> {
+    const { job } = a;
+    const cwd = path.join(gatherRoot, law.id);
+    const events = path.join(gatherRoot, `${law.id}.events.ndjson`);
+    const fwd = new NdjsonTail(events, (ev) => appendLine(JSON.stringify(ev)), this.config.pollMs);
+    try {
+      await fsp.mkdir(cwd, { recursive: true });
+      fwd.start();
+      const args = ['consent', '--collect-only', '--url', job.url, '--locations', law.locationId, '--cwd', cwd, '--events', events, ...quiet, '--runs', String(consentRunsFor(job, this.config)), ...(job.quick ? ['--quick'] : [])];
+      const res = await this.step(a, `collect:${law.id}`, args, cwd);
+      await fwd.stop();
+      if (a.reason) return { law, error: a.reason };
+      if (res.code !== 0) return { law, error: oneLine(withTail(`collection exited with ${exitText(res)}`, res.stderr)) };
+      const runs = path.join(cwd, '.comply', 'runs');
+      const dirs = (await fsp.readdir(runs, { withFileTypes: true }).catch(() => [])).filter((e) => e.isDirectory() && fs.existsSync(path.join(runs, e.name, 'collection.json')));
+      if (dirs.length !== 1) return { law, error: 'collection left no run directory with collection.json' };
+      return { law, dir: path.join(runs, dirs[0].name) };
+    } catch (err) {
+      return { law, error: (err as Error).message };
+    } finally {
+      await fwd.stop().catch(() => undefined);
+    }
+  }
+
+  /** A law collected on its region's worker: acquire, collect, follow its events, fetch the run, clean up. */
+  private async collectRemote(a: Active, law: Law, gatherRoot: string, appendLine: (l: string) => void, delayMs: number): Promise<Gathered> {
+    const { job } = a;
+    const signal = a.abort.signal;
+    const workerJob = `${job.id}-${law.id}`;
+    const headers = { [WORKER_SECRET_HEADER]: this.config.workerSecret ?? '' };
+    let handle: WorkerHandle | undefined;
+    let posted = false;
+    let interrupted = false;
+    const url = (p: string) => `${handle!.baseUrl}/internal/jobs/${workerJob}${p}`;
+    const check = () => {
+      if (signal.aborted) throw new Error(a.reason ?? 'cancelled');
+    };
+    try {
+      if (!this.fleet) throw new Error('multi-region scanning is not configured on this server');
+      await sleepAbortable(delayMs, signal);
+      check();
+      this.store.appendLog(job, [`[collect:${law.id}] starting the worker in ${law.flyRegion}`]);
+      handle = await this.fleet.acquire(law.flyRegion);
+      check();
+      const post = await fetch(`${handle.baseUrl}/internal/collect`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ jobId: workerJob, url: job.url, locationId: law.locationId, quick: job.quick, runs: consentRunsFor(job, this.config) }),
+        signal,
+      });
+      if (!post.ok) throw new Error(`worker refused the collection: HTTP ${post.status} ${(await post.text().catch(() => '')).slice(0, 200)}`.trim());
+      posted = true;
+      this.store.appendLog(job, [`[collect:${law.id}] collecting from ${law.flyRegion}`]);
+
+      // Follow the worker's events into the job's, until it settles.
+      const pollMs = this.options.remotePollMs ?? REMOTE_POLL_MS;
+      const deadline = Date.now() + (this.options.remoteTimeoutMs ?? REMOTE_TIMEOUT_MS);
+      let seen = 0;
+      const pull = async () => {
+        const res = await fetch(url(`/events?from=${seen}`), { headers, signal });
+        if (!res.ok) throw new Error(`events: HTTP ${res.status}`);
+        const lines = (await res.text()).split('\n').filter((l) => l.trim());
+        for (const l of lines) appendLine(l);
+        seen += lines.length;
+      };
+      let failures = 0;
+      for (;;) {
+        check();
+        let st: { state: string; error?: string } | undefined;
+        try {
+          await pull();
+          const res = await fetch(url(''), { headers, signal });
+          if (!res.ok) throw new Error(`state: HTTP ${res.status}`);
+          st = (await res.json()) as { state: string; error?: string };
+          if (st.state !== 'running') await pull();
+          failures = 0;
+        } catch (err) {
+          check();
+          if (++failures >= REMOTE_MAX_POLL_FAILURES) throw new Error(`lost contact with the worker: ${(err as Error).message}`);
+        }
+        if (st && st.state !== 'running') {
+          if (st.state === 'collected') break;
+          throw new Error(oneLine(st.error ?? `worker ended ${st.state}`));
+        }
+        if (Date.now() > deadline) {
+          interrupted = true;
+          throw new Error(`timed out after ${Math.round((this.options.remoteTimeoutMs ?? REMOTE_TIMEOUT_MS) / 60_000)} minutes`);
+        }
+        await sleepAbortable(pollMs, signal);
+      }
+
+      // Fetch the run and unpack it where the merge will read it.
+      const dest = path.join(gatherRoot, law.id);
+      await fsp.mkdir(dest, { recursive: true });
+      const tarFile = path.join(gatherRoot, `${law.id}.tar`);
+      const res = await fetch(url('/run.tar'), { headers, signal });
+      if (!res.ok || !res.body) throw new Error(`run.tar: HTTP ${res.status}`);
+      await pipeline(Readable.fromWeb(res.body as unknown as WebReadableStream), fs.createWriteStream(tarFile));
+      await untar(tarFile, dest);
+      await fsp.rm(tarFile, { force: true });
+      if (!fs.existsSync(path.join(dest, 'collection.json'))) throw new Error('the worker\'s run had no collection.json');
+      return { law, dir: dest };
+    } catch (err) {
+      interrupted ||= signal.aborted;
+      const message = signal.aborted ? (a.reason ?? 'cancelled') : (err as Error).message;
+      return { law, error: law.local ? message : `worker in ${law.flyRegion} failed: ${message}` };
+    } finally {
+      if (handle && posted) {
+        const quick = { headers, signal: AbortSignal.timeout(10_000) };
+        if (interrupted) await fetch(url('/cancel'), { method: 'POST', ...quick }).catch(() => undefined);
+        await fetch(url(''), { method: 'DELETE', headers, signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
+      }
+      if (handle) await this.fleet!.release(handle).catch(() => undefined);
+    }
   }
 
   /**
@@ -291,7 +513,7 @@ export class Runner {
       // its unrecognized parties into the same queue the KB routes manage.
       const env = { ...process.env, COMPLYKIT_KB_DIR: this.config.kbDir };
       const child = spawn(process.execPath, [this.config.cliPath, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
-      a.child = child;
+      a.children.add(child);
       const lines = (stream: NodeJS.ReadableStream, tag: string, keep?: string[]) => {
         let rest = '';
         stream.setEncoding('utf8');
@@ -313,11 +535,11 @@ export class Runner {
       lines(child.stdout!, label);
       lines(child.stderr!, `${label}:err`, stderr);
       child.on('error', (err) => {
-        a.child = undefined;
+        a.children.delete(child);
         reject(err);
       });
       child.on('close', (code, signal) => {
-        a.child = undefined;
+        a.children.delete(child);
         resolve({ code, signal, stderr });
       });
     });
@@ -359,6 +581,34 @@ function exitText(r: StepResult): string {
 function withTail(message: string, stderr: string[]): string {
   const tail = stderr.slice(-STDERR_TAIL).join('\n').trim();
   return tail ? `${message}\n${tail}` : message;
+}
+
+function oneLine(s: string): string {
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (ms <= 0 || signal.aborted) return resolve();
+    const t = setTimeout(done, ms);
+    function done() {
+      clearTimeout(t);
+      signal.removeEventListener('abort', done);
+      resolve();
+    }
+    signal.addEventListener('abort', done, { once: true });
+  });
+}
+
+/** `tar -xf file -C dest` (system tar). */
+function untar(file: string, dest: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('tar', ['-xf', file, '-C', dest], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = '';
+    child.stderr!.on('data', (c: Buffer) => (err += c.toString()));
+    child.on('error', reject);
+    child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`could not unpack the worker's run: tar exited with code ${code} ${oneLine(err)}`.trim()))));
+  });
 }
 
 function shellQuote(s: string): string {

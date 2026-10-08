@@ -10,6 +10,7 @@
 
 import type { CheckKind, JobDetail, RescanRequest, RescanResponse } from '../shared/api.js';
 import { siteDomain } from './domains.js';
+import { parseLaws } from './law-input.js';
 import { newId, toSummary, type JobStore } from './store.js';
 import { WorkspaceError, type WorkspaceStore } from './workspace.js';
 
@@ -39,7 +40,7 @@ export async function rescanSite(rawDomain: unknown, deps: { store: JobStore; wo
   const last = jobs.find((j) => j.status !== 'cancelled') ?? jobs[0];
   let from: RescanResponse['from'];
   if (last) {
-    from = { jobId: last.id, url: last.url, checks: [...last.checks], quick: last.quick, slowRepeat: last.slowRepeat ?? false };
+    from = { jobId: last.id, url: last.url, checks: [...last.checks], quick: last.quick, slowRepeat: last.slowRepeat ?? false, ...(last.laws?.length ? { laws: [...last.laws] } : {}) };
   } else {
     // No job left on the service (retention): the workspace's newest run still names the URL.
     const ws = await deps.workspaces.get(domain);
@@ -50,7 +51,10 @@ export async function rescanSite(rawDomain: unknown, deps: { store: JobStore; wo
   const quick = body.quick ?? from.quick;
   // Quick is always one pass (the store enforces it too).
   const slowRepeat = !quick && (body.slowRepeat ?? from.slowRepeat);
-  const job = deps.store.create({ batchId: newId(), url: from.url, checks: from.checks, quick, slowRepeat });
+  // Laws: as the latest job unless the body chooses; a result with laws needs the owner's confirmation again.
+  const lawsIn = parseLaws(body.laws ?? from.laws, body.authorized, from.checks.includes('consent'));
+  if (!lawsIn.ok) throw new WorkspaceError(400, lawsIn.error);
+  const job = deps.store.create({ batchId: newId(), url: from.url, checks: from.checks, quick, slowRepeat, laws: lawsIn.laws, authorizedAt: lawsIn.authorizedAt });
   deps.enqueue(job.id);
   return { domain, job: toSummary(job), from };
 }
