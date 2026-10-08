@@ -659,6 +659,26 @@ export function TodoList({ data, ui = {}, actions = {} }: { data: JobReportRespo
   );
 }
 
+// --- site not reached ---------------------------------------------------------------
+
+/** One notice in place of the banner line, matrix and to-do list when no visit reached the site. */
+export function Unreachable({ data, ui, actions }: { data: JobReportResponse; ui: ReportUiState; actions: ReportActions }) {
+  const reason = data.report?.scan.unreachable?.reason;
+  return (
+    <section className="rp-section rp-alert" role="alert" data-testid="unreachable">
+      <p>
+        <strong>We couldn’t reach {data.job.host}.</strong> Nothing was checked, so there are no findings and nothing to do yet.
+      </p>
+      {reason ? <p className="muted">{reason.charAt(0).toUpperCase() + reason.slice(1)}.</p> : null}
+      {actions.onRescan ? (
+        <button type="button" className="btn btn-sm btn-secondary" disabled={ui.rescanning} onClick={actions.onRescan}>
+          {ui.rescanning ? 'Starting…' : 'Scan again'}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
 // --- the page -----------------------------------------------------------------------
 
 export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: JobReportResponse; now: number; ui?: ReportUiState; actions?: ReportActions }) {
@@ -685,7 +705,8 @@ export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: Job
           ) : null}
         </div>
       ) : null}
-      {consent ? (
+      {consent && data.report?.scan.unreachable ? <Unreachable data={data} ui={ui} actions={actions} /> : null}
+      {consent && !data.report?.scan.unreachable ? (
         <>
           <BannerLine data={data} />
           <Matrix data={data} ui={ui} actions={actions} />

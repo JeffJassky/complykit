@@ -119,6 +119,12 @@ export interface OwnerReport {
     /** The visit running now, in plain words ("After rejection"). */
     current?: string;
     location?: { id: string; label: string; observed?: string; verified: boolean; note?: string };
+    /**
+     * Set on a finished scan when no visit reached the site (blocked, down, refused).
+     * The report then carries no tools, decisions or to-do list: there is nothing to
+     * judge, and the page says so once instead of per column.
+     */
+    unreachable?: { reason: string };
   };
   banner: {
     /** pending = no visit has finished yet. */
@@ -241,6 +247,26 @@ function cellOf(c: BehaviorMatrixCell | undefined): OwnerCell {
   return { state, expected: c.expected, observed: c.observed, reason: c.reason, ...(c.runs ? { runs: c.runs } : {}) };
 }
 
+/** The coverage-gap suffix the scanner appends; the owner page says it once, in its own words. */
+const GAP_SUFFIX = / — a recorded coverage gap, not evidence about the site\.?$/;
+
+/**
+ * Why the site was not reached, when none of the visits loaded it: every column failed with a
+ * `not-tested` visit at a verified location. Undefined when any visit got through, or when a
+ * column is merely not applicable (no banner) or the test location was not verified.
+ */
+function unreachableOf(m: ConsentReportModel | undefined, columns: OwnerColumn[]): string | undefined {
+  if (!m || !columns.length) return undefined;
+  const reasons: string[] = [];
+  for (const c of columns) {
+    const grid = m.grid[c.location]?.[c.scenario as ScenarioId];
+    const verified = m.locations.find((l) => l.id === c.location)?.verdict === 'verified';
+    if (c.state !== 'not-checked' || !verified || grid?.status !== 'not-tested') return undefined;
+    reasons.push((grid.reason ?? '').replace(GAP_SUFFIX, ''));
+  }
+  return reasons.find(Boolean) ?? 'the visits did not load the site';
+}
+
 const visitKey = (v: { location: string; scenario: string; run?: number }): string => `${v.location}|${v.scenario}|${v.run && v.run > 1 ? v.run : 1}`;
 
 /**
@@ -324,8 +350,12 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
       return cellOf(i >= 0 ? row?.cells[i] : undefined);
     });
 
+  // The site was never reached: every planned visit failed to load it (not "no banner to act on",
+  // not an unverified test location). Said once; the rows, decisions and to-do list are dropped.
+  const unreachableReason = input.stage === 'final' ? unreachableOf(m, columns) : undefined;
+
   const tools: OwnerToolRow[] = [];
-  for (const p of m?.inventory ?? []) {
+  for (const p of unreachableReason ? [] : m?.inventory ?? []) {
     const toolRow = bm?.rows.find((r) => r.kind === 'tool' && r.partyId === p.partyId);
     const categories = (toolRow?.categories ?? p.categories).filter((c) => c && c !== 'unknown');
     const purpose = categoryLabel(categories);
@@ -365,7 +395,7 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
 
   // The banner: seen in any finished visit, and by whom.
   const visits = m ? m.locations.flatMap((l) => Object.values(m.grid[l.id] ?? {}).filter((c) => c && c.status !== 'not-run' && c.banner !== undefined)) : [];
-  const withBanner = visits.filter((c) => c!.banner && c!.banner !== 'no banner');
+  const withBanner = unreachableReason ? [] : visits.filter((c) => c!.banner && c!.banner !== 'no banner');
   const provider = withBanner.map((c) => bannerProviderName(c!.banner)).find(Boolean);
   const banner: OwnerReport['banner'] = {
     state: withBanner.length ? 'detected' : visits.length ? 'none' : 'pending',
@@ -393,12 +423,13 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
       visitsDone,
       visitsTotal,
       pagesVisited: input.pagesVisited ?? Math.max(0, ...(m?.behaviorObservations ?? []).map((o) => o.pages ?? 0)),
+      ...(unreachableReason ? { unreachable: { reason: unreachableReason } } : {}),
       ...(cur ? { current: `${OWNER_SCENARIO_LABEL[cur.scenario] ?? cur.scenario}${cur.run && cur.run > 1 ? ' (slow connection)' : ''}${multi ? ` · ${locations.find((l) => l.id === cur.location)?.label ?? cur.location}` : ''}` } : {}),
       ...(location ? { location: { id: location.id, label: location.label, verified: location.verified, ...(location.observed ? { observed: location.observed } : {}), ...(location.note ? { note: location.note } : {}) } } : {}),
     },
     banner,
     matrix: { columns, tools, counts },
     decisions: tools.filter((t) => !t.classified).map((t) => ({ partyId: t.partyId, label: t.label, domain: t.domain, classKey: t.classKey })),
-    ...(m?.remediation?.tasks.length ? { todo: { tasks: m.remediation.tasks, ...(m.remediation.configAt ? { configAt: m.remediation.configAt } : {}), ...(m.remediation.runId ? { runId: m.remediation.runId } : {}) } } : {}),
+    ...(!unreachableReason && m?.remediation?.tasks.length ? { todo: { tasks: m.remediation.tasks, ...(m.remediation.configAt ? { configAt: m.remediation.configAt } : {}), ...(m.remediation.runId ? { runId: m.remediation.runId } : {}) } } : {}),
   };
 }

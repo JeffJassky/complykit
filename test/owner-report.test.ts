@@ -113,6 +113,24 @@ describe('owner report: final', () => {
     expect(r.scan).toMatchObject({ visitsDone: 2, visitsTotal: 2, pagesVisited: 2, finishedAt: '2026-10-07T10:05:00Z' });
   });
 
+  it('no visit reached the site: one unreachable notice, no tools, decisions or to-do list', () => {
+    const blocked = (scenario: string) => ({ scenario, status: 'not-tested', reason: 'bot protection blocked the visit (HTTP 503 — “503 Service Temporarily Unavailable”) — a recorded coverage gap, not evidence about the site', banner: { found: false } });
+    const model = buildConsentReportModel(evaluation({ scenarios: [blocked('do-nothing'), blocked('reject')], inventory: [meta, widget], observations: [] }), []);
+    const r = buildOwnerReport({ ...base, stage: 'final', plan: undefined, model });
+    expect(r.scan.unreachable).toEqual({ reason: 'bot protection blocked the visit (HTTP 503 — “503 Service Temporarily Unavailable”)' });
+    expect(r.matrix.tools).toEqual([]);
+    expect(r.decisions).toEqual([]);
+    expect(r.todo).toBeUndefined();
+  });
+
+  it('a site that answered some visits is not unreachable', () => {
+    const blocked = { scenario: 'reject', status: 'not-tested', reason: 'timed out', banner: { found: false } };
+    const model = buildConsentReportModel(evaluation({ scenarios: [doNothing, blocked], inventory: [meta], observations: [obs('do-nothing', [fbpBeforeChoice])] }), []);
+    const r = buildOwnerReport({ ...base, stage: 'final', plan: undefined, model });
+    expect(r.scan.unreachable).toBeUndefined();
+    expect(r.matrix.tools).toHaveLength(1);
+  });
+
   it('a final built with the live plan treats every planned visit as done', () => {
     const model = buildConsentReportModel(evaluation({ scenarios: [doNothing, reject], inventory: [meta], observations: [obs('do-nothing', [fbpBeforeChoice]), obs('reject', [])] }), []);
     const r = buildOwnerReport({ ...base, stage: 'final', plan: plan.slice(0, 2), model });

@@ -148,6 +148,13 @@ describe('c. the matrix', () => {
     expect(out).toContain('data-unclassified="true"');
     expect(out).toContain('aria-label="visiting now"');
   });
+  it('a site that was never reached: one notice, no banner line, matrix or to-do list', () => {
+    const r = owner({ stage: 'final', scan: { ...owner().scan, unreachable: { reason: 'bot protection blocked the visit (HTTP 503)' } }, matrix: { columns: [], tools: [], counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0 } } });
+    const out = html(<ReportPageView data={done({ report: r })} now={NOW} />);
+    expect(out).toContain('data-testid="unreachable"');
+    expect(text(<ReportPageView data={done({ report: r })} now={NOW} />)).toContain('We couldn’t reach shop.example.');
+    for (const id of ['banner', 'matrix', 'todo']) expect(out).not.toContain(`data-testid="${id}"`);
+  });
   it('a not-checked column gets one note, its cells a dash', () => {
     const out = html(<Matrix data={done()} />);
     expect(out).toContain('data-testid="column-gaps"');
