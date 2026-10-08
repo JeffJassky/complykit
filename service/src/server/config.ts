@@ -51,6 +51,14 @@ export interface ServiceConfig {
   pollMs: number;
   /** Make the site's to-do list (config + checklist) when a consent scan finishes, with no button (AUTO_CHECKLIST=0 turns it off). */
   autoChecklist: boolean;
+  /** FLY_API_TOKEN: lets the primary start regional worker Machines. Unset = no fleet. */
+  flyApiToken?: string;
+  /** WORKERS_APP, default 'complykit-workers'. */
+  workersApp: string;
+  /** WORKER_IMAGE, default FLY_IMAGE_REF (Fly sets it on every Machine). */
+  workerImage?: string;
+  /** WORKER_SECRET: shared secret for /internal/* on workers. */
+  workerSecret?: string;
 }
 
 /** The service directory (holds package.json). Same depth from src/server and
@@ -135,5 +143,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     killGraceMs: 10_000,
     pollMs: 500,
     autoChecklist: env.AUTO_CHECKLIST !== '0',
+    flyApiToken: env.FLY_API_TOKEN || undefined,
+    workersApp: env.WORKERS_APP || 'complykit-workers',
+    workerImage: env.WORKER_IMAGE || env.FLY_IMAGE_REF || undefined,
+    workerSecret: env.WORKER_SECRET || undefined,
   };
 }
