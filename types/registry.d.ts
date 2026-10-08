@@ -105,4 +105,6 @@ export {
   describeLocationRules,
   citationLabel,
   EU_EEA_COUNTRIES,
+  hostedOn,
+  domainLabel,
 } from './index.js';

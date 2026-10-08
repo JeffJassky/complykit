@@ -227,6 +227,8 @@ import {
   US_STATE_NAMES,
   usStateAct,
   describeLocationRules,
+  hostedOn,
+  domainLabel,
   type RegimeVerdict,
   type LocationRules,
   type LocationRuleLaw,
@@ -296,6 +298,7 @@ const _act = usStateAct('TX'); const _actBase: UsStatePrivacyAct | undefined = _
 const _dopts: DescribeLocationOptions = { verified: true, observed: 'US-TX' };
 const _lr: LocationRules = describeLocationRules(['us', 'us-tx'], '2026-10-08', _dopts);
 const _law: LocationRuleLaw | undefined = _lr.laws[0];
+_use(domainLabel('x.example') + (hostedOn('x.example')?.provider ?? ''));
 _use(_acts + (_actBase?.name ?? '') + (_act?.from ?? '') + (_law?.citation ?? '') + _lr.label);
 const _lv: LocationVerification = decideVerification({ id: 'local' }, []);
 const _sc: ScenarioId[] = defaultScenarios(['eu']);

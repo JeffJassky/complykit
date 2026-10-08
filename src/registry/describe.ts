@@ -88,10 +88,10 @@ function lawsFor(codes: readonly string[], onDate: string): LocationRuleLaw[] {
   return out.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.since.localeCompare(b.since) || a.requirementId.localeCompare(b.requirementId));
 }
 
-const OPT_IN_MUST = [
-  'Nothing non-essential runs until the visitor agrees: no analytics, advertising or social scripts, cookies or storage before a choice (ePrivacy Art. 5(3) / PECR reg. 6).',
+const OPT_IN_MUST = (uk: boolean): string[] => [
+  `Nothing non-essential runs until the visitor agrees: no analytics, advertising or social scripts, cookies or storage before a choice (${uk ? 'PECR reg. 6' : 'ePrivacy Art. 5(3)'}).`,
   'A banner where rejecting is as easy as accepting; regulators expect the reject option on the first screen, as prominent as accept.',
-  'Proof of consent, and a way to withdraw it that is as easy as giving it (GDPR Art. 7(3)).',
+  `Proof of consent, and a way to withdraw it that is as easy as giving it (${uk ? 'UK GDPR' : 'GDPR'} Art. 7(3)).`,
 ];
 
 const OPT_OUT_SIGNAL_MUST = (state: string, ca: boolean): string[] => [
@@ -145,7 +145,7 @@ export function describeLocationRules(codes: readonly string[], onDate: string, 
       regime,
       label: `Opt-in (${uk ? 'UK' : 'EU/EEA'})`,
       summary: `A visitor from ${where} is under the opt-in model: nothing non-essential may run until they say yes, a banner is required, and rejecting must be as easy as accepting. ${uk ? 'UK PECR reg. 6 and the UK GDPR' : 'The ePrivacy Directive and the GDPR'} apply.`,
-      mustHave: OPT_IN_MUST,
+      mustHave: OPT_IN_MUST(uk),
       laws,
       notes: [],
       verified: true,

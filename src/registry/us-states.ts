@@ -125,7 +125,7 @@ export const US_STATE_PRIVACY_ACTS: Readonly<Record<string, UsStatePrivacyAct>> 
     state: 'MN',
     name: 'Minnesota Consumer Data Privacy Act',
     citation: 'Minn. Stat. §325M.10 et seq.',
-    urls: [{ href: 'https://www.revisor.mn.gov/statutes/cite/325M' }],
+    urls: [{ href: 'https://www.revisor.mn.gov/statutes/cite/325M', verified: '2026-10-08' }],
     sensitive: 'opt-in',
   },
   MD: {

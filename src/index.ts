@@ -158,6 +158,8 @@ export {
   SALE_SHARE_CATEGORIES,
   hostOf,
   hostMatches,
+  hostedOn,
+  domainLabel,
   isEuEea,
   buildKnowledgeBase,
   lookupEntry,

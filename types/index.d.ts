@@ -1282,6 +1282,10 @@ export const WIRETAP_CATEGORIES: ReadonlySet<PartyCategory>;
 export const SALE_SHARE_CATEGORIES: ReadonlySet<PartyCategory>;
 export function hostOf(url: string): string;
 export function hostMatches(host: string, suffix: string): boolean;
+/** A domain on a shared cloud or hosting platform: who hosts it and the tenant's name ('acme.s3.amazonaws.com' → Amazon S3, 'acme'). Undefined for an ordinary domain. */
+export function hostedOn(domain: string): { provider: string; name: string } | undefined;
+/** A party's display name from its domain: 'acme (Amazon S3)' for a cloud tenant, else the domain. */
+export function domainLabel(domain: string): string;
 export function isEuEea(country: string): boolean;
 export function buildKnowledgeBase(opts?: { extra?: KnowledgeEntryInput[]; overrides?: SiteOverride[] }): KnowledgeBase;
 export function lookupEntry(kb: KnowledgeBase, host: string, pathname?: string): KnowledgeEntry | undefined;
