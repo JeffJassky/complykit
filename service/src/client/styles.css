@@ -3541,10 +3541,11 @@ span.rp-cell {
 /* Law checkboxes (multi-region scans): the new-scan form, a rescan, and per-law progress. */
 .law-picker {
   border: 0;
-  margin: 4px 0 0;
+  margin: 12px 0 0;
   padding: 0;
   min-width: 0;
   display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 8px;
 }
 .law-picker legend {
@@ -3561,6 +3562,13 @@ span.rp-cell {
   align-items: flex-start;
   gap: 8px;
   font-size: 13.5px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  border-radius: 8px;
+  cursor: pointer;
+}
+.law-option:has(input:checked) {
+  border-color: var(--accent, currentColor);
 }
 .law-option input {
   margin-top: 3px;

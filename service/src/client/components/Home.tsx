@@ -96,8 +96,8 @@ export function HomeView({ rows, now, loaded, onSubmit, busy, error }: { rows: S
           <label className="home-option">
             <input type="checkbox" checked={slowRepeat && consent && !quick} disabled={!consent || quick} onChange={(e) => setSlowRepeat(e.target.checked)} /> Also repeat on a slow connection (about 3× longer)
           </label>
-          <LawPicker selected={laws} onChange={changeLaws} disabled={!consent} />
         </details>
+        {consent ? <LawPicker selected={laws} onChange={changeLaws} /> : null}
         {consent ? <AuthorizedBox checked={authorized} onChange={setAuthorized} /> : null}
         {blocked ? (
           <p className="hint" data-testid="scan-blocked">
