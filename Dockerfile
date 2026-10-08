@@ -22,11 +22,13 @@ RUN npm run build && (cd client && npm run build && npm run size) && cd service 
 
 # --- runtime -------------------------------------------------------------------
 FROM mcr.microsoft.com/playwright:v1.62.1-noble
-# tini as PID 1 reaps orphaned Chromium processes (Node doesn't) and forwards
-# signals to the server.
+# tini reaps orphaned Chromium processes (Node doesn't) and forwards signals to
+# the server. On Fly, init is PID 1, so tini must register as a subreaper
+# (TINI_SUBREAPER) or orphans are never reaped.
 RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV NODE_ENV=production \
+    TINI_SUBREAPER=1 \
     PORT=8080 \
     DATA_DIR=/data
 
