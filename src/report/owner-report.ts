@@ -425,6 +425,30 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
   const cur = input.current;
   const location = locations[0];
 
+  // Per location: its own visits and the banner its own visits saw (same rule as the report-wide banner).
+  const locationSummaries: OwnerLocationSummary[] = locations.map((l) => {
+    const total = plan.filter((p) => p.location === l.id).reduce((n, p) => n + Math.max(1, p.runs ?? 1), 0);
+    const doneHere = new Set((input.done ?? []).filter((v) => v.location === l.id).map(visitKey)).size;
+    const cells = unreachableReason ? [] : Object.values(m?.grid[l.id] ?? {}).filter((c) => c && c.status !== 'not-run' && c.banner !== undefined);
+    const seenBanner = cells.filter((c) => c!.banner && c!.banner !== 'no banner');
+    const prov = seenBanner.map((c) => bannerProviderName(c!.banner)).find(Boolean);
+    return {
+      id: l.id,
+      label: l.label,
+      verified: l.verified,
+      ...(l.observed ? { observed: l.observed } : {}),
+      ...(l.note ? { note: l.note } : {}),
+      visitsDone: allDone ? total : Math.min(total, doneHere),
+      visitsTotal: total,
+      banner: {
+        state: seenBanner.length ? 'detected' : cells.length ? 'none' : 'pending',
+        ...(prov ? { provider: prov } : {}),
+        visitsWithBanner: seenBanner.length,
+        visitsChecked: cells.length,
+      },
+    };
+  });
+
   return {
     version: 1,
     stage: input.stage,
@@ -442,6 +466,7 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
       ...(location ? { location: { id: location.id, label: location.label, verified: location.verified, ...(location.observed ? { observed: location.observed } : {}), ...(location.note ? { note: location.note } : {}) } } : {}),
     },
     banner,
+    locations: locationSummaries,
     matrix: { columns, tools, counts },
     decisions: tools.filter((t) => !t.classified).map((t) => ({ partyId: t.partyId, label: t.label, domain: t.domain, classKey: t.classKey })),
     ...(!unreachableReason && m?.remediation?.tasks.length ? { todo: { tasks: m.remediation.tasks, ...(m.remediation.configAt ? { configAt: m.remediation.configAt } : {}), ...(m.remediation.runId ? { runId: m.remediation.runId } : {}) } } : {}),

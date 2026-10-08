@@ -302,9 +302,12 @@ export async function runConsentScan(opts: ConsentScanOptions): Promise<ConsentS
   return analyzeConsentScan(await collect(opts, true), opts);
 }
 
-/** Browser half: verify locations, run scenarios, write evidence. No rules, no KB (so onPartial is ignored). */
+/**
+ * Browser half: verify locations, run scenarios, write evidence. No findings are written.
+ * When `onPartial` is given the live analysis (bundled KB unless `knowledgeBase`) also runs after every visit.
+ */
 export function collectConsentScan(opts: ConsentScanOptions): Promise<import('./collect/browser/evaluation/index.js').ConsentEvaluationCollection> {
-  return collect(opts, false);
+  return collect(opts, true);
 }
 
 /** `live`: also run the analysis after every visit for onPartial (runConsentScan; needs the KB). */
