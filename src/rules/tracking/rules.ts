@@ -6,6 +6,7 @@ import {
   getRequirement,
   requirementScopeFor,
   entryStatus,
+  usStateAct,
   CONSENT_CATEGORIES,
   CONTEXT_CATEGORIES,
   SALE_SHARE_CATEGORIES,
@@ -503,18 +504,18 @@ export const optOutDisplay: Rule<readonly ['consent-timeline']> = {
   },
 };
 
-// --- 5. California: the opt-out link ----------------------------------------------
+// --- 5. The opt-out link (California, and every state with a privacy act in force) ----------------------------------------------
 
 const LINK_ID = asRuleId('tracking.opt-out-link');
 export const optOutLink: Rule<readonly ['consent-timeline']> = {
   id: LINK_ID,
-  requirements: [asRequirementId('ccpa.opt-out-link')],
+  requirements: [asRequirementId('ccpa.opt-out-link'), asRequirementId('us-states.opt-out-method')],
   layer: 'browser',
   confidence: 'needs-review',
   detects: 'presence',
   evidence: ['interaction-log'],
   remediation:
-    'Put a “Do Not Sell or Share My Personal Information” link (or “Your Privacy Choices” with the opt-out icon) in the header or footer; let it opt out without asking for an email or account; don’t rely on a cookie banner alone.',
+    'Put a clear opt-out link in the header or footer — in California “Do Not Sell or Share My Personal Information” (or “Your Privacy Choices” with the opt-out icon); in other states with a privacy act, a link that plainly offers opting out of targeted advertising and sale. Let it opt out without asking for an email or account; don’t rely on a cookie banner alone.',
   falsePositives: 'Link and icon detection read visible text and adjacent images/SVGs; a link inside a collapsed menu or an icon drawn in CSS can be missed.',
   consumes: ['consent-timeline'] as const,
   evaluate(input: { 'consent-timeline': Artifact[] }, ctx: EvalContext): RawFinding[] {
@@ -524,15 +525,19 @@ export const optOutLink: Rule<readonly ['consent-timeline']> = {
     const seen = new Set<string>();
     for (const a of analyses) {
       if (!a.verified || !a.walk) continue;
-      const scope = scopeOf('ccpa.opt-out-link', a);
+      const ca = scopeOf('ccpa.opt-out-link', a);
+      const st = ca ? undefined : scopeOf('us-states.opt-out-method', a);
+      const scope = ca ?? st;
       if (!scope) continue;
+      const reqId = ca ? 'ccpa.opt-out-link' : 'us-states.opt-out-method';
+      const actName = st ? (usStateAct(scope.slice(3))?.name ?? 'the state privacy law') : '';
       const w = a.walk;
       const mk = (name: string, message: string): void => {
         if (seen.has(`${name}|${scope}`)) return;
         seen.add(`${name}|${scope}`);
         out.push({
           ruleId: LINK_ID,
-          requirementId: asRequirementId('ccpa.opt-out-link'),
+          requirementId: asRequirementId(reqId),
           subject: { property: ctx.property, routePattern: '*', instanceUrl: a.site.url, locator: { role: 'opt-out-link', name, landmark: scope, ordinal: 0 } },
           confidence: 'needs-review',
           message,
@@ -542,12 +547,12 @@ export const optOutLink: Rule<readonly ['consent-timeline']> = {
       };
       if (!w.found) {
         const sells = analyses.some((b) => b.locationId === a.locationId && [...b.parties.values()].some((f) => partyCategories(f).some((c) => SALE_SHARE_CATEGORIES.has(c))));
-        if (sells) mk('missing-link', `No “Do Not Sell or Share” / “Your Privacy Choices” link was found, although advertising parties receive visitor data, from ${placeName(a)}.`);
+        if (sells) mk('missing-link', st ? `No clear opt-out link for targeted advertising or sale was found, although advertising parties receive visitor data, from ${placeName(a)} (${actName}).` : `No “Do Not Sell or Share” / “Your Privacy Choices” link was found, although advertising parties receive visitor data, from ${placeName(a)}.`);
         continue;
       }
-      if (/your privacy choices/i.test(w.linkText ?? '') && !w.hasIcon) mk('missing-icon', `The “${w.linkText}” link has no opt-out icon next to it; that wording requires the icon (11 CCR §7015(b)).`);
-      if (w.requiredFields.length) mk('requires-personal-info', `Opting out through “${w.linkText}” asks for ${w.requiredFields.join(', ')} — extra information for an opt-out is friction the regulations forbid (§7026(c)).`);
-      if ((w.steps ?? 0) > 2) mk('too-many-steps', `Opting out through “${w.linkText}” takes ${w.steps} steps.`);
+      if (!st && /your privacy choices/i.test(w.linkText ?? '') && !w.hasIcon) mk('missing-icon', `The “${w.linkText}” link has no opt-out icon next to it; that wording requires the icon (11 CCR §7015(b)).`);
+      if (w.requiredFields.length) mk('requires-personal-info', st ? `Opting out through “${w.linkText}” asks for ${w.requiredFields.join(', ')} — extra information for an opt-out is friction, from ${placeName(a)} (${actName}).` : `Opting out through “${w.linkText}” asks for ${w.requiredFields.join(', ')} — extra information for an opt-out is friction the regulations forbid (§7026(c)).`);
+      if ((w.steps ?? 0) > 2) mk('too-many-steps', st ? `Opting out through “${w.linkText}” takes ${w.steps} steps, from ${placeName(a)} (${actName}).` : `Opting out through “${w.linkText}” takes ${w.steps} steps.`);
     }
     return out;
   },

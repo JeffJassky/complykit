@@ -74,6 +74,12 @@ word "compliant" never appears in report output; a test asserts it.
    Shopify Customer Privacy, …); a click that didn't change it marks the
    scenario not tested rather than producing misleading evidence.
 
+   The opt-out-link check covers California and every other state whose
+   comprehensive privacy act is in force on the scan date. Outside California
+   the link's wording is not prescribed and no icon is checked; the check asks
+   whether a clear opt-out link exists, and whether using it needs personal
+   information or too many steps.
+
 ## From facts to findings
 
 - **Every outside party is identified** — by the knowledge base when
