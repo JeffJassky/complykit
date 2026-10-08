@@ -1303,6 +1303,61 @@ export function regimeFor(location: MeasuredPlace | undefined, onDate?: string):
 export function parseRegimeLocation(raw: unknown): MeasuredPlace | undefined;
 /** Whether a US state's law requires honoring GPC on a date. */
 export function isOptOutSignalState(region: string, onDate?: string): boolean;
+/** EU-27 + EEA country codes (ePrivacy prior consent), shared with the client. */
+export const EU_EEA_COUNTRIES: readonly string[];
+/** Whether a US state has a comprehensive privacy act in force on a date. */
+export function isUsPrivacyActState(region: string, onDate?: string): boolean;
+/** The scanner's regime for a measured location: a Regime, or 'unknown' when no researched law reaches it. */
+export type RegimeVerdict = Regime | 'unknown';
+/**
+ * The regime for jurisdiction codes (jurisdictionsFor) on a date — the scanner's decision.
+ * 'us' with no state code is 'opt-out' (default 'baseline') or 'opt-out-signal' ('strict',
+ * the client's posture). Codes outside EU/UK/US are 'unknown'.
+ */
+export function regimeForCodes(codes: readonly string[], onDate?: string, opts?: { unverifiedUs?: 'baseline' | 'strict' }): RegimeVerdict;
+/** US states with a comprehensive privacy act: in-force date and, where the act requires honoring GPC, that date. */
+export const US_PRIVACY_ACT_STATES: ReadonlyArray<{ state: string; from: string; gpcFrom?: string }>;
+/** US states whose law requires honoring an opt-out preference signal (GPC), with the date that duty starts. */
+export const US_OPT_OUT_SIGNAL_STATES: ReadonlyArray<{ state: string; from: string }>;
+export interface UsStatePrivacyAct {
+  state: string;
+  name: string;
+  citation: string;
+  urls: VerifiedUrl[];
+  sensitive: 'opt-in' | 'notice-and-opt-out' | 'sale-banned';
+}
+/** The state comprehensive privacy acts by USPS code. */
+export const US_STATE_PRIVACY_ACTS: Readonly<Record<string, UsStatePrivacyAct>>;
+/** USPS code → state name. */
+export const US_STATE_NAMES: Readonly<Record<string, string>>;
+/** The act for a state with its dates, or undefined. */
+export function usStateAct(region: string): (UsStatePrivacyAct & { from: string; gpcFrom?: string }) | undefined;
+export interface LocationRuleLaw {
+  requirementId: string;
+  instrument: string;
+  instrumentName: string;
+  title: string;
+  citation: string;
+  kind: RequirementKind;
+  urls: string[];
+  since: string;
+}
+/** Which rules the scan compares a location against, derived from the registry (describeLocationRules). */
+export interface LocationRules {
+  regime: RegimeVerdict;
+  label: string;
+  summary: string;
+  mustHave: string[];
+  laws: LocationRuleLaw[];
+  stateAct?: { state: string; name: string; citation: string; urls: string[]; from: string; gpcFrom?: string; inForce: boolean; sensitive: UsStatePrivacyAct['sensitive'] };
+  notes: string[];
+  verified: boolean;
+}
+export interface DescribeLocationOptions {
+  verified?: boolean;
+  observed?: string;
+}
+export function describeLocationRules(codes: readonly string[], onDate: string, opts?: DescribeLocationOptions): LocationRules;
 
 // Evaluation planning + summary (rules).
 export function decideVerification(spec: LocationSpec, sources: GeoSourceResult[], checkedAt?: string): LocationVerification;
@@ -1429,6 +1484,8 @@ export interface ConsentReportModel {
     note?: string;
     siteReported: Array<{ source: string; value: string }>;
     proxied: boolean;
+    /** Which model of rules the scan compared this location against, and the laws behind it (describeLocationRules). */
+    rules: LocationRules;
   }>;
   scenarios: ScenarioId[];
   grid: Record<string, Partial<Record<ScenarioId, GridCell>>>;

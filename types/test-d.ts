@@ -218,6 +218,20 @@ import {
   regimeFor,
   parseRegimeLocation,
   isOptOutSignalState,
+  regimeForCodes,
+  isUsPrivacyActState,
+  US_PRIVACY_ACT_STATES,
+  US_OPT_OUT_SIGNAL_STATES,
+  EU_EEA_COUNTRIES,
+  US_STATE_PRIVACY_ACTS,
+  US_STATE_NAMES,
+  usStateAct,
+  describeLocationRules,
+  type RegimeVerdict,
+  type LocationRules,
+  type LocationRuleLaw,
+  type DescribeLocationOptions,
+  type UsStatePrivacyAct,
   decideVerification,
   defaultScenarios,
   locationPreset,
@@ -275,6 +289,14 @@ _use(requirementScopeFor(_getReq('eprivacy.art5.3')!, _j, '2026-10-02'));
 _use(normalizeRegion('US', 'California'));
 const _rg: string = regimeFor(parseRegimeLocation('US-CA'), '2026-10-06');
 _use(isOptOutSignalState('CA') && _rg);
+const _rvc: RegimeVerdict = regimeForCodes(['us', 'us-tx'], '2026-10-08', { unverifiedUs: 'baseline' });
+_use(isUsPrivacyActState('VA') && _rvc);
+const _acts: number = US_PRIVACY_ACT_STATES.length + US_OPT_OUT_SIGNAL_STATES.length + Object.keys(US_STATE_PRIVACY_ACTS).length + Object.keys(US_STATE_NAMES).length + EU_EEA_COUNTRIES.length;
+const _act = usStateAct('TX'); const _actBase: UsStatePrivacyAct | undefined = _act;
+const _dopts: DescribeLocationOptions = { verified: true, observed: 'US-TX' };
+const _lr: LocationRules = describeLocationRules(['us', 'us-tx'], '2026-10-08', _dopts);
+const _law: LocationRuleLaw | undefined = _lr.laws[0];
+_use(_acts + (_actBase?.name ?? '') + (_act?.from ?? '') + (_law?.citation ?? '') + _lr.label);
 const _lv: LocationVerification = decideVerification({ id: 'local' }, []);
 const _sc: ScenarioId[] = defaultScenarios(['eu']);
 _use(locationPreset('us-ca'));

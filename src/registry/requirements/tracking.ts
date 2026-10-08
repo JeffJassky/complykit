@@ -1,6 +1,6 @@
 import type { Requirement } from '../schema.js';
 import { asRequirementId, asInstrumentId } from '../ids.js';
-import { US_OPT_OUT_SIGNAL_STATES } from '../regime.js';
+import { US_OPT_OUT_SIGNAL_STATES, US_PRIVACY_ACT_STATES } from '../regime.js';
 
 // Consent & tracking by visitor location (plans/consent-design.md §8; legal
 // detail and every citation in plans/research-consent-law.md). These entries
@@ -182,6 +182,31 @@ export const TRACKING_REQUIREMENTS: Requirement[] = [
     kind: 'obligation',
     severity: 'serious',
     // Maryland drafting ambiguous; NJ regs pending; new states phase in 2027.
+    volatile: true,
+  },
+  {
+    id: asRequirementId('us-states.opt-out-method'),
+    instrument: US_STATES,
+    citation: {
+      kind: 'statute',
+      code: 'State comprehensive privacy acts',
+      section: 'right to opt out of targeted advertising and sale, and the clear and conspicuous disclosure of how (e.g. Va. Code §59.1-578(D))',
+    },
+    title: 'Offer a clear and conspicuous way to opt out of targeted advertising and sale (state laws)',
+    text:
+      'Every state comprehensive privacy act gives consumers the right to opt out of the processing of their personal data for targeted advertising and of its sale. A controller that does either must clearly and conspicuously disclose that processing and the manner in which a consumer may exercise the right to opt out; several acts (e.g. Connecticut, Texas) require a clear and conspicuous link on the website for that purpose. The wording of the link is not prescribed outside California. Thresholds for coverage differ by state and are not observable from a browser. Paraphrase — see research-consent-law.md §1.4 and plans/location-rules-citations.md.',
+    urls: [{ href: 'https://law.lis.virginia.gov/vacode/title59.1/chapter53/' }],
+    effective: { from: '2023-01-01' },
+    appliesIf: ['us-state-privacy-covered'],
+    // Every act state except California (whose duty is ccpa.opt-out-link), from the
+    // date its act is in force (../regime.ts — shared with the client).
+    jurisdictions: US_PRIVACY_ACT_STATES.filter((s) => s.state !== 'CA').map((s) => ({
+      code: `us-${s.state.toLowerCase()}`,
+      from: s.from,
+    })),
+    kind: 'obligation',
+    severity: 'moderate',
+    // Section-level citations per state await human confirmation; new acts phase in 2027–2028.
     volatile: true,
   },
 

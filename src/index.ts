@@ -174,6 +174,15 @@ export {
   regimeFor,
   parseRegimeLocation,
   isOptOutSignalState,
+  regimeForCodes,
+  isUsPrivacyActState,
+  US_PRIVACY_ACT_STATES,
+  US_OPT_OUT_SIGNAL_STATES,
+  EU_EEA_COUNTRIES,
+  US_STATE_PRIVACY_ACTS,
+  US_STATE_NAMES,
+  usStateAct,
+  describeLocationRules,
   classifyPlatform,
   platformLoaderOf,
   consentPluginPathPattern,
@@ -205,6 +214,11 @@ export type {
   TagControl,
   SiteOverride,
   MeasuredPlace,
+  RegimeVerdict,
+  LocationRules,
+  LocationRuleLaw,
+  DescribeLocationOptions,
+  UsStatePrivacyAct,
 } from './registry/index.js';
 
 // --- engine normalization (engine output -> findings) -----------------------

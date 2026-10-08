@@ -4,7 +4,11 @@ import { consentResearch, type ResearchWorkflow } from './research.js';
 import { buildCompatibilityReport, type CompatibilityReport } from './consent-compatibility.js';
 import { buildConsentToolProofReport, type ConsentToolProofReport } from './consent-tool-proof.js';
 import type { Finding, TrackingEvaluation, ScenarioId, Evidence } from '../record/index.js';
-import { getRequirement, getInstrument, type Requirement } from '../registry/index.js';
+import { getRequirement, describeLocationRules, citationLabel, type LocationRules } from '../registry/index.js';
+
+// The citation label lives in the registry (citation.ts) so the location popover
+// prints the same string; re-exported here for the report's existing callers.
+export { citationLabel };
 
 // The consent evaluation report model (plans/consent-design.md §3), shared by
 // the HTML, Markdown and JSON renderers:
@@ -95,6 +99,8 @@ export interface ConsentReportModel {
     note?: string;
     siteReported: Array<{ source: string; value: string }>;
     proxied: boolean;
+    /** Which model of rules the scan compared this location against, and the laws behind it (registry describeLocationRules). */
+    rules: LocationRules;
   }>;
   scenarios: ScenarioId[];
   grid: Record<string, Partial<Record<ScenarioId, GridCell>>>;
@@ -119,35 +125,6 @@ export interface ConsentReportModel {
   remediation?: import('./consent-remediation.js').RemediationSection;
 }
 
-const SHORT_INSTRUMENT: Record<string, string> = {
-  eprivacy: 'ePrivacy Directive',
-  gdpr: 'GDPR',
-  'uk-gdpr': 'UK GDPR',
-  pecr: 'PECR',
-  ccpa: 'CCPA regs',
-  'us-state-privacy': 'State privacy laws',
-  cipa: 'CIPA',
-  fsca: 'Fla. ch. 934',
-  wesca: 'PA WESCA',
-  'enforcement-practice': 'Regulator orders',
-};
-
-export function citationLabel(req: Requirement): string {
-  const inst = SHORT_INSTRUMENT[String(req.instrument)] ?? getInstrument(String(req.instrument))?.name ?? String(req.instrument);
-  const c = req.citation;
-  switch (c.kind) {
-    case 'article':
-      return `${inst} Art. ${c.article}${c.paragraph ? `(${c.paragraph})` : ''}${c.point ? `(${c.point})` : ''}`;
-    case 'sc':
-      return `WCAG ${c.principle}.${c.guideline}.${c.sc}`;
-    case 'clause':
-      return `${inst} ${c.clause}`;
-    case 'section':
-      return `${c.title} CCR §${c.section}`;
-    case 'statute':
-      return `${c.code} ${c.section}`;
-  }
-}
 
 export function findingKind(f: Finding): FindingKind {
   const req = getRequirement(String(f.requirementId));
@@ -276,6 +253,10 @@ export function buildConsentReportModel(evaluation: TrackingEvaluation, findings
       note: l.verification.note,
       siteReported: l.verification.siteReported,
       proxied: l.spec.proxied,
+      rules: describeLocationRules(l.verification.jurisdictions, evaluation.startedAt.slice(0, 10), {
+        verified: l.verification.verdict === 'verified',
+        observed: [l.verification.observed.country, l.verification.observed.region].filter(Boolean).join('-') || undefined,
+      }),
     })),
     scenarios,
     grid,

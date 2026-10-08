@@ -30,7 +30,22 @@ export { verifyRegistry, unmappedEngineRules } from './verify.js';
 export { classifyPlatform, platformLoaderOf, consentPluginPathPattern, type PlatformName, type PlatformSignalsInput } from './platform.js';
 export { classifyCookie, requiresConsent, type CookieCategory, type CookieClassification } from './cookies.js';
 export { jurisdictionsFor, requirementScopeFor, normalizeRegion, isEuEea, type MeasuredPlace } from './jurisdictions.js';
-export { regimeFor, parseRegimeLocation, isOptOutSignalState } from './regime.js';
+export {
+  regimeFor,
+  regimeForCodes,
+  parseRegimeLocation,
+  isOptOutSignalState,
+  isUsPrivacyActState,
+  US_PRIVACY_ACT_STATES,
+  US_OPT_OUT_SIGNAL_STATES,
+  EU_EEA_COUNTRIES,
+  type ConsentRegime,
+  type RegimeVerdict,
+  type RegimeLocation,
+} from './regime.js';
+export { US_STATE_PRIVACY_ACTS, US_STATE_NAMES, usStateAct, type UsStatePrivacyAct } from './us-states.js';
+export { citationLabel } from './citation.js';
+export { describeLocationRules, type LocationRules, type LocationRuleLaw, type DescribeLocationOptions } from './describe.js';
 export {
   KB_VERSION,
   KB_ENTRIES,

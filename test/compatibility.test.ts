@@ -540,7 +540,7 @@ describe('behaviorCellsFrom: the matrix expectation, narrowed', () => {
   // an advertising vendor running after acceptance is expected, never a mismatch.
   it.each([
     ['opt-out-signal (us-ca)', ['us', 'us-ca']],
-    ['opt-out (us-tx)', ['us', 'us-tx']],
+    ['opt-out-signal (us-tx)', ['us', 'us-tx']],
   ])('US %s: active after acceptance → may run, not a mismatch', (_name, jurisdictions) => {
     const scenarios: LocationSummary['scenarios'] = [{ scenario: 'accept', status: 'tested', choice: { kind: 'accept', ok: true, method: 'autoconsent' }, evidence: { screenshots: [] } }];
     const o = [{ ...obs({ 'after-accept': 4 }, {}, [{ name: '_fbp', presentAtEnd: true, writePhases: ['after-accept'] }])[0], scenario: 'accept' as const }];

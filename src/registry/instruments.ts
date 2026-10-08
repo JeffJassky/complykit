@@ -69,7 +69,7 @@ export const INSTRUMENTS: Instrument[] = [
   },
   {
     id: asInstrumentId('us-state-privacy'),
-    name: 'US state comprehensive privacy laws — universal opt-out mechanism provisions',
+    name: 'US state comprehensive privacy laws (opt-out rights, universal opt-out mechanisms)',
     jurisdiction: ['us'],
     textLicense: 'US state government texts — paraphrased',
   },
