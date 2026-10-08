@@ -73,6 +73,9 @@ export class NdjsonTail {
   /** Stop polling after one last read (call once the writer has exited). */
   async stop(): Promise<void> {
     clearInterval(this.timer);
+    // A read already in flight may have sized the file before the writer's last
+    // append; let it finish, then read once more so nothing written is missed.
+    await this.reading;
     await this.poll();
     // A writer that died mid-line leaves a fragment; try it as a final line.
     if (this.partial.trim()) this.emitLine(this.partial);
