@@ -2,18 +2,17 @@ import type { Requirement } from './schema.js';
 import { ALL_REQUIREMENTS } from './requirements/index.js';
 
 // Wiretap-litigation states, derived from the registry itself: the states whose
-// wiretap requirements (CIPA, Fla. ch. 934, WESCA — kind 'exposure', instrument
-// cipa/fsca/wesca) are scoped to them. Adding a wiretap statute for a new state
-// extends the posture without a second list to keep in sync.
-const WIRETAP_INSTRUMENTS = new Set(['cipa', 'fsca', 'wesca']);
+// wiretap requirements (kind 'exposure', one instrument per state statute) are
+// scoped to them. Adding a researched wiretap statute for a new state extends
+// the posture, the wiretap rule and its theory label without a second list.
+const WIRETAP_INSTRUMENTS = new Set(['cipa', 'fsca', 'wesca', 'wapa', 'mdwa', 'ilea', 'mtpc']);
 
-export const WIRETAP_STATES: ReadonlySet<string> = new Set(
-  (ALL_REQUIREMENTS as Requirement[])
-    .filter((r) => WIRETAP_INSTRUMENTS.has(String(r.instrument)))
-    .flatMap((r) => (r.jurisdictions ?? []).map((j) => j.code)),
-);
+/** The wiretap-theory requirements, in registry order (CA first). */
+export const WIRETAP_REQUIREMENTS: readonly Requirement[] = (ALL_REQUIREMENTS as Requirement[]).filter((r) => WIRETAP_INSTRUMENTS.has(String(r.instrument)));
 
-/** Does a visitor from these jurisdiction codes carry wiretap-litigation exposure (CA, FL, PA)? */
+export const WIRETAP_STATES: ReadonlySet<string> = new Set(WIRETAP_REQUIREMENTS.flatMap((r) => (r.jurisdictions ?? []).map((j) => j.code)));
+
+/** Does a visitor from these jurisdiction codes carry wiretap-litigation exposure? */
 export function isWiretapJurisdiction(codes: readonly string[]): boolean {
   return codes.some((c) => WIRETAP_STATES.has(c));
 }
