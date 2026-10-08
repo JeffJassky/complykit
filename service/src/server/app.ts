@@ -25,7 +25,7 @@ import type { ServiceConfig } from './config.js';
 import { ConsentRecordStore, MAX_BODY_BYTES, RateLimiter, normalizeRecord, originDomain, type ExportFormat } from './consent-records.js';
 import { KbError, KnowledgeBase, RESEARCH_MAX, categoryList, isDomain, isProposalId, optionalText, requiredText, reviewer } from './kb.js';
 import { recoverJobs, sweepRetention } from './lifecycle.js';
-import { Runner } from './runner.js';
+import { Runner, type RunnerOptions } from './runner.js';
 import { isJobId, JobStore, newId, toSummary } from './store.js';
 import { StreamHub } from './stream.js';
 import { sendInstallZip } from './install-zip.js';
@@ -34,6 +34,7 @@ import { serveReportWithConfig } from './report-config.js';
 import { generateConsentConfigForJob } from './consent-config.js';
 import { checklistProgress, RemediationVerifier, remediationView } from './remediation.js';
 import { rescanSite } from './rescan.js';
+import { parseLaws } from './law-input.js';
 import { rerenderJob } from './rerender.js';
 import { ChecklistMaker, jobReport } from './job-report.js';
 import { sendJobZip } from './zip.js';
@@ -59,7 +60,7 @@ export interface Service {
 
 const RETENTION_SWEEP_MS = 60 * 60_000;
 
-export async function createApp(config: ServiceConfig): Promise<Service> {
+export async function createApp(config: ServiceConfig, runnerOptions: RunnerOptions = {}): Promise<Service> {
   const store = new JobStore(config.dataDir);
   let lastActivity = Date.now();
   const touch = () => (lastActivity = Date.now());
@@ -78,6 +79,7 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
       if (job && config.autoChecklist) checklists.afterScan(job);
     },
     workspaces,
+    runnerOptions,
   );
   const kb = new KnowledgeBase(config, () => hub.notifyKb());
   const consentRecords = new ConsentRecordStore(path.join(config.dataDir, 'sites'), config.consentRecordRetentionDays);
@@ -215,10 +217,15 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
       res.status(400).json({ error: 'no valid URLs', rejected });
       return;
     }
+    const lawsIn = parseLaws(body.laws, body.authorized, checks.includes('consent'));
+    if (!lawsIn.ok) {
+      res.status(400).json({ error: lawsIn.error });
+      return;
+    }
     const batchId = newId();
     const quick = body.quick === true;
     const slowRepeat = body.slowRepeat === true;
-    const jobs = urls.map((url) => store.create({ batchId, url, checks, quick, slowRepeat }));
+    const jobs = urls.map((url) => store.create({ batchId, url, checks, quick, slowRepeat, laws: lawsIn.laws, authorizedAt: lawsIn.authorizedAt }));
     for (const job of jobs) runner.enqueue(job.id);
     const out: CreateBatchResponse = { batchId, jobs: jobs.map(toSummary), rejected };
     res.status(201).json(out);

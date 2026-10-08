@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp, type Service } from '../src/server/app.js';
+import type { RunnerOptions } from '../src/server/runner.js';
 import { loadConfig, type ServiceConfig } from '../src/server/config.js';
 import type { JobDetail } from '../src/shared/api.js';
 
@@ -30,8 +31,8 @@ export function testConfig(overrides: Partial<ServiceConfig> = {}): ServiceConfi
 }
 
 const services: Service[] = [];
-export async function startService(overrides: Partial<ServiceConfig> = {}): Promise<Service> {
-  const s = await createApp(testConfig(overrides));
+export async function startService(overrides: Partial<ServiceConfig> = {}, runnerOptions: RunnerOptions = {}): Promise<Service> {
+  const s = await createApp(testConfig(overrides), runnerOptions);
   services.push(s);
   return s;
 }
