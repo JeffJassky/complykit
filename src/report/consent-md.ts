@@ -19,6 +19,9 @@ export function renderConsentMarkdown(m: ConsentReportModel, opts: { maxFindings
   lines.push('## Locations', '');
   for (const l of m.locations) {
     lines.push(`- **${l.label}** (\`${l.id}\`): ${l.verdict} — exit in ${l.observed}${l.jurisdictions.length ? `; rules for ${l.jurisdictions.join(' + ')}` : ''}${l.note ? ` (${l.note})` : ''}`);
+    lines.push(`  - Rules: ${l.rules.label} — ${l.rules.summary}`);
+    for (const law of l.rules.laws) lines.push(`  - Law: ${law.citation} — ${law.title}${law.urls[0] ? ` (${law.urls[0]})` : ''}`);
+    for (const n of l.rules.notes) lines.push(`  - Note: ${n}`);
   }
   lines.push('', '## Summary', '');
   lines.push(`| Location | ${m.scenarios.map((s) => SCENARIO_LABEL[s]).join(' | ')} |`);
