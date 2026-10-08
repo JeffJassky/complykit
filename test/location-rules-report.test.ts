@@ -99,7 +99,7 @@ describe('HTML (PR C)', () => {
 
     const fl = article('us-fl');
     expect(fl).toMatch(/no state privacy law in force/);
-    expect(fl).toMatch(/Fla\. ch\. 934/);
+    expect(fl).toMatch(/Fla\. Stat\. §934\.03/);
 
     const br = article('br');
     expect(br).toMatch(/No rules encoded \(Brazil\)/);

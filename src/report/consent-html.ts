@@ -1,4 +1,5 @@
 import { renderScopeHtml, SCOPE_CSS } from './consent-scope.js';
+import { renderLocationRulesHtml, LOCATION_RULES_CSS, LOCATION_RULES_JS } from './consent-location-rules.js';
 import { buildMatrixWorkspace } from './consent-workbench.js';
 import { renderSinceHtml, carriedTasks } from './consent-diff.js';
 import { buildBehaviorMatrix, renderBehaviorMatrix, MATRIX_CSS, MATRIX_JS } from './consent-matrix.js';
@@ -143,6 +144,7 @@ ${PROOF_CSS}
 ${REMEDIATION_CSS}
 ${RERENDER_CSS}
 ${SCOPE_CSS}
+${LOCATION_RULES_CSS}
 </style></head><body><main>
 <header id="overview"><div class="eyebrow">ComplyKit · Website privacy report</div><h1>${esc(m.site.host)}</h1><p class="human-muted">${esc(m.site.url)} · Scanned ${esc(m.startedAt.slice(0, 16).replace('T', ' '))} UTC</p>
 <p class="human-intro">See how cookies and tracking tools behaved, decide what needs attention, and keep track of your work.</p>
@@ -151,6 +153,7 @@ ${renderScopeHtml(m)}
 ${renderRemediationHtml(m.remediation, m)}
 ${renderSinceHtml(m.since, carriedTasks(m.siteWorkspace?.doneTasks, library))}
 ${renderRerenderPanel(opts.render, m.runId)}
+${renderLocationRulesHtml(m)}
 ${renderBehaviorMatrix(matrix, workbench)}
 ${renderCompatibilityHtml(m.compatibility, { changeListHref: opts.changeList === false ? undefined : (opts.changeList ?? CHANGE_LIST_FILE) })}
 ${renderConsentToolProofHtml(m.consentToolProof)}
@@ -166,6 +169,6 @@ ${failedChoices.length ? `<h3>Choices that did not succeed</h3><ul>${failedChoic
 <details class="human-details"><summary>Detailed test matrix and original finding counts</summary><div><p>Counts are original findings, not grouped actions. The same finding may occur in several cells. Exposure items are for legal review, not violations.</p><div class="human-table-wrap"><table class="human-table grid"><thead>${head}</thead><tbody>${body}</tbody></table></div></div></details>
 <details class="human-details"><summary>Scan metadata and evidence files</summary><div><p>Run <code>${esc(m.runId)}</code> · package ${esc(m.versions.package)} · knowledge base ${esc(m.versions.kb)} · registry ${esc(m.versions.registry)}${m.versions.autoconsent ? ` · autoconsent ${esc(m.versions.autoconsent)}` : ''}.</p><p>${m.redacted ? 'Cookie values, authentication headers and request bodies were redacted.' : 'Raw evidence can contain cookies, tokens and visitor information. Handle it carefully.'} Evidence links require the accompanying run files.</p><div class="human-table-wrap"><table class="human-table"><thead><tr><th>Location</th><th>Visitor action</th><th>Network evidence</th><th>Timeline</th><th>Screenshots</th></tr></thead><tbody>${evidence}</tbody></table></div></div></details></section></div></details>
 <footer class="human-callout"><strong>About this report</strong><p>This is an automated review of observed website behavior, not legal advice or a legal conclusion. It does not assert conformance or guarantee that every issue was found. Requirements can depend on location, your organization and how a tool is used. Classifications may need confirmation, and some checks require a person. Review the evidence with your team and seek qualified advice for legal decisions.</p></footer>
-</main><script>${KEEP_SCROLL_JS}</script><script>${MATRIX_JS}</script><script>${REMEDIATION_JS}</script>
+</main><script>${KEEP_SCROLL_JS}</script><script>${MATRIX_JS}</script><script>${LOCATION_RULES_JS}</script><script>${REMEDIATION_JS}</script>
 ${workspaceScript('consent', m.property + ':' + m.site.url, m.runId, m.findings.map((f) => f.fingerprint))}<script>${RERENDER_JS}</script></body></html>`;
 }
