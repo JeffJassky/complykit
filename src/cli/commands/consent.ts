@@ -322,7 +322,7 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
     event({ type: 'live', file: ownerFile, stage: report.stage, visitsDone: report.scan.visitsDone, visitsTotal: report.scan.visitsTotal });
   };
   const writeLive = (): void => {
-    if (!eventsFile || collectOnly) return; // a worker leaves no owner report
+    if (!eventsFile) return;
     try {
       const model = lastPartial ? buildConsentReportModel(lastPartial.evaluation, lastPartial.findings) : undefined;
       const pages = new Set((lastPartial?.timelines ?? []).flatMap((tl) => tl.snapshot.pages.map((p) => p.url)));
@@ -405,7 +405,16 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
   } else if (collectOnly) {
     // Multi-region worker: the browser half only. The primary runs the rules.
     try {
-      const { artifacts: _artifacts, ...collection } = await collectConsentScan(scanOptions);
+      const { artifacts: _artifacts, ...collection } = await collectConsentScan({
+        ...scanOptions,
+        onPartial: eventsFile
+          ? (partial) => {
+              lastPartial = partial;
+              liveSite = partial.evaluation.site;
+              writeLive();
+            }
+          : undefined,
+      });
       const handoff: ConsentCollectionHandoff = { kind: COLLECTION_KIND, schemaVersion: COLLECTION_SCHEMA_VERSION, packageVersion: pkg, property: property.id, targetUrl, runId: String(runId), collection };
       const dir = runDir(runId, cwd);
       writeCollectionHandoff(dir, handoff);
