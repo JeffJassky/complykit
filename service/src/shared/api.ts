@@ -590,6 +590,23 @@ export interface OwnerToolRow {
   classKey: string;
   cells: OwnerCell[];
   cookies: OwnerCookieRow[];
+  /** What the scan saw the tool do (absent in reports made before it was added). */
+  activity?: OwnerToolActivity;
+}
+
+export interface OwnerToolActivity {
+  /** Requests to the tool across the finished visits, and how many visits saw it. */
+  requests: number;
+  visits: number;
+  /** Cookies and browser-storage keys it set. */
+  cookies: number;
+  storage: number;
+  /** Example addresses it loaded: host + path, query keys only. */
+  samples: string[];
+  /** The scripts that loaded it, nearest first. */
+  loadedBy: string[];
+  /** On a shared cloud or hosting platform: who hosts it, the tenant's name, and whether that name matches the site's. */
+  hostedOn?: { provider: string; name: string; matchesSite: boolean };
 }
 
 export interface OwnerReport {

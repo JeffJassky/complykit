@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { JobReportResponse, OwnerCell, OwnerToolRow, RemediationTask } from '../../shared/api';
+import type { JobReportResponse, OwnerCell, OwnerToolActivity, OwnerToolRow, RemediationTask } from '../../shared/api';
 import { api } from '../lib/api';
 import { formatClock, jobDuration } from '../lib/format';
 import { openDecisions, STATUS_LABEL as TASK_STATUS_LABEL, TASK_CHANGE_PREFIX } from '../lib/checklist';
@@ -158,6 +158,69 @@ function CellButton({ cell, label, selected, onSelect }: { cell: OwnerCell; labe
   );
 }
 
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** What a tool row is: a tool that only makes requests, or one that also stores cookies / storage. */
+export function activityLine(a: OwnerToolActivity | undefined): string | undefined {
+  if (!a) return undefined;
+  const stores = [a.cookies ? plural(a.cookies, 'cookie') : '', a.storage ? plural(a.storage, 'storage key') : ''].filter(Boolean);
+  return stores.length ? `sets ${stores.join(' and ')}` : 'requests only, no cookies';
+}
+
+const fileOf = (url: string) => {
+  try {
+    const u = new URL(url);
+    return u.pathname.split('/').filter(Boolean).pop() ?? u.hostname;
+  } catch {
+    return url;
+  }
+};
+
+/** What the scan saw a tool do — enough to tell what it is at a glance: where it is hosted, what it stored, the addresses it loaded. */
+function ToolEvidence({ tool }: { tool: OwnerToolRow }) {
+  const a = tool.activity;
+  if (!a) return null;
+  const stored = a.cookies + a.storage;
+  return (
+    <div className="rp-evidence" data-testid="tool-evidence">
+      {a.hostedOn ? (
+        <p>
+          Hosted on <strong>{a.hostedOn.provider}</strong>, in storage named “{a.hostedOn.name}”.
+          {a.hostedOn.matchesSite ? ' The name matches your site, so it is probably your own.' : ''}
+        </p>
+      ) : null}
+      <p className="muted">
+        {plural(a.requests, 'request')} across {plural(a.visits, 'visit')}. {stored ? `Set ${activityLine(a)!.replace(/^sets /, '')}.` : 'Set no cookies or browser storage.'}
+        {a.loadedBy.length ? (
+          <>
+            {' '}Loaded by{' '}
+            {a.loadedBy.slice(0, 2).map((u, i) => (
+              <Fragment key={u}>
+                {i ? ', ' : ''}
+                <code title={u}>{fileOf(u)}</code>
+              </Fragment>
+            ))}
+            .
+          </>
+        ) : null}
+      </p>
+      {a.samples.length ? (
+        <details className="rp-urls">
+          <summary>Addresses it loaded ({a.samples.length})</summary>
+          <ul>
+            {a.samples.map((u) => (
+              <li key={u}>
+                <code>{u}</code>
+              </li>
+            ))}
+          </ul>
+          <p className="muted">Query values are left out; they can carry visitor data.</p>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 function PurposePicker({ classKey, label, busy, error, onClassify, hideLegend }: { classKey: string; label: string; busy?: boolean; error?: string; onClassify?: (classKey: string, purpose: string) => void; hideLegend?: boolean }) {
   const id = useId();
   return (
@@ -263,7 +326,7 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
           <table className="rp-matrix">
             <thead>
               <tr>
-                <th scope="col">Tool / cookie</th>
+                <th scope="col">Tool / cookie it sets</th>
                 {columns.map((c) => (
                   <th key={c.id} scope="col" data-state={c.state} title={c.note}>
                     {c.label}
@@ -297,6 +360,11 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
                               {r.name}
                             </button>
                             <small data-unclassified={r.unclassified && !ui.saved?.[t.classKey] ? 'true' : undefined}>{r.sub}</small>
+                            {r.tool && activityLine(t.activity) ? (
+                              <small className="rp-activity" data-stores={t.activity!.cookies + t.activity!.storage > 0 ? 'true' : 'false'}>
+                                {activityLine(t.activity)}
+                              </small>
+                            ) : null}
                           </th>
                           {r.cells.map((c, i) => (
                             <td key={columns[i]?.id ?? i}>
@@ -310,12 +378,16 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
                               {open.col !== undefined && r.cells[open.col] ? (
                                 <CellDetail cell={r.cells[open.col]} row={r.name} column={colName(open.col)} />
                               ) : r.tool && decide ? (
-                                <PurposePicker classKey={t.classKey} label={t.label} busy={ui.saving === t.classKey} error={ui.errors?.[t.classKey]} onClassify={actions.onClassify} />
+                                <>
+                                  <ToolEvidence tool={t} />
+                                  <PurposePicker classKey={t.classKey} label={t.label} busy={ui.saving === t.classKey} error={ui.errors?.[t.classKey]} onClassify={actions.onClassify} />
+                                </>
                               ) : (
                                 <div className="rp-detail">
                                   <p>
                                     <strong>{r.name}</strong> — {r.tool ? `${t.purpose}${t.recognized ? '' : ' (classified by your team)'} · ${t.domain}` : `set by ${t.label}; ${r.sub}`}.
                                   </p>
+                                  {r.tool ? <ToolEvidence tool={t} /> : null}
                                   <p className="muted">Select a symbol in the row to see what the scan saw.</p>
                                 </div>
                               )}
@@ -357,7 +429,7 @@ export function readyForFinalScan(tasks: RemediationTask[]): boolean {
   return req.length > 0 && req.every(finishedTask);
 }
 
-function DecisionTodo({ label, classKey, decided, ui, actions, unblocks }: { label: string; classKey: string; decided?: string; ui: ReportUiState; actions: ReportActions; unblocks?: string[] }) {
+function DecisionTodo({ label, classKey, decided, ui, actions, unblocks, tool }: { label: string; classKey: string; decided?: string; ui: ReportUiState; actions: ReportActions; unblocks?: string[]; tool?: OwnerToolRow }) {
   const [changing, setChanging] = useState(false);
   const saved = ui.saved?.[classKey];
   const done = !!(decided || saved);
@@ -368,6 +440,7 @@ function DecisionTodo({ label, classKey, decided, ui, actions, unblocks }: { lab
         <span className={`pill ${done ? 'pill-done' : 'pill-queued'}`}>{done ? 'Decided ✓' : 'To decide'}</span>
       </div>
       <p className="muted">The scan doesn’t know this tool. Your answer decides whether it needs consent{unblocks?.length ? ` — and ${unblocks.length === 1 ? 'one change below' : `${unblocks.length} changes below`}` : ''}.</p>
+      {tool && !(done && !changing) ? <ToolEvidence tool={tool} /> : null}
       {done && !changing ? (
         <p>
           {saved ? <>Saved as <strong>{PURPOSE_LABEL[saved] ?? saved}</strong>. </> : decided && decided !== 'saved' ? <>Your answer: <strong>{decided}</strong>. </> : <>Your answer is saved for this site. </>}
@@ -496,6 +569,7 @@ export function TodoList({ data, ui = {}, actions = {} }: { data: JobReportRespo
   const optional = tasks.filter((t) => t.optional);
   // Before the checklist exists: the decisions the scan has found so far are the first items.
   const liveDecisions = todo.state === 'ready' ? [] : (report?.decisions ?? []);
+  const toolFor = (classKey?: string) => (classKey ? report?.matrix.tools.find((x) => x.classKey === classKey) : undefined);
   const isDone = (t: RemediationTask) => finishedTask(t) || (t.kind === 'classify' && !!ui.saved?.[t.classKey ?? '']);
   const doneCount = required.filter(isDone).length;
   const canRescan = todo.state === 'ready' && required.length > 0 && required.every(isDone);
@@ -522,11 +596,11 @@ export function TodoList({ data, ui = {}, actions = {} }: { data: JobReportRespo
       {todo.state === 'ready' && todo.fromThisRun === false ? <p className="muted rp-note">This list comes from an earlier scan of this site; your progress on it is kept.</p> : null}
       <ol className="rp-todos">
         {liveDecisions.map((d) => (
-          <DecisionTodo key={d.classKey} label={d.label} classKey={d.classKey} ui={ui} actions={actions} />
+          <DecisionTodo key={d.classKey} label={d.label} classKey={d.classKey} ui={ui} actions={actions} tool={toolFor(d.classKey)} />
         ))}
         {required.map((t) =>
           t.kind === 'classify' && t.classKey ? (
-            <DecisionTodo key={t.id} label={t.tools[0] ?? t.title} classKey={t.classKey} decided={t.status === 'verified' ? (report?.matrix.tools.find((x) => x.classKey === t.classKey && x.classified)?.purpose ?? 'saved') : undefined} ui={ui} actions={actions} unblocks={tasks.filter((x) => x.waitingOn?.includes(t.id)).map((x) => x.title)} />
+            <DecisionTodo key={t.id} label={t.tools[0] ?? t.title} classKey={t.classKey} decided={t.status === 'verified' ? (report?.matrix.tools.find((x) => x.classKey === t.classKey && x.classified)?.purpose ?? 'saved') : undefined} ui={ui} actions={actions} unblocks={tasks.filter((x) => x.waitingOn?.includes(t.id)).map((x) => x.title)} tool={toolFor(t.classKey)} />
           ) : (
             <ChangeTodo key={t.id} task={t} tasks={tasks} data={data} ui={ui} actions={actions} current={t.id === nextId} />
           ),

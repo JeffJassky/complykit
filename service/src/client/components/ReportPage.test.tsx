@@ -5,7 +5,7 @@ import type { JobReportResponse, JobSummary, OwnerReport, RemediationTask, SiteS
 import { parseHash, reportHref } from '../lib/useHashView';
 import { createRerenderQueue, isMoving } from '../lib/useJobReport';
 import { HomeView, siteRows, siteStatus } from './Home';
-import { BannerLine, Matrix, ReportPageView, ScanStatus, TodoList, readyForFinalScan } from './ReportPage';
+import { BannerLine, Matrix, ReportPageView, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
 
 // The report page (plans/simple-report.md), rendered per section and state.
 
@@ -206,6 +206,24 @@ describe('d. the to-do list', () => {
     expect(t).toContain('Waiting on your answer about widgets.test');
     expect(t).not.toContain('Verify');
     expect(text(<TodoList data={done({ todo: { state: 'ready', tasks: [decision, waiting] } })} ui={{ saved: { 'class:w': 'analytics' } }} actions={{ onVerify: () => {} }} />)).toContain('Verify');
+  });
+  it('a decision shows what the tool loaded — hosting, requests, the addresses in a list to expand', () => {
+    const activity = { requests: 16, visits: 8, cookies: 0, storage: 0, samples: ['storyfolder-releases.s3.amazonaws.com/beta.yml?t', 'storyfolder-releases.s3.amazonaws.com/beta-mac.yml?t'], loadedBy: ['https://shop.example/js/app.58a05869.js'], hostedOn: { provider: 'Amazon S3', name: 'storyfolder-releases', matchesSite: true } };
+    const base = owner();
+    const report = { ...base, matrix: { ...base.matrix, tools: base.matrix.tools.map((t) => (t.classKey === 'class:w' ? { ...t, activity } : t)) } };
+    const data = done({ report, todo: { state: 'ready', tasks: [decision] } });
+    const out = html(<TodoList data={data} />);
+    expect(out).toMatch(/What is widgets.test for\?.*data-testid="tool-evidence".*<details class="rp-urls"><summary>Addresses it loaded \(2\)<\/summary>.*beta-mac\.yml/s);
+    const t = text(<TodoList data={data} />);
+    expect(t).toContain('in storage named “storyfolder-releases”. The name matches your site, so it is probably your own.');
+    expect(t).toContain('16 requests across 8 visits. Set no cookies or browser storage. Loaded by app.58a05869.js');
+    // The matrix row says it only makes requests; a tool with cookies says how many.
+    const m = html(<Matrix data={data} />);
+    expect(m).toContain('class="rp-activity" data-stores="false">requests only, no cookies</small>');
+    expect(activityLine({ ...activity, cookies: 2, storage: 1 })).toBe('sets 2 cookies and 1 storage key');
+    expect(activityLine(undefined)).toBeUndefined();
+    // Reports made before activity was recorded render as before.
+    expect(html(<TodoList data={done({ todo: { state: 'ready', tasks: [decision] } })} />)).not.toContain('tool-evidence');
   });
   it('the final scan opens up when every required item is verified, decided or marked done', () => {
     const tasks = [{ ...decision, status: 'verified' as const }, { ...install, status: 'verified' as const, lastVerify: { at: 'x', result: 'pass' as const, message: 'the served HTML carries the change', evidence: [] } }, task('meta', { status: 'done-unverified' }), task('opt', { optional: true })];

@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import { tracking } from '../src/rules/index.js';
 import {
   registrableDomain,
+  domainLabel,
+  hostedOn,
   lookupEntry,
   lookupStore,
   DEFAULT_KB,
@@ -152,6 +154,23 @@ describe('knowledge base', () => {
     expect(registrableDomain('px.ads.linkedin.com')).toBe('linkedin.com');
     expect(registrableDomain('shop.example.co.uk')).toBe('example.co.uk');
     expect(registrableDomain('store-a.myshopify.com')).toBe('store-a.myshopify.com');
+  });
+
+  it('a bucket or app on shared cloud hosting is its own party, named by its tenant', () => {
+    expect(registrableDomain('storyfolder-releases.s3.amazonaws.com')).toBe('storyfolder-releases.s3.amazonaws.com');
+    expect(registrableDomain('assets.s3.us-west-2.amazonaws.com')).toBe('assets.s3.us-west-2.amazonaws.com');
+    expect(registrableDomain('s3-assets.s3.amazonaws.com')).toBe('s3-assets.s3.amazonaws.com');
+    expect(registrableDomain('s3.amazonaws.com')).toBe('s3.amazonaws.com');
+    expect(registrableDomain('acct.blob.core.windows.net')).toBe('acct.blob.core.windows.net');
+    expect(registrableDomain('media.nyc3.digitaloceanspaces.com')).toBe('media.nyc3.digitaloceanspaces.com');
+    expect(registrableDomain('fonts.googleapis.com')).toBe('googleapis.com');
+    expect(registrableDomain('my-bucket.storage.googleapis.com')).toBe('my-bucket.storage.googleapis.com');
+    expect(registrableDomain('x.y.elb.amazonaws.com')).toBe('amazonaws.com');
+    expect(hostedOn('storyfolder-releases.s3.amazonaws.com')).toEqual({ provider: 'Amazon S3', name: 'storyfolder-releases' });
+    expect(hostedOn('d111.cloudfront.net')).toEqual({ provider: 'Amazon CloudFront', name: 'd111' });
+    expect(hostedOn('googleapis.com')).toBeUndefined();
+    expect(domainLabel('storyfolder-releases.s3.amazonaws.com')).toBe('storyfolder-releases (Amazon S3)');
+    expect(domainLabel('widgets.test')).toBe('widgets.test');
   });
 
   it('path-specific entries win on shared hosts; stores are looked up by name', () => {

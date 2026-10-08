@@ -12,6 +12,7 @@ import {
   lookupEntry,
   lookupStore,
   registrableDomain,
+  domainLabel,
   hostOf,
   classifyPlatform,
   platformLoaderOf,
@@ -230,7 +231,7 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
     if (!f) {
       f = {
         partyId: p.id,
-        label: p.entry?.vendor ?? p.domain,
+        label: p.entry?.vendor ?? domainLabel(p.domain),
         owner: p.entry?.owner,
         domain: p.domain,
         hosts: new Set(),

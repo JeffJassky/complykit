@@ -7,7 +7,7 @@ import type {
   NotTestedItem,
   PartyInventoryItem,
 } from '../../record/index.js';
-import { DEFAULT_KB, inlineRegExp, lookupEntry, registrableDomain, hostOf, type KnowledgeBase, type KnowledgeEntry } from '../../registry/index.js';
+import { DEFAULT_KB, inlineRegExp, lookupEntry, registrableDomain, domainLabel, hostOf, type KnowledgeBase, type KnowledgeEntry } from '../../registry/index.js';
 
 // Static markup inspection → the `markup` section of the tracking record
 // (plans/client-consent-design.md §3 #1–#2, §5 item 2). Pure: runs over the
@@ -94,7 +94,7 @@ export function matchMarkupElement(
         if (reportable(entry)) add({ partyId: entry.id, entry, label: entry.vendor, matchedBy: 'host', match: target === host ? host : `${host} → ${target}` });
       } else {
         const d = registrableDomain(target);
-        add({ partyId: `unknown:${d}`, label: d, matchedBy: 'host', match: target === host ? host : `${host} → ${target}` });
+        add({ partyId: `unknown:${d}`, label: domainLabel(d), matchedBy: 'host', match: target === host ? host : `${host} → ${target}` });
       }
     }
     return out;

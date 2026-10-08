@@ -5,6 +5,7 @@ import type { ConsentReportModel } from './consent-model.js';
 import { buildBehaviorMatrix, categoryLabel } from './consent-matrix.js';
 import { workspaceId } from './workspace.js';
 import { compareCookieBehavior } from './cookie-purpose.js';
+import { hostedOn } from '../registry/index.js';
 
 // The owner report (plans/simple-report.md): the one page a site owner reads.
 // Four parts, in order — scan status, consent banner, the matrix, the to-do
@@ -82,6 +83,23 @@ export interface OwnerToolRow {
   classKey: string;
   cells: OwnerCell[];
   cookies: OwnerCookieRow[];
+  /** What the scan saw the tool do: requests only, or storing cookies / storage too. */
+  activity: OwnerToolActivity;
+}
+
+export interface OwnerToolActivity {
+  /** Requests to the tool across the finished visits, and how many visits saw it. */
+  requests: number;
+  visits: number;
+  /** Cookies and browser-storage keys it set (the rows under the tool). */
+  cookies: number;
+  storage: number;
+  /** Example addresses it loaded: host + path, query keys only (values are data, never shown). */
+  samples: string[];
+  /** The scripts that loaded it, nearest first. */
+  loadedBy: string[];
+  /** On a shared cloud or hosting platform: who hosts it, the tenant's name, and whether that name matches the site's. */
+  hostedOn?: { provider: string; name: string; matchesSite: boolean };
 }
 
 export interface OwnerReport {
@@ -121,6 +139,23 @@ export interface OwnerReport {
   decisions: Array<{ partyId: string; label: string; domain: string; classKey: string }>;
   /** The checklist this run's report carries (the generated config's tasks), when there is one. The service replaces it with the site workspace's, with live status. */
   todo?: { tasks: RemediationTask[]; configAt?: string; runId?: string };
+}
+
+type InventoryItem = ConsentReportModel['inventory'][number];
+
+function activityOf(p: InventoryItem, cookies: OwnerCookieRow[], siteDomain: string): OwnerToolActivity {
+  const on = hostedOn(p.domain);
+  // 'storyfolder.com' → 'storyfolder': a tenant named like the site is probably the site's own.
+  const brand = siteDomain.split('.')[0] ?? '';
+  return {
+    requests: (p.seenIn ?? []).reduce((n, x) => n + x.requests, 0),
+    visits: (p.seenIn ?? []).length,
+    cookies: cookies.filter((k) => k.kind === 'cookie').length,
+    storage: cookies.filter((k) => k.kind !== 'cookie').length,
+    samples: p.samples ?? [],
+    loadedBy: p.loadedBy ?? [],
+    ...(on ? { hostedOn: { ...on, matchesSite: brand.length >= 4 && on.name.includes(brand) } } : {}),
+  };
 }
 
 /** One planned column: a scenario at a location, visited `runs` times. */
@@ -320,6 +355,7 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
       classKey: 'class:' + workspaceId('tool', [p.partyId, p.domain]),
       cells: cellsFor(toolRow),
       cookies,
+      activity: activityOf(p, cookies, input.site.registrableDomain),
     });
   }
 

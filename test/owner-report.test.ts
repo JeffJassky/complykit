@@ -66,6 +66,17 @@ describe('owner report: live', () => {
     expect(r.decisions).toEqual([{ partyId: 'unknown:widgets.test', label: 'widgets.test', domain: 'widgets.test', classKey: w.classKey }]);
   });
 
+  it('each tool row says what it did: requests only, or what it stored, with example addresses and its loader', () => {
+    const bucket = { ...widget, partyId: 'unknown:shop-assets.s3.amazonaws.com', label: 'shop-assets (Amazon S3)', domain: 'shop-assets.s3.amazonaws.com', hosts: ['shop-assets.s3.amazonaws.com'], samples: ['shop-assets.s3.amazonaws.com/beta.yml?t'], loadedBy: ['https://shop.example/app.js'], seenIn: [{ location: 'de', scenario: 'do-nothing', requests: 2, firstMs: 900, phases: ['before-banner'] }] };
+    const model = buildConsentReportModel(evaluation({ scenarios: [doNothing], inventory: [meta, bucket], observations: [obs('do-nothing', [fbpBeforeChoice])] }), []);
+    const r = buildOwnerReport({ ...base, site: { ...base.site, registrableDomain: 'shop.example' }, model, done: [{ location: 'de', scenario: 'do-nothing' }] });
+    const b = r.matrix.tools.find((t) => t.partyId === bucket.partyId)!;
+    expect(b.activity).toEqual({ requests: 2, visits: 1, cookies: 0, storage: 0, samples: ['shop-assets.s3.amazonaws.com/beta.yml?t'], loadedBy: ['https://shop.example/app.js'], hostedOn: { provider: 'Amazon S3', name: 'shop-assets', matchesSite: true } });
+    const m = r.matrix.tools.find((t) => t.label === 'Meta Pixel')!;
+    expect(m.activity.cookies).toBe(m.cookies.filter((k) => k.kind === 'cookie').length);
+    expect(m.activity.hostedOn).toBeUndefined();
+  });
+
   it('a cookie of a tool your team classified takes the tool’s purpose (no lingering "?")', () => {
     const classified = { ...widget, categories: ['analytics'], stores: [{ name: '_w', kind: 'cookie', lifetimeDays: 30 }] };
     const wObs = { ...widgetActive, stores: [{ name: '_w', kind: 'cookie', writePhase: 'before-choice', writePhases: ['before-choice'], presentAtEnd: true, attribution: 'observed' }] };

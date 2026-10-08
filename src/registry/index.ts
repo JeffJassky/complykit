@@ -44,6 +44,8 @@ export {
   entriesForText,
   inlineRegExp,
   registrableDomain,
+  domainLabel,
+  hostedOn,
   hostOf,
   hostMatches,
   CONSENT_CATEGORIES,

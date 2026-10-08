@@ -3114,6 +3114,36 @@ textarea.input {
   font-weight: 400;
   color: var(--muted);
 }
+.rp-matrix th small.rp-activity {
+  font-style: italic;
+}
+.rp-matrix th small.rp-activity[data-stores='true'] {
+  font-style: normal;
+  color: var(--text);
+}
+.rp-evidence {
+  font-size: 13px;
+  margin: 4px 0 10px;
+}
+.rp-evidence p + p,
+.rp-evidence p + details {
+  margin-top: 4px;
+}
+.rp-urls summary {
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.rp-urls ul {
+  margin: 6px 0 4px;
+  padding-left: 18px;
+  display: grid;
+  gap: 2px;
+}
+.rp-urls code,
+.rp-evidence code {
+  font-size: 12px;
+  word-break: break-all;
+}
 .rp-matrix th small[data-unclassified='true'] {
   color: var(--amber);
   font-weight: 600;
