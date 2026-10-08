@@ -86,6 +86,12 @@ describe('report page: sections in order, nothing else', () => {
     expect(out).toContain('>Technical details</a>');
     expect(out).toContain('href="/reports/job1/consent/.comply/runs/r/consent-report.html"');
   });
+  it('a small "Delete this report" link sits in the footer when deleting is wired', () => {
+    expect(html(<ReportPageView data={done()} now={NOW} />)).not.toContain('Delete this report');
+    const out = html(<ReportPageView data={done()} now={NOW} actions={{ onDelete: () => {} }} />);
+    expect(out).toMatch(/<footer class="rp-footer">.*Technical details.*class="rp-delete"[^>]*>Delete this report<\/button>.*<\/footer>/s);
+    expect(html(<ReportPageView data={done()} now={NOW} ui={{ deleting: true }} actions={{ onDelete: () => {} }} />)).toContain('Deleting…');
+  });
   it('a failed scan says so and offers a new one', () => {
     const out = text(<ReportPageView data={done({ job: job({ status: 'failed', error: 'page.goto: net::ERR\nstack' }), todo: { state: 'none', tasks: [] } })} now={NOW} actions={{ onRescan: () => {} }} />);
     expect(out).toContain('The scan didn’t finish.');

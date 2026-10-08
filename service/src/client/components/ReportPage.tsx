@@ -35,6 +35,8 @@ export interface ReportActions {
   /** Make the list when none was made (or making it failed). */
   onMakeList?: () => void;
   onCopy?: (text: string) => Promise<boolean>;
+  /** Delete this scan (after the owner confirms). */
+  onDelete?: () => void;
 }
 
 export interface ReportUiState {
@@ -46,6 +48,7 @@ export interface ReportUiState {
   marking?: string;
   rescanning?: boolean;
   makingList?: boolean;
+  deleting?: boolean;
   /** The report is being re-rendered with new decisions. */
   rerender?: 'idle' | 'scheduled' | 'running';
   /** Per task id / classKey / 'rescan' / 'list': what went wrong. */
@@ -626,7 +629,17 @@ export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: Job
             Accessibility report
           </a>
         ) : null}
+        {actions.onDelete ? (
+          <button type="button" className="rp-delete" disabled={ui.deleting} onClick={actions.onDelete}>
+            {ui.deleting ? 'Deleting…' : 'Delete this report'}
+          </button>
+        ) : null}
       </footer>
+      {ui.errors?.delete ? (
+        <p className="rp-error" role="alert">
+          {ui.errors.delete}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -668,6 +681,18 @@ export function ReportPage({ jobId }: { jobId: string }) {
 
   const actions: ReportActions = {
     onCopy: copyText,
+    onDelete: async () => {
+      const d = dataRef.current;
+      const host = d?.job.host ?? 'this site';
+      if (!window.confirm(`Delete this report for ${host}?\n\nThe scan and its evidence are removed for good. Your decisions and to-do progress for the site are kept.`)) return;
+      setUi((u) => ({ ...u, deleting: true }));
+      try {
+        await api.remove(jobId);
+        window.location.hash = '';
+      } catch (e) {
+        setUi((u) => ({ ...u, deleting: false, errors: { ...u.errors, delete: `Could not delete the report: ${e instanceof Error ? e.message : String(e)}` } }));
+      }
+    },
     onCancel: async () => {
       try {
         await api.cancel(jobId);
