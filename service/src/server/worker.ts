@@ -265,6 +265,26 @@ export function createWorkerApp(config: WorkerConfig): WorkerService {
     res.type('application/x-ndjson').send(out.length ? out.join('\n') + '\n' : '');
   });
 
+  // The collector's owner report as it stands (rewritten after each visit); the primary shows it live.
+  app.get('/internal/jobs/:jobId/report', async (req, res) => {
+    const job = need(req, res);
+    if (!job) return;
+    const runDir = await singleRunDir(job.dir);
+    let body: string | undefined;
+    if (runDir) {
+      try {
+        body = await fsp.readFile(path.join(runDir, 'owner-report.json'), 'utf8');
+      } catch {
+        /* not written yet */
+      }
+    }
+    if (body === undefined) {
+      res.status(404).json({ error: 'no report yet' });
+      return;
+    }
+    res.type('application/json').send(body);
+  });
+
   app.get('/internal/jobs/:jobId/run.tar', async (req, res) => {
     const job = need(req, res);
     if (!job) return;

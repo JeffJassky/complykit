@@ -123,6 +123,17 @@ export async function jobReport(job: JobDetail, deps: { jobDir: string; workspac
   const consent = job.checks.includes('consent');
   const domain = deps.workspaces.domain(new URL(job.url).hostname);
   const report = consent ? await readOwnerReport(await ownerReportFile(job, deps.jobDir)) : null;
+  // Per-law live reports (collectors'), only while the job is not done: a finished job's live files are gone and its final report covers every location.
+  const laws =
+    job.metrics.laws?.length
+      ? await Promise.all(
+          job.metrics.laws.map(async (progress) => ({
+            id: progress.id,
+            progress,
+            report: job.status === 'done' ? null : await readOwnerReport(path.join(deps.jobDir, 'consent', 'live', `${progress.id}.json`)),
+          })),
+        )
+      : undefined;
   const ws = await deps.workspaces.get(domain);
   const tasks = mergeTaskStatus(storedTasks(ws), ws).sort((a, b) => a.order - b.order);
   const runId = job.result?.consent?.runId;
@@ -143,6 +154,7 @@ export async function jobReport(job: JobDetail, deps: { jobDir: string; workspac
     job: toSummary(job),
     domain,
     report,
+    ...(laws ? { laws } : {}),
     todo: {
       state,
       tasks: ready ? tasks : [],
