@@ -548,7 +548,7 @@ const OPT_OUT_ACTION = /opt[- ]?out|do not (sell|share)|turn off|disable (sale|s
 // A refusal outranks a save: "Save preferences" saves whatever the toggles say, and under US implied consent they start on.
 const REFUSAL = /reject all|decline( all| optional)?|refuse|deny/i;
 // Never the control that grants consent, whatever else its label says.
-const GRANT = /\baccept\b|allow all|agree/i;
+const GRANT = /\baccept\b|allow all|\bagree\b/i;
 const PERSONAL_FIELD = /email|e-mail|name|phone|address|zip|postal|account|order/i;
 
 export interface OptOutWalk {

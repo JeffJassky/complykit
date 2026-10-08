@@ -352,7 +352,7 @@ export function behaviorCellsFrom(ev: Pick<TrackingEvaluation, 'locations' | 'in
             out.push({
               ...cell,
               status: 'mismatch',
-              reason: `${requests} data request(s)${activeStores.length ? ` and ${activeStores.length} cookie / storage item(s)` : ''} ${when}, where ${regime} rules expect it off${wiretap && regime !== 'opt-in' && p.categories.some(isWiretapCategory) ? ' — wiretap-state posture: expected off until the visitor accepts, because firing before a choice is what wiretap suits are built on' : ''}`,
+              reason: `${requests} data request(s)${activeStores.length ? ` and ${activeStores.length} cookie / storage item(s)` : ''} ${when}, ${wiretap && regime !== 'opt-in' && p.categories.some(isWiretapCategory) && !CHOICE_SCENARIOS.has(sc.scenario) && sc.scenario !== 'gpc' ? 'before any choice, in a wiretap-litigation state where it is expected off until the visitor accepts (firing before a choice is what wiretap suits are built on)' : `where ${regime} rules expect it off`}`,
             });
           }
         }
