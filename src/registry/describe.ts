@@ -132,9 +132,9 @@ export function describeLocationRules(codes: readonly string[], onDate: string, 
   };
 }
 
-// complykit's posture for CA/FL/PA, not a statutory duty: the exposure is litigation, so the tools the suits target are expected off before a choice.
+// complykit's posture for the wiretap states (wiretap.ts), not a statutory duty: the exposure is litigation, so the tools the suits target are expected off before a choice.
 const WIRETAP_MUST =
-  'Ad pixels, session recording, chat and identity-resolution tools are held until the visitor accepts. Firing them before a choice is the pattern wiretap suits (CA Penal Code §631/§638.51; Fla. Stat. §934.03; 18 Pa. C.S. §5703) are built on — complykit’s posture, litigation exposure rather than a statutory duty.';
+  'Ad pixels, session recording, chat and identity-resolution tools are held until the visitor accepts. Firing them before a choice is the pattern wiretap suits (CA Penal Code §631/§638.51; Fla. Stat. §934.03; 18 Pa. C.S. §5703; Md. Cts. & Jud. Proc. §10-402; 720 ILCS 5/14-2) are built on — complykit’s posture, litigation exposure rather than a statutory duty.';
 
 function describeBase(codes: readonly string[], onDate: string, opts: DescribeLocationOptions): LocationRules {
   const verified = opts.verified ?? codes.length > 0;
