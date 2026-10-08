@@ -47,6 +47,31 @@ table below is generated from the registry for 2026-10-08.
 | US (no state) | Opt-out (US, state not verified) | none |
 | BR | No rules encoded (Brazil) | none |
 
+## Scanning from several places
+
+A site decides what to show from the visitor's IP address, so each location is scanned
+from a machine that is really there. The command line does this in two steps:
+
+```bash
+# on a machine in Germany
+complykit consent --url https://shop.example/ --locations de --collect-only
+# on the machine that writes the report, with every collected run dir
+complykit consent --url https://shop.example/ --merge ./de-run,./ca-run
+```
+
+`--collect-only` verifies the location, runs the scenarios and writes the evidence plus
+a `collection.json`. That file holds the raw timelines (request bodies, cookie values),
+because the rules need them; treat it as sensitive and delete it after the merge. The
+merged run never contains it. `--merge` runs the rules once, over every location, with
+this machine's knowledge base, and writes the usual run and report.
+
+The hosted service does this for you. Each law checkbox on the scan form maps to one
+place: EU law (Frankfurt), UK law (London), California law (Los Angeles), Texas law
+(Dallas) and US with no state privacy law (Chicago). Each is verified like any other
+location, so a machine whose address geolocates elsewhere is reported as not tested,
+never as the wrong place. Laws with no machine in the right place (Virginia, Colorado
+and others) are not offered.
+
 ## Where the scanner and the consent tool differ, and why
 
 Two cases give different answers in the scanner and the consent tool. Both are on purpose.
