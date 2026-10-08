@@ -516,7 +516,7 @@ export const optOutLink: Rule<readonly ['consent-timeline']> = {
   evidence: ['interaction-log'],
   remediation:
     'Put a clear opt-out link in the header or footer — in California “Do Not Sell or Share My Personal Information” (or “Your Privacy Choices” with the opt-out icon); in other states with a privacy act, a link that plainly offers opting out of targeted advertising and sale. Let it opt out without asking for an email or account; don’t rely on a cookie banner alone.',
-  falsePositives: 'Link and icon detection read visible text and adjacent images/SVGs; a link inside a collapsed menu or an icon drawn in CSS can be missed.',
+  falsePositives: 'Link and icon detection read visible text and adjacent images/SVGs; a link inside a collapsed menu or an icon drawn in CSS can be missed. The icon is checked only in California (11 CCR §7015(b)); other states prescribe no wording or icon.',
   consumes: ['consent-timeline'] as const,
   evaluate(input: { 'consent-timeline': Artifact[] }, ctx: EvalContext): RawFinding[] {
     const kb = ctx.knowledgeBase ?? DEFAULT_KB;

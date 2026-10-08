@@ -40,8 +40,8 @@ table below is generated from the registry for 2026-10-08.
 | DE | Opt-in (EU/EEA) | ePrivacy Directive Art. 5(3), GDPR Art. 13(1)(e), GDPR Art. 4(11), GDPR Art. 7(3) |
 | GB | Opt-in (UK) | Privacy and Electronic Communications (EC Directive) Regulations 2003 reg. 6, UK GDPR Art. 4(11), UK GDPR Art. 7(3) |
 | US-CA | Opt-out, privacy signal honored (California) | 11 CCR §7013, 7015, 7026; 11 CCR §7004(a)(2); 11 CCR §7025(b)–(c); 11 CCR §7025(c)(6); Cal. Penal Code §631(a); Cal. Penal Code §638.51 |
-| US-TX | Opt-out, privacy signal honored (Texas) | State comprehensive privacy acts: right to opt out of targeted advertising and sale, and the clear and conspicuous disclosure of how (e.g. Va. Code §59.1-578(D)); State comprehensive privacy acts: universal opt-out mechanism provisions (e.g. Colo. Rev. Stat. §6-1-1306(1)(a)(IV)) |
-| US-VA | Opt-out (Virginia) | State comprehensive privacy acts: right to opt out of targeted advertising and sale, and the clear and conspicuous disclosure of how (e.g. Va. Code §59.1-578(D)) |
+| US-TX | Opt-out, privacy signal honored (Texas) | State comprehensive privacy acts right to opt out of targeted advertising and sale, and the clear and conspicuous disclosure of how (e.g. Va. Code §59.1-578(D)); State comprehensive privacy acts universal opt-out mechanism provisions (e.g. Colo. Rev. Stat. §6-1-1306(1)(a)(IV)) |
+| US-VA | Opt-out (Virginia) | State comprehensive privacy acts right to opt out of targeted advertising and sale, and the clear and conspicuous disclosure of how (e.g. Va. Code §59.1-578(D)) |
 | US-FL | Opt-out (Florida, no state privacy law in force) | Fla. Stat. §934.03 |
 | US-NY | Opt-out (New York, no state privacy law in force) | none |
 | US (no state) | Opt-out (US, state not verified) | none |

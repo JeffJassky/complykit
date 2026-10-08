@@ -194,7 +194,7 @@ export const TRACKING_REQUIREMENTS: Requirement[] = [
     },
     title: 'Offer a clear and conspicuous way to opt out of targeted advertising and sale (state laws)',
     text:
-      'Every state comprehensive privacy act gives consumers the right to opt out of the processing of their personal data for targeted advertising and of its sale. A controller that does either must clearly and conspicuously disclose that processing and the manner in which a consumer may exercise the right to opt out; several acts (e.g. Connecticut, Texas) require a clear and conspicuous link on the website for that purpose. The wording of the link is not prescribed outside California. Thresholds for coverage differ by state and are not observable from a browser. Paraphrase — see research-consent-law.md §1.4 and plans/location-rules-citations.md.',
+      'The state comprehensive privacy acts give consumers the right to opt out of the processing of their personal data for targeted advertising and of its sale (Iowa lists only the sale opt-out as a right, but still requires disclosing how to opt out of targeted advertising). A controller that does either must clearly and conspicuously disclose that processing and the manner in which a consumer may exercise the right to opt out; several acts (e.g. Connecticut, Texas) require a clear and conspicuous link on the website for that purpose. The wording of the link is not prescribed outside California. Thresholds for coverage differ by state and are not observable from a browser. Paraphrase — see research-consent-law.md §1.4 and plans/location-rules-citations.md.',
     urls: [{ href: 'https://law.lis.virginia.gov/vacode/title59.1/chapter53/' }],
     effective: { from: '2023-01-01' },
     appliesIf: ['us-state-privacy-covered'],

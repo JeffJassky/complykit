@@ -90,13 +90,15 @@ function lawsFor(codes: readonly string[], onDate: string): LocationRuleLaw[] {
 
 const OPT_IN_MUST = [
   'Nothing non-essential runs until the visitor agrees: no analytics, advertising or social scripts, cookies or storage before a choice (ePrivacy Art. 5(3) / PECR reg. 6).',
-  'A banner where rejecting is as easy as accepting — one click each, equal prominence.',
+  'A banner where rejecting is as easy as accepting; regulators expect the reject option on the first screen, as prominent as accept.',
   'Proof of consent, and a way to withdraw it that is as easy as giving it (GDPR Art. 7(3)).',
 ];
 
 const OPT_OUT_SIGNAL_MUST = (state: string, ca: boolean): string[] => [
   'Tracking may run by default; the visitor can opt out of the sale or sharing of their data and of targeted advertising.',
-  'The browser’s opt-out signal (Global Privacy Control) must be treated as that opt-out — on the first page, with no popup.',
+  ca
+    ? 'The browser’s opt-out signal (Global Privacy Control) must be treated as that opt-out — on the first page, with no popup (CCPA regulations §7025).'
+    : `The browser’s opt-out signal (Global Privacy Control) must be treated as that opt-out (${state} law).`,
   ca
     ? 'A “Do Not Sell or Share My Personal Information” link, or “Your Privacy Choices” with the opt-out icon, in the header or footer; opting out may not demand an account or extra information; since 2026 the site must show that the signal was honored.'
     : `A clear and conspicuous way to opt out, reachable from the site, that works without an account or extra information (${state} law).`,

@@ -65,12 +65,12 @@ Vocabulary: the report says "rules", "model", "compared against"; never "complia
 | Role | Who | Where |
 |---|---|---|
 | Contract + tests | Fable | commit 1 on `location-rules` |
-| Implementation | Sonnet, one agent per PR, worktree-isolated | PRs A–D, branches `location-rules/<letter>` |
+| Implementation | Sonnet, one agent per PR, worktree-isolated | PRs A–D, branches `lr-<letter>` |
 | Per-PR gate | Sonnet reviewer, one pass, checklist below | each PR |
 | Area review | Fable, three passes | integrated `location-rules` |
 
 Worktrees live under `packages/` (foundry ignores `packages/*/`):
-`git worktree add ../ck-wt-<letter> -b location-rules/<letter> location-rules`, then
+`git worktree add ../ck-wt-<letter> -b lr-<letter> location-rules`, then
 `ln -s ../complykit/node_modules node_modules`. Tests: `COMPLYKIT_BROWSER_CHANNEL=chrome
 npx vitest run <files>`. Typecheck: `npx tsc --noEmit`. Boundaries: `npm run boundaries`.
 
