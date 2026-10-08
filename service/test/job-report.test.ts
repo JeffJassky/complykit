@@ -53,6 +53,10 @@ describe('GET /api/jobs/:id/report', () => {
     // autoChecklist is off in this service: nothing made the list.
     expect(done.todo.state).toBe('none');
     expect(done.technicalReportUrl).toMatch(/^\/reports\/.+\/consent-report\.html$/);
+    expect(done.jsonReportUrl).toBe(done.technicalReportUrl!.replace(/\.html$/, '.json'));
+    expect(done.downloadUrl).toBe(`/api/jobs/${id}/download`);
+    const json = await request(s.app).get(done.jsonReportUrl!);
+    expect(json.status).toBe(200);
     expect(done.updating).toBe(false);
   });
 

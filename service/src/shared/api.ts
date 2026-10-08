@@ -649,6 +649,10 @@ export interface JobReportResponse {
   /** The full HTML report (legal scope, evidence, limits): "Technical details". */
   technicalReportUrl?: string;
   accessibilityReportUrl?: string;
+  /** The consent report as data (consent-report.json beside the HTML report). */
+  jsonReportUrl?: string;
+  /** Zip of everything for this job (reports, evidence, run data). */
+  downloadUrl?: string;
   /** The site's install bundle (once a checklist exists). */
   installZipUrl?: string;
 }

@@ -23,6 +23,15 @@ const RUN_ID_RE = /^[0-9TZ:.-]{10,40}$/;
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
+/** consent-report.json beside the finished job's HTML report (older jobs have it too). */
+async function jsonReportExists(job: JobDetail, jobDir: string): Promise<boolean> {
+  const runId = job.result?.consent?.runId;
+  if (!runId || !RUN_ID_RE.test(runId) || !job.result?.consent?.reportUrl.endsWith('.html')) return false;
+  return fsp
+    .access(path.join(jobDir, 'consent', '.comply', 'runs', runId, 'consent-report.json'))
+    .then(() => true, () => false);
+}
+
 /** Where the job's owner report is: beside its consent report once done; while running, in its (only) run directory. */
 export async function ownerReportFile(job: JobDetail, jobDir: string): Promise<string | undefined> {
   const runs = path.join(jobDir, 'consent', '.comply', 'runs');
@@ -145,6 +154,8 @@ export async function jobReport(job: JobDetail, deps: { jobDir: string; workspac
     updating: rerenderRunning(job.id),
     ...(job.result?.consent?.reportUrl ? { technicalReportUrl: job.result.consent.reportUrl } : {}),
     ...(job.result?.accessibility?.reportUrl ? { accessibilityReportUrl: job.result.accessibility.reportUrl } : {}),
+    ...((await jsonReportExists(job, deps.jobDir)) && job.result?.consent ? { jsonReportUrl: job.result.consent.reportUrl.replace(/\.html$/, '.json') } : {}),
+    ...(job.result?.downloadUrl ? { downloadUrl: job.result.downloadUrl } : {}),
     ...(ready ? { installZipUrl: `/api/sites/${encodeURIComponent(domain)}/install.zip` } : {}),
   };
 }

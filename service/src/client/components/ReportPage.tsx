@@ -629,6 +629,16 @@ export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: Job
             Accessibility report
           </a>
         ) : null}
+        {data.jsonReportUrl ? (
+          <a href={data.jsonReportUrl} download={`complykit-${data.job.host}.json`}>
+            Download JSON
+          </a>
+        ) : null}
+        {data.downloadUrl ? (
+          <a href={data.downloadUrl} download>
+            Download everything (.zip)
+          </a>
+        ) : null}
         {actions.onDelete ? (
           <button type="button" className="rp-delete" disabled={ui.deleting} onClick={actions.onDelete}>
             {ui.deleting ? 'Deleting…' : 'Delete this report'}
