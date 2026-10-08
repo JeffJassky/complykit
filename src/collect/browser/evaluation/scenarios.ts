@@ -431,7 +431,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
 
   const { context, cap, markupWatch, driver } = await step('setup', async () => {
     const context = await browser.newContext({
-      ...contextOptionsFor(spec),
+      ...contextOptionsFor(spec, browser.version()),
       viewport: { width: 1280, height: 800 },
       deviceScaleFactor: 1,
       serviceWorkers: 'allow',

@@ -67,12 +67,27 @@ const US_TZ: Record<string, string> = {
 };
 
 /** Browser-context settings that make a visit look like it comes from `spec`. */
-export function contextOptionsFor(spec: LocationSpec): BrowserContextOptions {
+/**
+ * Launch flags that make the scan browser look like a visitor's: without them
+ * Chromium reports navigator.webdriver = true, and consent tools that hide
+ * from bots (CookieConsent v3's default hideFromBots, among others) never
+ * show their banner, so the scan judges a site its visitors never see.
+ */
+export const VISITOR_LAUNCH_ARGS = ['--disable-blink-features=AutomationControlled'];
+
+/** A desktop Chrome user agent for this browser version (headless Chromium says "HeadlessChrome"). */
+export function visitorUserAgent(browserVersion: string): string {
+  const major = /^(\d+)/.exec(browserVersion)?.[1] ?? '130';
+  return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+}
+
+export function contextOptionsFor(spec: LocationSpec, browserVersion?: string): BrowserContextOptions {
   const cc = spec.country?.toUpperCase();
   const d = cc ? DEFAULTS[cc] : undefined;
   const timezoneId = spec.timezone ?? (cc === 'US' && spec.region ? US_TZ[spec.region.toUpperCase()] : undefined) ?? d?.timezone;
   const locale = spec.locale ?? d?.locale;
   return {
+    ...(browserVersion ? { userAgent: visitorUserAgent(browserVersion) } : {}),
     ...(spec.proxy ? { proxy: { server: spec.proxy.server, username: spec.proxy.username, password: spec.proxy.password, bypass: spec.proxy.bypass } } : {}),
     ...(timezoneId ? { timezoneId } : {}),
     ...(locale ? { locale } : {}),
@@ -81,7 +96,7 @@ export function contextOptionsFor(spec: LocationSpec): BrowserContextOptions {
 
 /** Look the exit up through the location's own proxy, from inside a browser. */
 export async function lookupExit(browser: Browser, spec: LocationSpec, sources: GeoSource[], timeoutMs = 15000): Promise<GeoSourceResult[]> {
-  const context = await browser.newContext(contextOptionsFor(spec));
+  const context = await browser.newContext(contextOptionsFor(spec, browser.version()));
   try {
     const page = await context.newPage();
     await page.goto('about:blank').catch(() => {});

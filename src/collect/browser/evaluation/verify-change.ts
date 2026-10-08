@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Browser, BrowserContextOptions, Page, Request } from 'playwright';
 import type { LocationSpec, SpotCheckObservation } from '../../../record/index.js';
-import { contextOptionsFor } from './location.js';
+import { contextOptionsFor, VISITOR_LAUNCH_ARGS } from './location.js';
 import { fetchContainers } from './containers.js';
 import { CK, readComplykit } from './complykit.js';
 
@@ -95,9 +95,9 @@ const isHtml = (type: string | undefined): boolean => !type || /html|xml/i.test(
 export async function openVerifyBrowser(opts: VerifyBrowserOptions = {}): Promise<VerifyBrowser> {
   const { chromium } = await import('playwright');
   const channel = process.env.COMPLYKIT_BROWSER_CHANNEL || undefined;
-  const browser: Browser = await chromium.launch({ headless: process.env.COMPLYKIT_HEADED !== '1', args: opts.launchArgs ?? [], ...(channel ? { channel } : {}) });
+  const browser: Browser = await chromium.launch({ headless: process.env.COMPLYKIT_HEADED !== '1', args: [...VISITOR_LAUNCH_ARGS, ...(opts.launchArgs ?? [])], ...(channel ? { channel } : {}) });
   const location: LocationSpec = opts.location ?? { id: 'local', label: 'This machine' };
-  const contextOptions = (): BrowserContextOptions => ({ ...contextOptionsFor(location), viewport: VIEWPORT, deviceScaleFactor: 1 });
+  const contextOptions = (): BrowserContextOptions => ({ ...contextOptionsFor(location, browser.version()), viewport: VIEWPORT, deviceScaleFactor: 1 });
 
   return {
     version: browser.version(),

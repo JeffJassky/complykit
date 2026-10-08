@@ -82,7 +82,7 @@ export async function fetchContainers(
     const spec = specs.get(locationId) ?? { id: locationId };
     let context: Awaited<ReturnType<Browser['newContext']>> | undefined;
     try {
-      context = await browser.newContext(contextOptionsFor(spec));
+      context = await browser.newContext(contextOptionsFor(spec, browser.version()));
     } catch (err) {
       for (const d of items) out.push({ ...d, fetchedAt: new Date().toISOString(), status: 'error', error: `could not open a context: ${msg(err)}` });
       continue;

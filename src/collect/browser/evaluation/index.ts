@@ -19,7 +19,7 @@ import {
 } from '../../../record/index.js';
 import { runScenario, writeTimelineEvidence, type Markers } from './scenarios.js';
 import { resolveJourney, type JourneyOptions } from './journey.js';
-import { lookupExit, DEFAULT_GEO_SOURCES, type GeoSource } from './location.js';
+import { lookupExit, DEFAULT_GEO_SOURCES, VISITOR_LAUNCH_ARGS, type GeoSource } from './location.js';
 import { autoconsentVersion } from './autoconsent.js';
 import { discoverContainers, fetchContainers } from './containers.js';
 import { transformResource, type LocalCopy } from './local-copy.js';
@@ -187,7 +187,7 @@ async function launch(args: string[] = []): Promise<Browser> {
   // Playwright's own Chromium is not available (no download). The evidence then
   // comes from that browser; the trace line names it.
   const channel = process.env.COMPLYKIT_BROWSER_CHANNEL || undefined;
-  return chromium.launch({ headless: process.env.COMPLYKIT_HEADED !== '1', args, ...(channel ? { channel } : {}) });
+  return chromium.launch({ headless: process.env.COMPLYKIT_HEADED !== '1', args: [...VISITOR_LAUNCH_ARGS, ...args], ...(channel ? { channel } : {}) });
 }
 
 async function pool<T>(items: T[], n: number, fn: (item: T) => Promise<void>): Promise<void> {
