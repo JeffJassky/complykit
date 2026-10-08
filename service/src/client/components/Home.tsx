@@ -3,6 +3,9 @@ import { parseUrlList, type JobSummary, type SiteSummary } from '../../shared/ap
 import { api } from '../lib/api';
 import { formatRelative } from '../lib/format';
 import { reportHref } from '../lib/useHashView';
+import { readStoredLaws, scanBlockedReason, scanRequestOf, writeStoredLaws, type ScanRequest } from '../lib/laws';
+import type { LawId } from '../../shared/laws';
+import { AuthorizedBox, LawPicker } from './Laws';
 
 // The home page (plans/simple-report.md): a URL and a Scan button (checks and
 // scan options tucked behind "Options"), then your sites with their latest
@@ -43,18 +46,26 @@ export function siteStatus(row: SiteRow, now: number): { text: string; tone: 'ru
   return { text: `Scanned ${when}`, tone: 'done' };
 }
 
-export function HomeView({ rows, now, loaded, onSubmit, busy, error }: { rows: SiteRow[]; now: number; loaded: boolean; onSubmit: (req: { url: string; consent: boolean; accessibility: boolean; quick: boolean; slowRepeat: boolean }) => void; busy?: boolean; error?: string | null }) {
+export function HomeView({ rows, now, loaded, onSubmit, busy, error }: { rows: SiteRow[]; now: number; loaded: boolean; onSubmit: (req: ScanRequest) => void; busy?: boolean; error?: string | null }) {
   const id = useId();
   const [url, setUrl] = useState('');
   const [consent, setConsent] = useState(true);
   const [a11y, setA11y] = useState(false);
   const [quick, setQuick] = useState(false);
   const [slowRepeat, setSlowRepeat] = useState(false);
+  const [laws, setLaws] = useState<LawId[]>(readStoredLaws);
+  // Not remembered: unchecked on every load.
+  const [authorized, setAuthorized] = useState(false);
   const valid = useMemo(() => parseUrlList(url).urls.length > 0, [url]);
+  const blocked = scanBlockedReason({ consent, accessibility: a11y, laws, authorized });
+  const changeLaws = (next: LawId[]) => {
+    setLaws(next);
+    writeStoredLaws(next);
+  };
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!valid || busy || (!consent && !a11y)) return;
-    onSubmit({ url, consent, accessibility: a11y, quick, slowRepeat: consent && !quick && slowRepeat });
+    if (!valid || busy || blocked) return;
+    onSubmit(scanRequestOf({ url, consent, accessibility: a11y, quick, slowRepeat, laws, authorized }));
   };
   return (
     <div className="home">
@@ -67,7 +78,7 @@ export function HomeView({ rows, now, loaded, onSubmit, busy, error }: { rows: S
             Website address
           </label>
           <input id={`${id}-url`} className="home-url" type="text" inputMode="url" placeholder="example.com" value={url} onChange={(e) => setUrl(e.target.value)} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
-          <button type="submit" className="btn btn-primary btn-lg" disabled={!valid || busy || (!consent && !a11y)}>
+          <button type="submit" className="btn btn-primary btn-lg" disabled={!valid || busy || blocked !== null}>
             {busy ? 'Starting…' : 'Scan'}
           </button>
         </div>
@@ -85,8 +96,14 @@ export function HomeView({ rows, now, loaded, onSubmit, busy, error }: { rows: S
           <label className="home-option">
             <input type="checkbox" checked={slowRepeat && consent && !quick} disabled={!consent || quick} onChange={(e) => setSlowRepeat(e.target.checked)} /> Also repeat on a slow connection (about 3× longer)
           </label>
-          {!consent && !a11y ? <p className="rp-error">Choose at least one check.</p> : null}
+          <LawPicker selected={laws} onChange={changeLaws} disabled={!consent} />
         </details>
+        {consent ? <AuthorizedBox checked={authorized} onChange={setAuthorized} /> : null}
+        {blocked ? (
+          <p className="hint" data-testid="scan-blocked">
+            {blocked}
+          </p>
+        ) : null}
         {error ? (
           <p className="rp-error" role="alert">
             Couldn’t start the scan: {error}
@@ -128,11 +145,11 @@ export function Home({ jobs, sites, loaded, now }: { jobs: JobSummary[]; sites: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rows = useMemo(() => siteRows(jobs, sites), [jobs, sites]);
-  const onSubmit = async (req: { url: string; consent: boolean; accessibility: boolean; quick: boolean; slowRepeat: boolean }) => {
+  const onSubmit = async (req: ScanRequest) => {
     setBusy(true);
     setError(null);
     try {
-      const res = await api.createBatch({ urls: req.url, checks: { consent: req.consent, accessibility: req.accessibility }, quick: req.quick, slowRepeat: req.slowRepeat });
+      const res = await api.createBatch({ urls: req.url, checks: { consent: req.consent, accessibility: req.accessibility }, quick: req.quick, slowRepeat: req.slowRepeat, ...(req.laws ? { laws: req.laws, authorized: req.authorized } : {}) });
       const first = res.jobs[0];
       if (first) window.location.hash = reportHref(first.id);
       else setError(res.rejected.length ? `not a website address: ${res.rejected.join(', ')}` : 'nothing to scan');

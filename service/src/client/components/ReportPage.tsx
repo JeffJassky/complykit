@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { JobReportResponse, OwnerCell, OwnerToolActivity, OwnerToolRow, RemediationTask } from '../../shared/api';
+import type { LawId } from '../../shared/laws';
 import { api } from '../lib/api';
+import { JobLaws, LawProgress, RescanButton } from './Laws';
 import { formatClock, jobDuration } from '../lib/format';
 import { openDecisions, STATUS_LABEL as TASK_STATUS_LABEL, TASK_CHANGE_PREFIX } from '../lib/checklist';
 import { copyText, useReviewer } from '../lib/useKb';
@@ -31,7 +33,7 @@ export interface ReportActions {
   onClassify?: (classKey: string, purpose: string) => void;
   onVerify?: (task: RemediationTask) => void;
   onMarkDone?: (task: RemediationTask) => void;
-  onRescan?: () => void;
+  onRescan?: (extra?: { laws?: LawId[]; authorized?: true }) => void;
   /** Make the list when none was made (or making it failed). */
   onMakeList?: () => void;
   onCopy?: (text: string) => Promise<boolean>;
@@ -80,6 +82,7 @@ export function ScanStatus({ data, now, onCancel }: { data: JobReportResponse; n
       <div className="rp-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Scan progress">
         <span style={{ width: `${pct}%` }} />
       </div>
+      <LawProgress job={job} report={report} />
       <dl className="rp-facts">
         <div>
           <dt>Visits</dt>
@@ -643,9 +646,9 @@ export function TodoList({ data, ui = {}, actions = {} }: { data: JobReportRespo
             </div>
             <p className="muted">{canRescan ? 'Everything above is done. A new scan shows how your site behaves now.' : scanning ? 'After this scan, once everything above is done.' : 'Opens up when everything above is done.'}</p>
             <div className="rp-todo-actions">
-              <button type="button" className="btn btn-sm btn-primary" disabled={!canRescan || ui.rescanning || !actions.onRescan} onClick={actions.onRescan}>
+              <RescanButton className="btn btn-sm btn-primary" laws={data.job.laws} busy={ui.rescanning} disabled={!canRescan} onRescan={actions.onRescan}>
                 {ui.rescanning ? 'Starting…' : 'Run the final scan'}
-              </button>
+              </RescanButton>
             </div>
             {ui.errors?.rescan ? (
               <p className="rp-error" role="alert">
@@ -671,9 +674,9 @@ export function Unreachable({ data, ui, actions }: { data: JobReportResponse; ui
       </p>
       {reason ? <p className="muted">{reason.charAt(0).toUpperCase() + reason.slice(1)}.</p> : null}
       {actions.onRescan ? (
-        <button type="button" className="btn btn-sm btn-secondary" disabled={ui.rescanning} onClick={actions.onRescan}>
+        <RescanButton className="btn btn-sm btn-secondary" laws={data.job.laws} busy={ui.rescanning} onRescan={actions.onRescan}>
           {ui.rescanning ? 'Starting…' : 'Scan again'}
-        </button>
+        </RescanButton>
       ) : null}
     </section>
   );
@@ -691,6 +694,7 @@ export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: Job
           <a href="#">← Home</a>
         </p>
         <h1 className="rp-h1">{job.host}</h1>
+        <JobLaws job={job} />
       </header>
       <ScanStatus data={data} now={now} onCancel={actions.onCancel} />
       {job.status === 'failed' || job.status === 'cancelled' ? (
@@ -699,9 +703,9 @@ export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: Job
             <strong>{job.status === 'failed' ? 'The scan didn’t finish.' : 'The scan was cancelled.'}</strong> {job.error ? <span className="muted">{job.error.split('\n')[0]}</span> : null}
           </p>
           {actions.onRescan && consent ? (
-            <button type="button" className="btn btn-sm btn-secondary" disabled={ui.rescanning} onClick={actions.onRescan}>
+            <RescanButton className="btn btn-sm btn-secondary" laws={job.laws} busy={ui.rescanning} onRescan={actions.onRescan}>
               Scan again
-            </button>
+            </RescanButton>
           ) : null}
         </div>
       ) : null}
@@ -850,13 +854,13 @@ export function ReportPage({ jobId }: { jobId: string }) {
         setUi((u) => ({ ...u, marking: undefined }));
       }
     },
-    onRescan: async () => {
+    onRescan: async (extra) => {
       const d = dataRef.current;
       if (!d) return;
       clear('rescan');
       setUi((u) => ({ ...u, rescanning: true }));
       try {
-        const res = await api.rescan(d.domain);
+        const res = await api.rescan(d.domain, extra?.laws ? { laws: extra.laws, authorized: extra.authorized } : {});
         window.location.hash = reportHref(res.job.id);
       } catch (e) {
         err('rescan', e);
