@@ -100,7 +100,7 @@ function domainList(raw: string | undefined): string[] | undefined {
   return list.length ? [...new Set(list as string[])] : undefined;
 }
 
-function readVersion(): string {
+export function readVersion(): string {
   // complykit's version is the interesting one; the service is private 0.0.0.
   for (const p of [path.join(SERVICE_DIR, '..', 'package.json'), path.join(SERVICE_DIR, 'package.json')]) {
     try {

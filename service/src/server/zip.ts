@@ -14,7 +14,7 @@ import { ZipArchive } from 'archiver';
 import type { Response } from 'express';
 import type { JobDetail } from '../shared/api.js';
 
-async function walk(dir: string, rel = ''): Promise<string[]> {
+export async function walk(dir: string, rel = ''): Promise<string[]> {
   const out: string[] = [];
   let entries;
   try {

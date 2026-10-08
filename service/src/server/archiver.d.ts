@@ -23,6 +23,10 @@ declare module 'archiver' {
     pointer(): number;
   }
 
+  export class TarArchive extends Archiver {
+    constructor(options?: ArchiverOptions & { gzip?: boolean });
+  }
+
   export class ZipArchive extends Archiver {
     constructor(options?: ArchiverOptions);
   }
