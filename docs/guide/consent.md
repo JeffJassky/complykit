@@ -67,6 +67,8 @@ word "compliant" never appears in report output; a test asserts it.
    location. Like reject, it is not applicable (one landing) where no banner
    is shown. `--quick` runs a reduced set with shorter visits (US locations
    keep accept).
+   Which rules each location is compared against, and where the scanner and the
+   consent tool differ, is in [Visitor location and regime](./location.md#what-the-scanner-compares-against-per-location).
 4. **Banner driving** uses `@duckduckgo/autoconsent` (rules for hundreds of
    consent tools) with its "hide the banner" rules off — hiding is not
    rejecting — and a heuristic fallback. Every click is confirmed by reading
