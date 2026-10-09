@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "asOf": "2026-10-08",
+  "asOf": "2026-10-09",
   "posture": {
     "title": "How complykit decides what to expect",
     "principles": [
@@ -66,7 +66,7 @@
   ],
   "wiretap": {
     "summary": "In these states, all-party-consent wiretap laws are used to sue websites whose trackers send what a visitor does to a third party before the visitor agrees. The privacy statute may be opt-out, but prior consent is the defence in court — so complykit expects the targeted tools off until the visitor accepts.",
-    "holds": "Advertising pixels, session recording, chat and identity-resolution tools stay off until the visitor accepts. Courts accept only consent given before the tracking starts; a footer policy link or “by using this site you agree” is not consent, and an opt-out banner never provides it. Cookieless “consent-denied” pings before a choice or after a refusal (Google Consent Mode “advanced”) still carry the IP address and the page address; no court has ruled on them, so they are reported as needing your decision, as in the EU and UK. You answer once for the site: accept them, or hold them until consent (Consent Mode “basic”), and later scans follow that answer.",
+    "holds": "Advertising pixels, analytics, session recording, chat and identity-resolution tools stay off until the visitor accepts. Analytics is included because pen-register suits under CIPA §638.51 name analytics scripts that send the IP address and the page address. Courts accept only consent given before the tracking starts; a footer policy link or “by using this site you agree” is not consent, and an opt-out banner never provides it. Cookieless “consent-denied” pings before a choice or after a refusal (Google Consent Mode “advanced”) still carry the IP address and the page address; no court has ruled on them, so they are reported as needing your decision, as in the EU and UK. You answer once for the site: accept them, or hold them until consent (Consent Mode “basic”), and later scans follow that answer.",
     "states": [
       "us-ca",
       "us-fl",

@@ -153,12 +153,15 @@ export const CONTEXT_CATEGORIES: ReadonlySet<PartyCategory> = new Set<PartyCateg
   'error-monitoring',
 ]);
 
-/** Categories courts treat as wiretap-relevant (contents or identity). */
+/** Categories courts treat as wiretap-relevant (contents or identity). Analytics joined 2026-10-09:
+ *  CIPA §638.51 "pen register" suits name analytics scripts that send the IP address and page
+ *  address, and the posture accepts no litigation exposure (plans/research-consent-law.md). */
 export const WIRETAP_CATEGORIES: ReadonlySet<PartyCategory> = new Set<PartyCategory>([
   'session-recording',
   'chat',
   'identity-resolution',
   'advertising',
+  'analytics',
 ]);
 
 /** Sale/share under US state laws: cross-context behavioral advertising. */

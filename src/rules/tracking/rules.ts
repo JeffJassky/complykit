@@ -584,7 +584,7 @@ export const wiretapExposure: Rule<readonly ['consent-timeline']> = {
   detects: 'presence',
   evidence: ['network-request', 'interaction-log'],
   remediation:
-    'For visitors in all-party-consent states, load session recording, chat and identity-resolution scripts — and ad pixels that receive page addresses — only after an opt-in the visitor saw first. Mask form fields in session recorders.',
+    'For visitors in all-party-consent states, load session recording, chat, identity-resolution and analytics scripts — and ad pixels that receive page addresses — only after an opt-in the visitor saw first. Mask form fields in session recorders.',
   falsePositives:
     'Exposure, not a violation: it is the evidence plaintiffs’ firms use (third-party data before any interaction, from the state, with the contents of what was sent). Whether a claim succeeds depends on courts that are split; §638.51 is volatile (SB 690).',
   consumes: ['consent-timeline'] as const,

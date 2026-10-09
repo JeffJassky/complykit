@@ -79,8 +79,13 @@ describe('compareCookieBehavior: wiretap posture (runs inside saved HTML, so it 
     expect(cmp('browse', 'opt-out-signal', true, ['session-recording', 'analytics']).status).toBe('mismatch');
   });
 
-  it('analytics alone is not a wiretap category: unchanged', () => {
-    expect(cmp('do-nothing', 'opt-out-signal', true, ['analytics']).status).toBe('match');
+  it('analytics is held too (2026-10-09: §638.51 suits name analytics scripts); accepting analytics alone releases it, and nothing else', () => {
+    expect(cmp('do-nothing', 'opt-out-signal', true, ['analytics']).status).toBe('mismatch');
+    expect(cmp('partial', 'opt-out-signal', true, ['analytics']).status).toBe('match');
+    expect(cmp('partial', 'opt-out-signal', true, ['advertising']).status).toBe('mismatch');
+    expect(cmp('do-nothing', 'opt-out-signal', false, ['analytics']).status).toBe('match');
+    // GA4 in Consent Mode before a choice: cookieless pings, the site's one decision.
+    expect(cmp('do-nothing', 'opt-out-signal', true, ['analytics'], { limitedOnly: true }).status).toBe('review');
   });
 
   it('limited-only pings (Consent Mode cookieless, Meta LDU) before a choice need a decision, as in the EU/UK (2026-10-08: no case law; they carry IP and page address); after an opt-out they are the expected restricted mode', () => {
@@ -117,10 +122,10 @@ describe('behaviorCellsFrom: wiretap posture in the compatibility expectation', 
     expect(c[0].reason).toMatch(/wiretap/i);
   });
 
-  it('Florida too; Texas and analytics in California are unchanged', () => {
+  it('Florida too, and analytics in California; Texas is unchanged', () => {
     expect(cells(['us', 'us-fl'], 'meta.pixel', ['advertising'])[0].status).toBe('mismatch');
     expect(cells(['us', 'us-tx'], 'meta.pixel', ['advertising'])[0].status).toBe('no-mismatch-observed');
-    expect(cells(['us', 'us-ca'], 'google.analytics', ['analytics'])[0].status).toBe('no-mismatch-observed');
+    expect(cells(['us', 'us-ca'], 'google.analytics', ['analytics'])[0].status).toBe('mismatch');
   });
 });
 

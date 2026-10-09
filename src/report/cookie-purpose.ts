@@ -41,7 +41,7 @@ export interface ComparisonFacts {
   /** Absent in reports saved before regimes existed: treated as 'opt-in', the old behavior. */
   regime?: PrivacyRegime;
   regimeLabel?: string;
-  /** The location carries wiretap-litigation exposure (CA, FL, PA): ad, recording, chat and identity tools are expected off until the visitor accepts. Absent in reports saved before this posture: today's behavior. */
+  /** The location carries wiretap-litigation exposure (CA, FL, PA): ad, analytics, recording, chat and identity tools are expected off until the visitor accepts. Absent in reports saved before this posture: today's behavior. */
   wiretap?: boolean;
   /** The site's decision on consent-denied pings where they would need one (workspace `decision:limited-pings`): 'allow' accepts them, 'hold' expects nothing until the visitor accepts. Absent = undecided. */
   limitedPings?: 'allow' | 'hold';
@@ -73,7 +73,7 @@ export function compareCookieBehavior(facts: ComparisonFacts, decision: PurposeD
   var context = !needsConsent && cats.some(function(c){return CONTEXT.indexOf(c) >= 0;});
   var analyticsOnly = cats.length > 0 && cats.every(function(c){return c === 'analytics' || c === 'performance' || c === 'error-monitoring';});
   // Wiretap posture (CA/FL/PA, opt-out regimes): these categories are held until the visitor accepts. Inline list: this function runs inside saved HTML (registry WIRETAP_CATEGORIES, plus the legacy 'advertisement').
-  var WIRETAP = ['session-recording','chat','identity-resolution','advertising','advertisement'];
+  var WIRETAP = ['session-recording','chat','identity-resolution','advertising','advertisement','analytics'];
   var wiretap = facts.wiretap === true && (regime === 'opt-out-signal' || regime === 'opt-out') && cats.some(function(c){return WIRETAP.indexOf(c) >= 0;});
   var s = facts.scenario;
   var noChoice = ['do-nothing','browse','dismiss','markers'].indexOf(s) >= 0;
@@ -88,6 +88,7 @@ export function compareCookieBehavior(facts: ComparisonFacts, decision: PurposeD
     else { off = true; expected = refused ? 'Off after the visitor refused' : 'Off until the visitor gives permission'; }
   } else if (wiretap) {
     if (s === 'accept') expected = 'May run: the visitor accepted';
+    else if (s === 'partial') { off = !analyticsOnly; expected = off ? 'Off: the visitor accepted analytics only' : 'May run: the visitor accepted analytics'; }
     else { off = true; expected = refused ? 'Off: the site offered a choice and the visitor refused' : optedOut ? 'Off after the visitor opted out' : 'Off until the visitor accepts: firing before a choice is what wiretap suits in this state are built on'; }
   } else if (needsConsent && (regime === 'opt-out-signal' || regime === 'opt-out')) {
     if (refused) { off = true; expected = 'Off: the site offered a choice and the visitor refused'; }
