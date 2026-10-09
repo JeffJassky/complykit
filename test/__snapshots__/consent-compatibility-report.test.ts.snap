@@ -5,19 +5,19 @@ exports[`rendered wording > the change list markdown (snapshot) 1`] = `
 
 From complykit run \`b2-fixture\` of https://www.example-shop.test/, scanned 2026-10-06 10:00 UTC.
 
-> 3 tools are loaded outside your consent tool's reach: Meta Pixel, tracker.test, TikTok Pixel.
+> 3 tools are loaded outside your consent tool's reach: Meta Pixel, TikTok Pixel, tracker.test.
 
 On what this scan saw: 1 page with its HTML inspected, 1 verified location (Germany), logged out, desktop Chromium, 1 run per visitor action. Pages not visited can load other tools.
 
 - Meta Pixel: an element in the HTML the browser fetches before any script runs
-- tracker.test: its loader was not identified
 - TikTok Pixel: loaded by a tag manager without a proven consent setting
+- tracker.test: its loader was not identified
 
 **Consent tool default:** No consent tool’s stored default was read: what runs by default is not established.
 
 **Missing evidence** (each weakens the list, none strengthens it): consent-API calls (gtag consent, fbq consent …) were not recorded: no consent default is known to exist; the consent tool’s stored default was not read.
 
-## 1. Fix first: tools observed running where they should be off (1)
+## 1. Fix first: tools observed running where they should be off (4)
 
 Behavior is the ground truth. These tools sent data or stored something where the location’s rules expect them off, whatever the implementation says. Make the changes listed for them below, then rescan.
 
@@ -27,6 +27,27 @@ Behavior is the ground truth. These tools sent data or stored something where th
 
 - Change id: \`behavior-mismatch:9b8839f60b6e\`
 - Ran where it should be off (Germany · After rejection). Whatever the implementation says, the current setup does not hold Meta Pixel back. Make the changes listed for it below, then rescan — behavior is the ground truth.
+
+<a id="change-behavior-mismatch:d0fd61486da4"></a>
+
+### TikTok Pixel
+
+- Change id: \`behavior-mismatch:d0fd61486da4\`
+- Ran where it should be off (Germany · Before a choice). Whatever the implementation says, the current setup does not hold TikTok Pixel back. Make the changes listed for it below, then rescan — behavior is the ground truth.
+
+<a id="change-behavior-mismatch:30dc78ed5adb"></a>
+
+### Google Ads
+
+- Change id: \`behavior-mismatch:30dc78ed5adb\`
+- Ran where it should be off (Germany · Before a choice). Whatever the implementation says, the current setup does not hold Google Ads back. Make the changes listed for it below, then rescan — behavior is the ground truth.
+
+<a id="change-behavior-mismatch:c376a855d448"></a>
+
+### Google Analytics 4
+
+- Change id: \`behavior-mismatch:c376a855d448\`
+- Ran where it should be off (Germany · Before a choice). Whatever the implementation says, the current setup does not hold Google Analytics 4 back. Make the changes listed for it below, then rescan — behavior is the ground truth.
 
 ## 2. Tags to rewrite (2)
 

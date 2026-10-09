@@ -109,6 +109,19 @@ to paste — the complykit tool sets this; verify after installing" (no snippet)
 config's gtm section or its google-consent-mode adapter covers every expected signal
 (`toolConsentDefault`, the rule `verifyConsentDefault` applies); otherwise the paste steps.
 
+**Fixes only (2026-10-09, after a field run: a clean site got nine to-dos).** The list is
+the fixes for what the scan observed. Behavior is the ground truth in both directions: a
+tool the grid compared in every visit it could — off wherever the location's rules expect it
+off, on only where it may run, no visit unchecked (`CompatibilityRow.heldEverywhere`) — has
+no change in the change list (its verdict and loader stay in its row as the explanation of
+how it loads; it is not counted as outside reach) and so no task. Only a markup leak keeps
+its change: a `<noscript>` pixel fires for visitors without JavaScript, whom the scan cannot
+be. A tool compared in some visits but not others, or only where it may run anyway, keeps
+its changes — fail closed. With no change item at all there is no **install** task and no
+**remove the existing consent tool** task either: the site's own banner works, and the
+decisions (`classify`) are the whole list. The config and snippet are still generated for an
+owner who wants the tool; they are not a task.
+
 **Decisions in the same list (2026-10-07, after a field run: "two task lists").** A tool
 the scan cannot classify used to show up twice: as a classification in the workbench and
 as changes flagged "classify first", grouped apart. Now its decision is a task — `kind:

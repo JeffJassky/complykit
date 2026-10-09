@@ -285,7 +285,7 @@ export function buildConsentReportModel(evaluation: TrackingEvaluation, findings
   model.researchWorkflow = consentResearch(model);
   if (evaluation.compatibility) {
     const runs = Math.max(1, ...Object.values(grid).flatMap((row) => Object.values(row).map((c) => c?.runs ?? 1)));
-    model.compatibility = buildCompatibilityReport(evaluation.compatibility, { inventory: evaluation.inventory, markup: evaluation.markup, locations: model.locations, runs, matrix: model.behaviorMatrix });
+    model.compatibility = buildCompatibilityReport(evaluation.compatibility, { inventory: evaluation.inventory, markup: evaluation.markup, locations: model.locations, runs, matrix: model.behaviorMatrix, grid });
   }
   const proof = buildConsentToolProofReport(evaluation.consentToolProof);
   if (proof) model.consentToolProof = proof;

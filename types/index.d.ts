@@ -1542,6 +1542,8 @@ export interface CompatibilityRow {
   /** From the report matrix: only-may-run = compared only where it may run anyway (never presented as verified). */
   behavior: 'mismatch' | 'no-mismatch-observed' | 'only-may-run' | 'not-established';
   behaviorNote: string;
+  /** The grid compared it in every visit it could and saw it off wherever the rules expect it off, nothing unchecked: no change listed beyond a markup leak, not counted as outside reach. */
+  heldEverywhere: boolean;
   /** Counted in the "outside your consent tool's reach" line. */
   outsideReach: boolean;
   reachReason?: string;

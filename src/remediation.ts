@@ -544,9 +544,17 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
   const draft = (t: Omit<RemediationTask, 'status' | 'lastVerify' | 'order'>): Draft => ({ ...t, aliases: [], alsoFixes: [] });
 
   const slots: Slot[] = [];
-  const { order: _o, ...install } = installTask(config, scriptSrc, page);
-  slots.push({ task: draft(install), seq: 0 });
-  for (const t of removeExistingToolTasks(evaluation, generated.notes ?? [], page)) slots.push({ task: draft(t), seq: slots.length });
+  // The to-do list is the fixes for what the scan observed. With no change item at all — every
+  // tool held where the rules expect it off, in every visit the grid compared — there is nothing
+  // to install the complykit tool for, and nothing to remove the site's own banner for: the
+  // decisions (classify) are the whole list. The generated config and snippet still exist for
+  // an owner who wants them; they are not a task.
+  const hasChanges = report.groups.some((g) => g.items.length > 0) || report.otherChanges.length > 0;
+  if (hasChanges) {
+    const { order: _o, ...install } = installTask(config, scriptSrc, page);
+    slots.push({ task: draft(install), seq: 0 });
+    for (const t of removeExistingToolTasks(evaluation, generated.notes ?? [], page)) slots.push({ task: draft(t), seq: slots.length });
+  }
 
   const seen = new Set<string>(slots.map((s) => s.task.id));
   const add = (it: ChangeItem, group: string, optional: boolean): void => {
@@ -585,7 +593,7 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
   for (const it of report.otherChanges) add(it, 'other', true);
 
   // --- fold --------------------------------------------------------------------------
-  const installSlot = slots[0];
+  const installSlot = slots.find((s) => s.task.kind === 'install');
   const confirm = new Map<string, { from: Draft; ids: string[] }>();
   for (const s of slots) {
     const t = s.task;
@@ -599,7 +607,7 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
       s.folded = true;
       if (!fixers.some((f) => checksTool(f.task, party)) && t.verify.check === 'spot-check') confirm.set(party, { from: t, ids: [...(confirm.get(party)?.ids ?? []), t.id] });
     } else if (t.kind === 'call-consent-api') {
-      if (!config.vendors.some((v) => v.id === party && v.adapter)) continue;
+      if (!installSlot || !config.vendors.some((v) => v.id === party && v.adapter)) continue;
       addFix(installSlot.task, t.id, `Telling ${tools} the visitor’s choice${s.api ? ` (${s.api})` : ''} — the tool makes this call for you.`);
       s.folded = true;
     } else if (t.kind === 'accepted-exposure') {

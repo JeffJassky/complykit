@@ -340,7 +340,7 @@ suite('report checklist persistence', () => {
     const section = page.locator('#compatibility');
     await section.scrollIntoViewIfNeeded();
     expect(await section.isVisible()).toBe(true);
-    expect(await section.locator('.ck-reach').textContent()).toBe("3 tools are loaded outside your consent tool's reach: Meta Pixel, tracker.test, TikTok Pixel.");
+    expect(await section.locator('.ck-reach').textContent()).toBe("3 tools are loaded outside your consent tool's reach: Meta Pixel, TikTok Pixel, tracker.test.");
     expect(await section.locator('[data-compat-row]').count()).toBe(5);
     expect(await section.locator('[data-compat-row]').first().getAttribute('data-behavior')).toBe('mismatch');
     expect(await section.locator('[data-change-group]').first().getAttribute('data-change-group')).toBe('mismatch');
