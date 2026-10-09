@@ -519,9 +519,11 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
         // column shows what still runs after a visitor opts out this way.
         await v.land(landing);
         const tLink = cap.now();
-        const walk = await step('opt-out-link', () => walkOptOutLink(v.page, true));
+        const walk = await step('opt-out-link', () => walkOptOutLink(v.page, true, () => cap.now()));
         v.ev({ type: 'opt-out-walk', ...walk });
-        v.ev({ type: 'choice', choice: 'opt-out-link', ok: walk.performed === true, method: walk.performed ? 'link+control' : walk.found ? 'link' : 'none', note: walk.requiredFields.length ? `requires ${walk.requiredFields.join(', ')} — not submitted` : undefined }, tLink);
+        // The choice is timed at the opt-out control's click (walk.performedAt), not at the start of
+        // the walk: what the page fires while the scan scrolls to the link is before the opt-out.
+        v.ev({ type: 'choice', choice: 'opt-out-link', ok: walk.performed === true, method: walk.performed ? 'link+control' : walk.found ? 'link' : 'none', note: walk.requiredFields.length ? `requires ${walk.requiredFields.join(', ')} — not submitted` : undefined }, walk.performedAt ?? tLink);
         await v.shot('opt-out-link');
         if (walk.performed) {
           await navigate(v.page, cap, landing, journey);
@@ -538,9 +540,9 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
           if (!ev.ok) notTested.push(`banner reject failed (${ev.method}) — opted out by signal and link only`);
         }
         const tLink = cap.now();
-        const walk = await step('opt-out-link', () => walkOptOutLink(v.page, true));
+        const walk = await step('opt-out-link', () => walkOptOutLink(v.page, true, () => cap.now()));
         v.ev({ type: 'opt-out-walk', ...walk });
-        v.ev({ type: 'choice', choice: 'opt-out-link', ok: walk.performed === true, method: walk.performed ? 'link+control' : walk.found ? 'link' : 'none', note: walk.requiredFields.length ? `requires ${walk.requiredFields.join(', ')} — not submitted` : undefined }, tLink);
+        v.ev({ type: 'choice', choice: 'opt-out-link', ok: walk.performed === true, method: walk.performed ? 'link+control' : walk.found ? 'link' : 'none', note: walk.requiredFields.length ? `requires ${walk.requiredFields.join(', ')} — not submitted` : undefined }, walk.performedAt ?? tLink);
         await v.shot('after-opt-out');
         await navigate(v.page, cap, landing, journey);
         await dwell(v.page, cap, journey.pageDwellMs);

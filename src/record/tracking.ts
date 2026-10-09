@@ -244,6 +244,7 @@ export const OptOutWalkEvent = z.object({
   confirmation: z.string().optional(), // text that confirms an opt-out, if shown
   landedUrl: z.string().optional(),
   performed: z.boolean().optional(), // the scan used the opt-out control (never a form asking for personal data)
+  performedAt: z.number().optional(), // when that control was clicked (timeline ms): the opt-out exists from here
   pageIndex: z.number().int(),
 });
 export type OptOutWalkEvent = z.infer<typeof OptOutWalkEvent>;

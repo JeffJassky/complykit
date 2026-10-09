@@ -55,10 +55,18 @@ const HIDDEN_BANNER = `<div class="cm-wrapper"><div class="cm" style="visibility
   <button type="button" onclick="window.__saved=['necessary']">Decline optional</button><button type="button">Got it</button></div></div>`;
 // A refusal that is on screen but whose click lands on an overlay: nothing is saved.
 const COVERED = `<div style="position:fixed;inset:0;z-index:9" id="veil"></div>`;
+// Field run storyfolder.com, California, 2026-10-09: an opt-in region shows the first layer, and the
+// footer link opens the preferences modal over it. The banner's "Decline optional" is first in the
+// DOM, a refusal, drawn and visible — and under the modal's overlay, so the click timed out and the
+// column read "not checked". The walk must pick the control that is on top: Reject all in the modal.
+const VISIBLE_BANNER = `<div class="cm-wrapper"><div class="cm" style="position:fixed;left:0;bottom:0;z-index:1;background:#eee;padding:20px"><p>We value your privacy</p>
+  <button type="button" onclick="window.__saved=['necessary']">Decline optional</button><button type="button">Got it</button></div></div>`;
+const MODAL_OVERLAY = `<style>.pm:not([hidden]){position:fixed;inset:0;z-index:5;background:#fff}</style>`;
 
 const pages: Record<string, string> = {
   '/': `<!doctype html><title>StoryFolder</title><main><h1>Storyboards</h1></main>${FOOTER}${MODAL(BUTTONS_FULL)}`,
   '/hidden-banner': `<!doctype html><title>StoryFolder</title><main><h1>Storyboards</h1></main>${FOOTER}${HIDDEN_BANNER}${MODAL(BUTTONS_FULL)}`,
+  '/visible-banner': `<!doctype html><title>StoryFolder</title>${MODAL_OVERLAY}<main><h1>Storyboards</h1></main>${FOOTER}${VISIBLE_BANNER}${MODAL(BUTTONS_FULL)}`,
   '/covered': `<!doctype html><title>Shop</title><main><h1>Shop</h1></main>${FOOTER}${MODAL(BUTTONS_FULL)}<script>document.querySelectorAll('[data-open]').forEach(function(a){ a.addEventListener('click', function(){ document.body.insertAdjacentHTML('beforeend', '${COVERED}'); }); });</script>`,
   '/save-only': `<!doctype html><title>Shop</title><main><h1>Shop</h1></main>${FOOTER}${MODAL(BUTTONS_SAVE_ONLY)}`,
 };
@@ -78,7 +86,9 @@ suite('opt-out link walk: a preferences modal with toggles that start on', () =>
     );
     const page = await context.newPage();
     await page.goto(`http://modal.test${path}`);
-    const result = await walkOptOutLink(page, true);
+    // The scenario's clock: the walk stamps the opt-out control's click on it.
+    let tick = 1000;
+    const result = await walkOptOutLink(page, true, () => (tick += 1000));
     const saved = (await page.evaluate(() => (window as unknown as { __saved?: string[] }).__saved)) ?? null;
     await context.close();
     return { result, saved };
@@ -88,6 +98,15 @@ suite('opt-out link walk: a preferences modal with toggles that start on', () =>
     const { result, saved } = await walk('/');
     expect(result.found).toBe(true);
     expect(result.linkText).toBe('Do Not Sell or Share My Personal Information');
+    expect(result.performed).toBe(true);
+    expect(saved).toEqual(['necessary']);
+    // Timed at the control's click on the caller's clock, so the opt-out is dated from the click,
+    // not from the start of the walk (what the page fires while the scan scrolls to the link is before it).
+    expect(result.performedAt).toBe(2000);
+  });
+
+  it('a first layer that is on screen behind the open modal: picks the control on top, Reject all in the modal', async () => {
+    const { result, saved } = await walk('/visible-banner');
     expect(result.performed).toBe(true);
     expect(saved).toEqual(['necessary']);
   });
@@ -108,5 +127,6 @@ suite('opt-out link walk: a preferences modal with toggles that start on', () =>
     const { result, saved } = await walk('/covered');
     expect(saved).toBeNull();
     expect(result.performed).toBe(false);
+    expect(result.performedAt).toBeUndefined();
   });
 });

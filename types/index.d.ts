@@ -626,6 +626,8 @@ export type TimelineEvent =
       landedUrl?: string;
       /** The scan used the opt-out control (never a form asking for personal data). */
       performed?: boolean;
+      /** When that control was clicked (timeline ms): the opt-out exists from here. */
+      performedAt?: number;
       pageIndex: number;
     }
   | { type: 'note'; t: number; text: string; pageIndex: number }
