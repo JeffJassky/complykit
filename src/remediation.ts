@@ -280,15 +280,15 @@ function shape(ev: TrackingEvaluation, it: ChangeItem, pages: string[], config: 
       return {
         title: `Repoint the DNS alias ${it.host ?? ''}`.trim(),
         summary: `A subdomain of your site points at ${tools}${it.target ? ` (${it.target})` : ''}, so its cookies count as your own and no consent tool can remove them.`,
-        steps: ['Remove or repoint the DNS record, or stop using the integration behind it.', 'Or write down that you accept this (in the task note).', 'Mark it done; a rescan shows whether the cookies are gone.'],
+        steps: ['Remove or repoint the DNS record, or stop using the integration behind it.', 'Mark it done; a rescan shows whether the cookies are gone.'],
         verify: manual('DNS records and the cookies set through them cannot be read from one page fetch; a rescan decides it'),
       };
     case 'accepted-exposure':
       return {
-        title: `Decide what to do about ${tools}`,
-        summary: 'Nothing on the page can hold it back. Remove it, or write down that you accept the risk — a decision for the owner, not a developer task.',
-        steps: ['Make the other changes listed for it, where there are any.', 'If they are not made: remove the integration, or write in the task note who decided to keep it, and why.', 'Mark the task done.'],
-        verify: manual('an owner’s decision; nothing on the page can show it'),
+        title: `Remove ${tools}`,
+        summary: 'Nothing on the page can hold it back until the visitor accepts, so it has to go — or be replaced by an integration that can wait for consent.',
+        steps: ['Make the other changes listed for it, where there are any.', 'If they do not hold it back: remove the integration, or replace it with one your consent tool can block.', 'Mark the task done; a rescan shows whether it is gone.'],
+        verify: manual('the integration loads from outside the page; a rescan decides it'),
       };
     case 'needs-a-look':
       return {

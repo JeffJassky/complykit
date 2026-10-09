@@ -84,14 +84,15 @@ describe('compareCookieBehavior: wiretap posture (runs inside saved HTML, so it 
     expect(cmp('partial', 'opt-out-signal', true, ['analytics']).status).toBe('match');
     expect(cmp('partial', 'opt-out-signal', true, ['advertising']).status).toBe('mismatch');
     expect(cmp('do-nothing', 'opt-out-signal', false, ['analytics']).status).toBe('match');
-    // GA4 in Consent Mode before a choice: cookieless pings, the site's one decision.
-    expect(cmp('do-nothing', 'opt-out-signal', true, ['analytics'], { limitedOnly: true }).status).toBe('review');
+    // GA4 in Consent Mode before a choice: cookieless pings are a problem too.
+    expect(cmp('do-nothing', 'opt-out-signal', true, ['analytics'], { limitedOnly: true }).status).toBe('mismatch');
   });
 
-  it('limited-only pings (Consent Mode cookieless, Meta LDU) before a choice need a decision, as in the EU/UK (2026-10-08: no case law; they carry IP and page address); after an opt-out they are the expected restricted mode', () => {
-    expect(cmp('do-nothing', 'opt-out-signal', true, ['advertising'], { limitedOnly: true }).status).toBe('review');
+  it('limited-only pings (Consent Mode cookieless, Meta LDU) before a choice are a problem, as in the EU/UK (complykit decides, 2026-10-09); after an opt-out they are the expected restricted mode', () => {
+    expect(cmp('do-nothing', 'opt-out-signal', true, ['advertising'], { limitedOnly: true }).status).toBe('mismatch');
     expect(cmp('gpc', 'opt-out-signal', true, ['advertising'], { limitedOnly: true }).status).toBe('match');
   });
+
 
   it('a state without wiretap exposure is unchanged, and so are opt-in and reports saved without the flag', () => {
     expect(cmp('do-nothing', 'opt-out-signal', false, ['advertising']).status).toBe('match');

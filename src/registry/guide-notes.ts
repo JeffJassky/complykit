@@ -20,12 +20,13 @@ export interface GuideNoteEntry {
 export const GUIDE_POSTURE = {
   title: 'How complykit decides what to expect',
   principles: [
+    'complykit decides the policy; a site never does. The aim is to gather as much as the law allows with essentially no legal exposure. Where regulators or litigation treat a practice as a problem, even while it is contested, complykit treats it as a problem. A site supplies only facts the scan cannot see, such as what an unknown tool does, never its own risk tolerance.',
     'Two tests, and a site must pass both. First, the letter of the law where the visitor is. Second, how the law is actually enforced and litigated there — including lawsuits under laws that were not written for websites. Meeting the statute while staying exposed to a well-known lawsuit pattern is not treated as compliant.',
     'Where the two tests disagree, the stricter one sets the expectation. California’s privacy act is opt-out, but wiretap suits there target trackers that fire before the visitor agrees, so complykit expects those trackers off until the visitor accepts.',
     'Nothing is given up without a reason. A tool is expected off only where a law or a documented lawsuit pattern says so; everywhere else it may run, and the report says so.',
     'A location is what the scan measured, never what a site claims. Each law is tested from a browser whose exit address was verified to be in that place; an unverified location is compared against nothing.',
     'Absence is not a pass. A visit that could not run, or a capture that might have missed something, is reported as not checked, never as fine.',
-    'Places complykit has not researched fail closed: its consent tool treats those visitors as opt-in, the strictest model, and the scanner draws no legal conclusion there.',
+    'Places complykit has not researched fail closed: its consent tool and its scanner both treat those visitors as opt-in, the strictest model.',
     'This guide is the policy the scanner runs. Every rule here is the same data the scanner uses, so the guide and the reports cannot disagree.',
   ],
 } as const;
@@ -90,7 +91,7 @@ export const GUIDE_WIRETAP = {
   summary:
     'In these states, all-party-consent wiretap laws are used to sue websites whose trackers send what a visitor does to a third party before the visitor agrees. The privacy statute may be opt-out, but prior consent is the defence in court — so complykit expects the targeted tools off until the visitor accepts.',
   holds:
-    'Advertising pixels, analytics, session recording, chat and identity-resolution tools stay off until the visitor accepts. Analytics is included because pen-register suits under CIPA §638.51 name analytics scripts that send the IP address and the page address. Courts accept only consent given before the tracking starts; a footer policy link or “by using this site you agree” is not consent, and an opt-out banner never provides it. Cookieless “consent-denied” pings before a choice or after a refusal (Google Consent Mode “advanced”) still carry the IP address and the page address; no court has ruled on them, so they are reported as needing your decision, as in the EU and UK. You answer once for the site: accept them, or hold them until consent (Consent Mode “basic”), and later scans follow that answer.',
+    'Advertising pixels, analytics, session recording, chat and identity-resolution tools stay off until the visitor accepts. Analytics is included because pen-register suits under CIPA §638.51 name analytics scripts that send the IP address and the page address. Courts accept only consent given before the tracking starts; a footer policy link or “by using this site you agree” is not consent, and an opt-out banner never provides it. Cookieless “consent-denied” pings before a choice or after a refusal (Google Consent Mode “advanced”) still carry the IP address and the page address; no court has ruled on them, so complykit holds them until consent too, as in the EU and UK: load Google tags only after the visitor accepts (Consent Mode “basic”).',
 } as const;
 
 const RESEARCH = 'https://github.com/JeffJassky/complykit/blob/main/plans/research-consent-law.md';
@@ -254,9 +255,9 @@ export const GUIDE_PLACE_NOTES: Readonly<Record<string, GuideNoteEntry[]>> = {
   eu: [
     {
       kind: 'posture',
-      title: 'Google Consent Mode “advanced” needs a decision',
+      title: 'Google Consent Mode “advanced” is a problem',
       text:
-        'With Consent Mode “advanced”, Google tags send cookieless pings before consent. Whether that is allowed without consent is contested: the pings carry the IP address, browser details and the full page address, which EU guidance treats as gaining access. complykit reports them as needing your decision rather than as a pass or a violation. You answer once for the site — accept them, or hold them until consent — and every later scan applies that answer.',
+        'With Consent Mode “advanced”, Google tags send cookieless pings before consent. Whether that is allowed without consent is contested: the pings carry the IP address, browser details and the full page address, which EU guidance treats as gaining access. Regulators treat that as needing consent, so complykit reports these pings as a problem: load Google tags only after the visitor accepts (Consent Mode “basic”).',
       sources: [src('EDPB Guidelines 2/2023', 'https://www.edpb.europa.eu/system/files/documents/2024-10/edpb_guidelines_202302_technical_scope_art_53_eprivacydirective_v2_en_0.pdf')],
     },
   ],
@@ -270,8 +271,8 @@ export const GUIDE_PLACE_NOTES: Readonly<Record<string, GuideNoteEntry[]>> = {
     },
     {
       kind: 'posture',
-      title: 'Google Consent Mode “advanced” needs a decision',
-      text: 'As in the EU, cookieless pings before consent are reported as needing your decision.',
+      title: 'Google Consent Mode “advanced” is a problem',
+      text: 'As in the EU, cookieless pings before consent are reported as a problem: load Google tags only after the visitor accepts.',
       sources: [],
     },
   ],

@@ -31,7 +31,7 @@ const CELL_TEXT: Record<OwnerCell['state'], string> = {
   pending: 'Checking…',
   ok: 'As expected',
   mismatch: 'Problem: running when it should be off',
-  'needs-decision': 'Needs your decision',
+  'needs-decision': 'Tell us what this tool is for',
   'not-checked': 'Couldn’t test — the scan could not complete this',
   'not-applicable': 'Not applicable — nothing to test',
   blocked: 'Blocked — a visitor can’t do this either (a problem)',
@@ -43,8 +43,6 @@ export interface ReportActions {
   onCancel?: () => void;
   /** Save what an unclassified tool is for (class:<key>). */
   onClassify?: (classKey: string, purpose: string) => void;
-  /** Save the site-wide answer about consent-denied pings (null clears it). */
-  onDecide?: (key: string, value: 'allow' | 'hold' | null) => void;
   onVerify?: (task: RemediationTask) => void;
   onMarkDone?: (task: RemediationTask) => void;
   onRescan?: (extra?: { laws?: LawId[]; authorized?: true }) => void;
@@ -329,7 +327,7 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
           <b data-state="mismatch">✕</b> problem
         </span>
         <span>
-          <b data-state="needs-decision">?</b> needs your decision
+          <b data-state="needs-decision">?</b> tell us what this tool is for
         </span>
         <span>
           <b data-state="blocked">⊘</b> blocked: a visitor can’t do this either (a problem)
@@ -498,61 +496,6 @@ function DecisionTodo({ label, classKey, decided, ui, actions, unblocks, tool }:
   );
 }
 
-const PING_CHOICES = [
-  { value: 'allow', label: 'Accept them', help: 'Keeps Google’s modelled conversions; accepts a small, untested legal risk.' },
-  { value: 'hold', label: 'Hold them until consent', help: 'No legal exposure from these pings; load Google tags only after the visitor accepts (Consent Mode “basic”).' },
-] as const;
-
-/** The one site-wide answer about consent-denied pings; it settles many checks at once. */
-export function PingDecision({ decision, ui, actions }: { decision: NonNullable<OwnerReport['pingDecision']>; ui: ReportUiState; actions: ReportActions }) {
-  const { key, cells, at } = decision;
-  // A value saved on this page shows at once; '' means it was cleared.
-  const saved = ui.saved?.[key];
-  const choice = saved !== undefined ? (saved === 'allow' || saved === 'hold' ? saved : undefined) : decision.choice;
-  const busy = ui.saving === key;
-  const answered = PING_CHOICES.find((c) => c.value === choice);
-  return (
-    <li className="rp-todo" data-kind="decide" data-testid="ping-decision" data-status={choice ? 'verified' : 'todo'}>
-      <div className="rp-todo-head">
-        <strong>Google’s cookieless pings before consent</strong>
-        <span className={`pill ${choice ? 'pill-done' : 'pill-queued'}`}>{choice ? 'Decided ✓' : 'To decide'}</span>
-      </div>
-      <p className="muted">
-        Google tags (Consent Mode “advanced”) send pings without cookies before the visitor chooses, or after they refuse. They still carry the IP address and the page address. Whether that needs consent is unsettled in the EU and UK and under the wiretap laws of California, Florida, Pennsylvania, Maryland and Illinois. Answer once for this site; every scan follows your answer.
-        {cells > 0 ? ` This settles ${cells} ${cells === 1 ? 'check' : 'checks'}.` : ''}
-      </p>
-      {answered ? (
-        <p data-testid="ping-answer">
-          Your answer: <strong>{answered.label}</strong>
-          {at && !saved ? ` (${new Date(at).toLocaleDateString()})` : ''}.
-        </p>
-      ) : null}
-      <fieldset className="rp-picker" disabled={busy || !actions.onDecide}>
-        <div className="rp-picker-options">
-          {PING_CHOICES.map((c) => (
-            <button key={c.value} type="button" className={`btn btn-sm ${c.value === choice ? 'btn-primary' : 'btn-secondary'}`} data-value={c.value} aria-pressed={c.value === choice} onClick={() => actions.onDecide?.(key, c.value)}>
-              {c.label}
-            </button>
-          ))}
-        </div>
-        <ul className="rp-help muted">
-          {PING_CHOICES.map((c) => (
-            <li key={c.value}>
-              <strong>{c.label}:</strong> {c.help}
-            </li>
-          ))}
-        </ul>
-        {busy ? <p className="rp-help muted">Saving…</p> : null}
-      </fieldset>
-      {ui.errors?.[key] ? (
-        <p className="rp-error" role="alert">
-          {ui.errors[key]}
-        </p>
-      ) : null}
-    </li>
-  );
-}
-
 function SnippetBlock({ text, label, onCopy }: { text: string; label: string; onCopy?: (t: string) => Promise<boolean> }) {
   const [copied, setCopied] = useState<boolean | null>(null);
   return (
@@ -683,7 +626,6 @@ export function TodoList({ data, ui = {}, actions = {} }: { data: JobReportRespo
       ) : null}
       {todo.state === 'ready' && todo.fromThisRun === false ? <p className="muted rp-note">This list comes from an earlier scan of this site; your progress on it is kept.</p> : null}
       <ol className="rp-todos">
-        {report?.pingDecision ? <PingDecision decision={report.pingDecision} ui={ui} actions={actions} /> : null}
         {liveDecisions.map((d) => (
           <DecisionTodo key={d.classKey} label={d.label} classKey={d.classKey} ui={ui} actions={actions} tool={toolFor(d.classKey)} />
         ))}
@@ -945,9 +887,7 @@ export function ReportPage({ jobId }: { jobId: string }) {
     if (!data?.report || !ui.saved) return;
     const classified = new Set(data.report.matrix.tools.filter((t) => t.classified).map((t) => t.classKey));
     const decided = new Set(data.todo.tasks.filter((t) => t.kind === 'classify' && t.status === 'verified').map((t) => t.classKey));
-    const ping = data.report.pingDecision;
-    // The ping answer is replaced once the report carries it (a cleared one is '').
-    const left = Object.fromEntries(Object.entries(ui.saved).filter(([k, v]) => !classified.has(k) && !decided.has(k) && !(k === ping?.key && v === (ping.choice ?? ''))));
+    const left = Object.fromEntries(Object.entries(ui.saved).filter(([k]) => !classified.has(k) && !decided.has(k)));
     if (Object.keys(left).length !== Object.keys(ui.saved).length) setUi((u) => ({ ...u, saved: left }));
   }, [data, ui.saved]);
 
@@ -984,21 +924,6 @@ export function ReportPage({ jobId }: { jobId: string }) {
         if (d.job.status === 'done') queue.request();
       } catch (e) {
         err(classKey, e);
-      } finally {
-        setUi((u) => ({ ...u, saving: undefined }));
-      }
-    },
-    onDecide: async (key, value) => {
-      const d = dataRef.current;
-      if (!d) return;
-      clear(key);
-      setUi((u) => ({ ...u, saving: key }));
-      try {
-        await api.patchWorkspace(d.domain, { ...(by ? { by } : {}), entries: { [key]: { value } } });
-        setUi((u) => ({ ...u, saved: { ...u.saved, [key]: value ?? '' } }));
-        if (d.job.status === 'done') queue.request();
-      } catch (e) {
-        err(key, e);
       } finally {
         setUi((u) => ({ ...u, saving: undefined }));
       }

@@ -3,9 +3,7 @@ import { buildConsentReportModel } from '../src/report/consent-model.js';
 import { buildOwnerReport, bannerProviderName, OWNER_SCENARIO_LABEL } from '../src/report/owner-report.js';
 import { TrackingEvaluation } from '../src/record/index.js';
 import { workspaceId } from '../src/report/workspace.js';
-import { classificationKey, LIMITED_PINGS_KEY } from '../src/site-workspace.js';
-import { applyWorkspaceToRecord } from '../src/consent-generator.js';
-import { DEFAULT_KB } from '../src/registry/index.js';
+import { classificationKey } from '../src/site-workspace.js';
 import type { OwnerReport as ServiceOwnerReport } from '../service/src/shared/api.js';
 
 // The owner report (plans/simple-report.md) over the same report model as the
@@ -172,50 +170,3 @@ describe('owner report: the service’s mirror (service/src/shared/api.ts)', () 
   });
 });
 
-describe('owner report: one site decision for consent-denied pings', () => {
-  // Google Consent Mode "advanced": pings with consent denied, nothing stored. Contested in the
-  // EU/UK and in wiretap states before a choice; it recurred as "needs a decision" on every scan
-  // with nowhere to answer it (storyfolder.com, 2026-10-08). One answer for the site settles them.
-  const ads = { ...meta, partyId: 'google.ads.ccm', label: 'Google Ads', domain: 'google.com', hosts: ['google.com'], stores: [] };
-  const pings = { partyId: 'google.ads.ccm', dataRequests: 2, requestPhases: ['before-choice'], dataRequestPhases: { 'before-choice': 2 }, limitedRequestsByPhase: { 'before-choice': 2 }, stores: [] };
-  const decided = (choice?: 'allow' | 'hold') => {
-    const ev = evaluation({ scenarios: [doNothing], inventory: [ads], observations: [{ ...obs('do-nothing', [pings]), knownPartyIds: ['google.ads.ccm'] }] });
-    if (choice) ev.siteWorkspace = { appliedAt: '2026-10-08T00:00:00Z', classifications: [], doneTasks: [], decisions: { limitedPings: { choice, at: '2026-10-08T12:00:00Z' } } };
-    return buildOwnerReport({ ...base, stage: 'final', model: buildConsentReportModel(ev, []), done: [{ location: 'de', scenario: 'do-nothing' }] });
-  };
-  const cell = (r: ReturnType<typeof decided>) => r.matrix.tools.find((t) => t.partyId === 'google.ads.ccm')!.cells[0];
-
-  it('undecided: the check needs a decision, and the report asks once for the site', () => {
-    const r = decided();
-    expect(cell(r).state).toBe('needs-decision');
-    expect(cell(r).reason).toMatch(/Decide once for the site/);
-    expect(r.pingDecision).toEqual({ key: 'decision:limited-pings', cells: 1 });
-  });
-
-  it('allow: the pings are accepted (ok), and the reason says it was the team’s decision', () => {
-    const r = decided('allow');
-    expect(cell(r).state).toBe('ok');
-    expect(cell(r).reason).toMatch(/Your team decided to accept these pings/);
-    expect(r.pingDecision).toEqual({ key: 'decision:limited-pings', cells: 1, choice: 'allow', at: '2026-10-08T12:00:00Z' });
-  });
-
-  it('hold: the pings are a problem to fix — load the tags only after the visitor accepts', () => {
-    const r = decided('hold');
-    expect(cell(r).state).toBe('mismatch');
-    expect(cell(r).reason).toMatch(/Consent Mode "basic"/);
-    expect(r.pingDecision?.choice).toBe('hold');
-  });
-
-  it('a rerender applies a decision saved after the scan (the service\'s path: report --workspace)', () => {
-    const ev = evaluation({ scenarios: [doNothing], inventory: [ads], observations: [{ ...obs('do-nothing', [pings]), knownPartyIds: ['google.ads.ccm'] }] });
-    applyWorkspaceToRecord(ev, { entries: { [LIMITED_PINGS_KEY]: { value: 'allow', at: '2026-10-08T12:00:00Z' } } }, DEFAULT_KB, '2026-10-08T13:00:00Z');
-    const r = buildOwnerReport({ ...base, stage: 'final', model: buildConsentReportModel(ev, []), done: [{ location: 'de', scenario: 'do-nothing' }] });
-    expect(cell(r).state).toBe('ok');
-    expect(r.pingDecision?.choice).toBe('allow');
-  });
-
-  it('no contested pings and no decision: nothing to ask', () => {
-    const ev = evaluation({ scenarios: [doNothing], inventory: [meta], observations: [obs('do-nothing', [fbpBeforeChoice])] });
-    expect(buildOwnerReport({ ...base, stage: 'final', model: buildConsentReportModel(ev, []), done: [{ location: 'de', scenario: 'do-nothing' }] }).pingDecision).toBeUndefined();
-  });
-});

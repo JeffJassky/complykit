@@ -203,8 +203,8 @@ suite('report checklist persistence', () => {
     await page.locator('[data-matrix-kind=storage] .matrix-result[data-result=review]').first().click();
     const form=page.locator('#matrix-classification [data-class-form]');
     await form.locator('[data-class-research] > summary').click();
-    for(const [name,value] of Object.entries({purpose:'Measures visits',owner:'Vendor / marketing',information:'Visitor identifier',controlReason:'Consent-gated analytics',source:'Vendor docs and privacy reviewer'}))await form.locator('[name='+name+']').fill(value);
-    await form.locator('[name=category]').selectOption('analytics');await form.locator('[name=control]').selectOption('consent');
+    for(const [name,value] of Object.entries({purpose:'Measures visits',owner:'Vendor / marketing',information:'Visitor identifier',source:'Vendor docs and privacy reviewer'}))await form.locator('[name='+name+']').fill(value);
+    await form.locator('[name=category]').selectOption('analytics');
     expect(await page.locator('[data-matrix-kind=storage]').filter({hasText:'_visitor'}).locator('.matrix-category').textContent()).toContain('Analytics'); // inherited from its tool
     expect(await page.locator('[data-matrix-kind=storage]').filter({hasText:'_mystery'}).locator('.matrix-category').textContent()).toContain('your classification');
     expect(await totals()).toEqual(['2','2','3','1']);
@@ -217,7 +217,6 @@ suite('report checklist persistence', () => {
     expect(await totals()).toEqual(['2','2','3','1']); // a changed classification reopens completed work
     await form.locator('[data-class-apply]').click();
     expect(await page.locator('#matrix-classification [data-category-impact]').textContent()).toContain('your purpose choice');
-    await form.locator('[name=control]').selectOption('');
     await form.locator('[name=category]').selectOption('necessary');
     expect(await totals()).toEqual(['1','2','4','1']); // necessary may always run: working as expected
     await form.locator('summary').filter({hasText:'Additional purposes'}).click();
@@ -260,8 +259,6 @@ suite('report checklist persistence', () => {
     await tool.locator('[data-class-research] > summary').click();
     await tool.locator('[name=owner]').fill('Example vendor / marketing team');
     await tool.locator('[name=information]').fill('Page URL and anonymous visit identifier');
-    await tool.locator('[name=control]').selectOption('consent');
-    await tool.locator('[name=controlReason]').fill('Nonessential analytics; gate in the consent platform for the reviewed location');
     await tool.locator('[name=source]').fill('Vendor docs reviewed by marketing, 2026-10-05');
     await tool.locator('button[type=submit]').click();
     expect(await page.locator('#work-class-count').textContent()).toBe('1');
@@ -305,13 +302,12 @@ suite('report checklist persistence', () => {
     const tool = page.locator('#tool-1');
     await page.locator('[data-matrix-kind=tool] .matrix-result').first().click();
     expect(await tool.locator('[name=purpose]').inputValue()).toBe('Counts visits');
-    expect(await tool.locator('[data-class-answer]').textContent()).toContain('consent / control decision');
+    expect(await tool.locator('[data-class-answer]').textContent()).toBe('Still to answer: owner, information used');
     const cookie = page.locator('[data-cookie-state]');
     await page.locator('[data-matrix-kind=storage] .matrix-result').first().click();
     await cookie.locator('[data-class-research] > summary').click();
-    for (const [name, value] of Object.entries({purpose:'Remembers an anonymous visitor',owner:'Example vendor',information:'Random visitor ID',controlReason:'Analytics cookie gated by consent',source:'Vendor cookie guide and site owner'})) await cookie.locator('[name='+name+']').fill(value);
+    for (const [name, value] of Object.entries({purpose:'Remembers an anonymous visitor',owner:'Example vendor',information:'Random visitor ID',source:'Vendor cookie guide and site owner'})) await cookie.locator('[name='+name+']').fill(value);
     await cookie.locator('[name=category]').selectOption('analytics');
-    await cookie.locator('[name=control]').selectOption('consent');
     expect(await page.locator('#work-class-count').textContent()).toBe('1');
     expect(await cookie.locator('[data-class-badge]').getAttribute('data-tone')).toBe('green');
     expect(await tool.locator('[data-class-badge]').getAttribute('data-tone')).toBe('amber');

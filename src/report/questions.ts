@@ -9,9 +9,9 @@ export function actionQuestions(rule: string, requirement: string): ReviewQuesti
     q('decision', 'What did your research establish, and what remains unknown?', 'Record the conclusion and any questions you still need the owner to answer.')];
   if (/wiretap/.test(rule)) return [...common,
     q('shared', 'What information was shared, with whom, and for what purpose?', 'Compare the reported data with vendor documentation and the site’s actual configuration.'),
-    q('review', 'What did your privacy or legal reviewer decide for these locations?', 'Record the reviewer, applicable locations, decision, and any required consent, disclosure or other safeguards.')];
+    q('implementation', 'Where did you hold it until the visitor accepts?', 'Name the consent tool setting, tag manager trigger or script you changed.')];
   if (/consent|tracking|cookie/.test(rule)) return [...common,
-    q('decision', 'What permission or other control should apply to this behavior?', 'Confirm the tool’s actual purpose and the locations affected. Record the agreed control and the reason for it.'),
+    q('purpose', 'What does this tool do on your site?', 'Only needed when complykit could not identify it. complykit applies the rules for that purpose.'),
     q('implementation', 'Where did you change the settings or implementation?', 'Name the tag, consent platform setting, script, banner, or vendor configuration changed.'),
     q('verification', 'What happened before a choice, after rejection, and after acceptance?', 'Record the test location, date, expected behavior and observed result. Include withdrawal or reopening settings where relevant.')];
   if (requirement.startsWith('wcag') || /axe|keyboard|contrast/.test(rule)) return [...common,

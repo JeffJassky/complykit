@@ -51,16 +51,19 @@ describe('expected behavior by category, visitor action and location rules', () 
     expect(status('do-nothing', 'opt-out', ['advertising'])).toBe('match');
   });
 
-  it('necessary uses may always run; unclassified ones ask for a classification; unknown locations get no automatic rule', () => {
+  it('necessary uses may always run; unclassified ones ask for a classification (a fact); a place with no mapped law gets opt-in, the strictest rules', () => {
     expect(status('do-nothing', 'opt-in', ['necessary'])).toBe('match');
     expect(status('reject', 'opt-in', ['cdn'])).toBe('match');
     expect(status('do-nothing', 'opt-in', ['unknown'])).toBe('review');
     expect(status('do-nothing', 'opt-in', [])).toBe('review');
-    expect(status('do-nothing', 'unknown', ['analytics'])).toBe('review');
+    expect(status('do-nothing', 'unknown', ['analytics'])).toBe('mismatch');
+    expect(status('accept', 'unknown', ['analytics'])).toBe('match');
   });
 
-  it('context uses (chat, embeds, fonts) are a judgment only when active without consent under opt-in rules', () => {
-    expect(status('do-nothing', 'opt-in', ['chat'])).toBe('review');
+  it('context uses (chat, embeds, fonts) loaded unasked under opt-in rules are a problem: the scan never asks for the feature (2026-10-09)', () => {
+    expect(status('do-nothing', 'opt-in', ['chat'])).toBe('mismatch');
+    expect(status('reject', 'opt-in', ['fonts'])).toBe('mismatch');
+    expect(status('accept', 'opt-in', ['embed'])).toBe('match');
     expect(status('do-nothing', 'opt-in', ['chat'], { hasActivity: false })).toBe('match');
     expect(status('do-nothing', 'opt-out-signal', ['chat'])).toBe('match');
   });

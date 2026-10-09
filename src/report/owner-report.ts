@@ -4,7 +4,7 @@ import type { BehaviorMatrix, BehaviorMatrixCell } from '../../types/index.js';
 import type { ConsentReportModel } from './consent-model.js';
 import { buildBehaviorMatrix, categoryLabel, regimeFor } from './consent-matrix.js';
 import { skipKindOf, SKIP_LEAD, type SkipKind } from './skip-kind.js';
-import { LIMITED_PINGS_KEY, workspaceId } from './workspace.js';
+import { workspaceId } from './workspace.js';
 import { compareCookieBehavior } from './cookie-purpose.js';
 import { hostedOn, isWiretapJurisdiction } from '../registry/index.js';
 
@@ -160,13 +160,6 @@ export interface OwnerReport {
   };
   /** Tools whose purpose is not known yet: the first to-do items, before the checklist exists. */
   decisions: Array<{ partyId: string; label: string; domain: string; classKey: string }>;
-  /**
-   * One site-wide decision: consent-denied pings (Google Consent Mode "advanced", Meta LDU) where
-   * they are contested — the EU/UK, and wiretap states before a choice or after a refusal. `cells`
-   * counts the checks the answer settles; `choice` is the recorded answer ('allow' turns them ok,
-   * 'hold' turns them into problems). Present when any check turns on it or the site has decided.
-   */
-  pingDecision?: { key: string; cells: number; choice?: 'allow' | 'hold'; at?: string };
   /** The checklist this run's report carries (the generated config's tasks), when there is one. The service replaces it with the site workspace's, with live status. */
   todo?: { tasks: RemediationTask[]; configAt?: string; runId?: string };
   /** Every location of the scan, in plan order. Absent on reports written before it existed. */
@@ -470,10 +463,6 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
     };
   });
 
-  // The checks the site's ping decision settles: undecided, they would need a decision.
-  const pinged = m?.siteWorkspace?.decisions?.limitedPings;
-  const pingCells = (bm?.rows ?? []).reduce((n, row) => n + row.cells.filter((c) => c.comparisonFacts?.limitedOnly && compareCookieBehavior({ ...c.comparisonFacts, limitedPings: undefined }, { categories: row.categories }).status === 'review').length, 0);
-
   return {
     version: 1,
     stage: input.stage,
@@ -494,7 +483,6 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
     locations: locationSummaries,
     matrix: { columns, tools, counts },
     decisions: tools.filter((t) => !t.classified).map((t) => ({ partyId: t.partyId, label: t.label, domain: t.domain, classKey: t.classKey })),
-    ...(!unreachableReason && (pingCells || pinged) ? { pingDecision: { key: LIMITED_PINGS_KEY, cells: pingCells, ...(pinged ? { choice: pinged.choice, ...(pinged.at ? { at: pinged.at } : {}) } : {}) } } : {}),
     ...(!unreachableReason && m?.remediation?.tasks.length ? { todo: { tasks: m.remediation.tasks, ...(m.remediation.configAt ? { configAt: m.remediation.configAt } : {}), ...(m.remediation.runId ? { runId: m.remediation.runId } : {}) } } : {}),
   };
 }

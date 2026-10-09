@@ -692,8 +692,6 @@ export interface OwnerReport {
   };
   /** Tools whose purpose is not known yet (the to-do list's first items while the checklist does not exist yet). */
   decisions: Array<{ partyId: string; label: string; domain: string; classKey: string }>;
-  /** One site-wide decision: consent-denied pings (Google Consent Mode "advanced", Meta LDU) where they are contested — the EU/UK, and wiretap states before a choice or after a refusal. `cells` counts the checks the answer settles; `choice` is the recorded answer ('allow' turns them ok, 'hold' turns them into problems). Present when any check turns on it or the site has decided. */
-  pingDecision?: { key: string; cells: number; choice?: 'allow' | 'hold'; at?: string };
   todo?: { tasks: RemediationTask[]; configAt?: string; runId?: string };
   /** Every location of the scan, in plan order. Absent on reports written before it existed. */
   locations?: OwnerLocationSummary[];

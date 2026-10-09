@@ -41,11 +41,12 @@ describe('consent behavior matrix',()=>{
   expect(status({...model,notTested:[{scope:'scenario',id:'dismiss',location:'de',reason:'the banner offers no way to close it without choosing'}]},'storage','_fbp','reject').status).toBe('match');
   expect(status({...model,notTested:[{scope:'flow',id:'partial',location:'de',reason:'could not grant a single category (no recognizable analytics-only control)'}]},'tool','Meta Pixel','reject').status).toBe('match');
  });
- it('wiretap states: consent-denied pings before a choice or after a refusal need a decision, as in the EU/UK; after an opt-out they are the expected restricted mode',()=>{
+ it('wiretap states: consent-denied pings before a choice or after a refusal are a problem, as in the EU/UK (complykit decides, 2026-10-09); after an opt-out they are the expected restricted mode',()=>{
   const f=(scenario:string,wiretap=true)=>compareCookieBehavior({scenario,regime:'opt-out-signal',regimeLabel:'California',wiretap,hasActivity:true,limitedOnly:true,captureGap:false},{categories:['advertising']});
-  expect(f('do-nothing').status).toBe('review');
+  expect(f('do-nothing').status).toBe('mismatch');
   expect(f('do-nothing').reason).toMatch(/wiretap/i);
-  expect(f('reject').status).toBe('review');
+  expect(f('do-nothing').reason).toMatch(/Consent Mode "basic"/);
+  expect(f('reject').status).toBe('mismatch');
   expect(f('gpc').status).toBe('match');
   expect(f('opt-out-link').status).toBe('match');
   expect(f('do-nothing',false).status).toBe('match'); // no wiretap posture: may run before a choice
@@ -141,17 +142,16 @@ describe('purpose choices and saved behavior comparisons', () => {
  it('never lets a necessary label supersede a secondary optional purpose',()=>{
   expect(compareCookieBehavior(active,{categories:['necessary'],userChosen:true}).status).toBe('match');
   for(const optional of ['analytics','performance','advertising','functional'])expect(compareCookieBehavior(active,{categories:['necessary',optional],userChosen:true}).status).toBe('mismatch');
-  expect(compareCookieBehavior(active,{categories:['necessary','other'],userChosen:true}).status).toBe('review');
+  expect(compareCookieBehavior(active,{categories:['necessary','other'],userChosen:true}).status).toBe('mismatch'); // "other" needs consent: complykit decides, never the site
  });
- it('keeps control exceptions and privacy signals separate from purpose labels',()=>{
-  expect(compareCookieBehavior(active,{categories:['necessary'],control:'consent',userChosen:true}).status).toBe('mismatch');
-  expect(compareCookieBehavior(active,{categories:['analytics'],control:'none',userChosen:true}).status).toBe('review');
-  expect(compareCookieBehavior(active,{categories:['other'],control:'consent',userChosen:true}).status).toBe('mismatch');
-  expect(compareCookieBehavior({...active,scenario:'gpc'},{categories:['analytics'],control:'consent',userChosen:true}).status).toBe('review');
+ it('a recorded control never changes the verdict: what a tool does is a fact; what that requires is complykit\'s call (2026-10-09)',()=>{
+  for(const categories of [['necessary'],['analytics'],['other'],['advertising']])for(const control of ['consent','none','other'])for(const scenario of ['do-nothing','gpc','accept'])
+   expect(compareCookieBehavior({...active,scenario},{categories,control,userChosen:true}).status,`${categories} ${control} ${scenario}`).toBe(compareCookieBehavior({...active,scenario},{categories,userChosen:true}).status);
+  expect(compareCookieBehavior(active,{categories:['analytics'],control:'none',userChosen:true}).status).toBe('mismatch');
  });
  it('retains incomplete evidence and restricted traffic even after a classification',()=>{
   for(const category of ['necessary','analytics'])expect(compareCookieBehavior({...active,unavailable:{status:'not-tested',reason:'Choice failed'}},{categories:[category],userChosen:true}).status).toBe('not-tested');
   expect(compareCookieBehavior({...active,hasActivity:false,captureGap:true},{categories:['performance'],userChosen:true}).status).toBe('unknown');
-  expect(compareCookieBehavior({...active,limitedOnly:true},{categories:['analytics'],userChosen:true}).status).toBe('review');
+  expect(compareCookieBehavior({...active,limitedOnly:true},{categories:['analytics'],userChosen:true}).status).toBe('mismatch');
  });
 });
