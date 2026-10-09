@@ -38,7 +38,7 @@ function owner(over: Partial<OwnerReport> = {}): OwnerReport {
         { id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', cells: [bad, pending, pending], cookies: [{ id: 'c1', name: '_fbp', kind: 'cookie', purpose: 'Advertising', classified: true, cells: [bad, pending, pending] }] },
         { id: 'tool:w', partyId: 'unknown:widgets.test', label: 'widgets.test', domain: 'widgets.test', purpose: 'Unclassified', categories: [], classified: false, recognized: false, classKey: 'class:w', cells: [ask, pending, pending], cookies: [] },
       ],
-      counts: { ok: 0, mismatch: 2, needsDecision: 1, pending: 6, notChecked: 0 },
+      counts: { ok: 0, mismatch: 2, needsDecision: 1, pending: 6, notChecked: 0, notApplicable: 0, blocked: 0 },
     },
     decisions: [{ partyId: 'unknown:widgets.test', label: 'widgets.test', domain: 'widgets.test', classKey: 'class:w' }],
     ...over,
@@ -60,7 +60,7 @@ const finalOwner = owner({
       { id: 'local:gpc', location: 'local', scenario: 'gpc', label: 'Privacy signal (GPC)', state: 'done' },
     ],
     tools: [{ id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', cells: [bad, gap, ok], cookies: [] }],
-    counts: { ok: 1, mismatch: 1, needsDecision: 0, pending: 0, notChecked: 1 },
+    counts: { ok: 1, mismatch: 1, needsDecision: 0, pending: 0, notChecked: 1, notApplicable: 0, blocked: 0 },
   },
   decisions: [],
 });
@@ -150,7 +150,7 @@ describe('c. the matrix', () => {
     expect(out).toContain('aria-label="visiting now"');
   });
   it('a site that was never reached: one notice, no banner line, matrix or to-do list', () => {
-    const r = owner({ stage: 'final', scan: { ...owner().scan, unreachable: { reason: 'bot protection blocked the visit (HTTP 503)' } }, matrix: { columns: [], tools: [], counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0 } } });
+    const r = owner({ stage: 'final', scan: { ...owner().scan, unreachable: { reason: 'bot protection blocked the visit (HTTP 503)' } }, matrix: { columns: [], tools: [], counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0, notApplicable: 0, blocked: 0 } } });
     const out = html(<ReportPageView data={done({ report: r })} now={NOW} />);
     expect(out).toContain('data-testid="unreachable"');
     expect(text(<ReportPageView data={done({ report: r })} now={NOW} />)).toContain('We couldn’t reach shop.example.');
@@ -164,10 +164,45 @@ describe('c. the matrix', () => {
     expect(out).toContain('data-state="ok"');
     expect(out).not.toContain('class="rp-spinner');
   });
+  it('the three skip kinds look different: icon, text and column note', () => {
+    const na = { state: 'not-applicable' as const, reason: 'No banner here.' };
+    const blocked = { state: 'blocked' as const, reason: 'The settings button opens nothing.' };
+    const base = finalOwner.matrix;
+    const r = owner({
+      stage: 'final',
+      matrix: {
+        ...base,
+        columns: [
+          { id: 'a', location: 'local', scenario: 'close', label: 'Close the banner', state: 'not-applicable', note: 'There is no close control.' },
+          { id: 'b', location: 'local', scenario: 'reject', label: 'After rejection', state: 'not-checked', note: 'The click did not land.' },
+          { id: 'c', location: 'local', scenario: 'withdraw', label: 'Withdraw consent', state: 'blocked', note: 'A visitor cannot do this: no way to withdraw.' },
+        ],
+        tools: [{ ...base.tools[0], cells: [na, gap, blocked], cookies: [] }],
+        counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 1, notApplicable: 1, blocked: 1 },
+      },
+    });
+    const out = html(<Matrix data={done({ report: r })} />);
+    expect(out).toMatch(/data-state="not-applicable"[^>]*>∅</);
+    expect(out).toMatch(/data-state="not-checked"[^>]*>–</);
+    expect(out).toMatch(/data-state="blocked"[^>]*>⊘</);
+    expect(out).toContain('Not applicable — nothing to test');
+    expect(out).toContain('Couldn’t test — the scan could not complete this');
+    expect(out).toContain('Blocked — a visitor can’t do this either (a problem)');
+    const t = text(<Matrix data={done({ report: r })} />);
+    expect(t).toContain('∅ Close the banner: There is no close control.');
+    expect(t).toContain('– After rejection: The click did not land.');
+    expect(t).toContain('⊘ Withdraw consent: A visitor cannot do this: no way to withdraw.');
+  });
+  it('the legend lists all three skip kinds with their icons', () => {
+    const legend = html(<Matrix data={done()} />).match(/<p class="rp-legend[\s\S]*?<\/p>/)![0];
+    expect(legend).toMatch(/data-state="blocked">⊘<\/b> blocked/);
+    expect(legend).toMatch(/data-state="not-checked">–<\/b> couldn’t test/);
+    expect(legend).toMatch(/data-state="not-applicable">∅<\/b> not applicable/);
+  });
   it('before any tool is seen; an unverified location', () => {
-    expect(text(<Matrix data={running({ report: owner({ matrix: { columns: owner().matrix.columns, tools: [], counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0 } } }) })} />)).toContain('Tools and cookies appear here as the scan finds them.');
+    expect(text(<Matrix data={running({ report: owner({ matrix: { columns: owner().matrix.columns, tools: [], counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0, notApplicable: 0, blocked: 0 } } }) })} />)).toContain('Tools and cookies appear here as the scan finds them.');
     expect(text(<Matrix data={running({ report: null })} />)).toContain('Tools and cookies appear here as the scan finds them.');
-    const unverified = owner({ scan: { ...owner().scan, location: { id: 'de', label: 'Germany', verified: false, note: 'exit in US' } }, matrix: { columns: [], tools: [], counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0 } } });
+    const unverified = owner({ scan: { ...owner().scan, location: { id: 'de', label: 'Germany', verified: false, note: 'exit in US' } }, matrix: { columns: [], tools: [], counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0, notApplicable: 0, blocked: 0 } } });
     expect(text(<Matrix data={done({ report: unverified })} />)).toContain('We could not confirm where the scan was running from (exit in US), so nothing was checked.');
   });
   it('a tool classified on this page shows as saved until the next report arrives', () => {
@@ -417,7 +452,7 @@ describe('law tabs', () => {
           { id: 'us-ca:gpc', location: 'us-ca', scenario: 'gpc', label: 'Privacy signal (GPC)', state: 'done' },
         ],
         tools: [{ id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', cells: [bad, ok], cookies: [] }],
-        counts: { ok: 1, mismatch: 1, needsDecision: 0, pending: 0, notChecked: 0 },
+        counts: { ok: 1, mismatch: 1, needsDecision: 0, pending: 0, notChecked: 0, notApplicable: 0, blocked: 0 },
       },
     });
     const d = fiveLaws(null);

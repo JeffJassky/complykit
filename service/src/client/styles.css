@@ -3049,7 +3049,13 @@ textarea.input {
 .rp-legend b[data-state='needs-decision'] {
   color: var(--amber);
 }
+.rp-legend b[data-state='blocked'] {
+  color: var(--red);
+}
 .rp-legend b[data-state='not-checked'] {
+  color: var(--amber);
+}
+.rp-legend b[data-state='not-applicable'] {
   color: var(--faint);
 }
 .rp-table-wrap {
@@ -3087,7 +3093,13 @@ textarea.input {
   color: var(--muted);
 }
 .rp-matrix thead th[data-state='not-checked'] {
+  color: var(--amber);
+}
+.rp-matrix thead th[data-state='not-applicable'] {
   color: var(--faint);
+}
+.rp-matrix thead th[data-state='blocked'] {
+  color: var(--red);
 }
 .rp-matrix thead th .rp-spinner {
   margin-left: 6px;
@@ -3198,9 +3210,18 @@ span.rp-cell {
   background: var(--amber-bg);
 }
 .rp-cell[data-state='not-checked'] {
-  color: var(--faint);
-  border: 1px dashed var(--border-strong);
+  color: var(--amber);
+  border: 1px dashed var(--amber-bd);
   font-weight: 400;
+}
+.rp-cell[data-state='not-applicable'] {
+  color: var(--faint);
+  background: var(--grey-bg);
+  font-weight: 400;
+}
+.rp-cell[data-state='blocked'] {
+  color: var(--red);
+  background: var(--red-bg);
 }
 .rp-cell[aria-pressed='true'] {
   outline: 2px solid var(--focus);
@@ -3242,6 +3263,12 @@ span.rp-cell {
   color: var(--muted);
   display: grid;
   gap: 4px;
+}
+.rp-gaps li[data-state='blocked'] b {
+  color: var(--red);
+}
+.rp-gaps li[data-state='not-checked'] b {
+  color: var(--amber);
 }
 .rp-note {
   font-size: 13px;

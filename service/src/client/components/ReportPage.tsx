@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { JobReportResponse, OwnerCell, OwnerReport, OwnerToolActivity, OwnerToolRow, RemediationTask } from '../../shared/api';
+import type { JobReportResponse, OwnerCell, OwnerColumn, OwnerReport, OwnerToolActivity, OwnerToolRow, RemediationTask } from '../../shared/api';
 import { LAWS, type LawId } from '../../shared/laws';
 import { api } from '../lib/api';
 import { JobLaws, LawProgress, RescanButton } from './Laws';
@@ -26,8 +26,18 @@ export const PURPOSES: Array<{ id: string; label: string; help: string }> = [
 ];
 const PURPOSE_LABEL = Object.fromEntries(PURPOSES.map((p) => [p.id, p.label]));
 
-const CELL_ICON: Record<OwnerCell['state'], string> = { pending: '', ok: '✓', mismatch: '✕', 'needs-decision': '?', 'not-checked': '–' };
-const CELL_TEXT: Record<OwnerCell['state'], string> = { pending: 'Checking…', ok: 'As expected', mismatch: 'Problem: running when it should be off', 'needs-decision': 'Needs your decision', 'not-checked': 'Not checked' };
+const CELL_ICON: Record<OwnerCell['state'], string> = { pending: '', ok: '✓', mismatch: '✕', 'needs-decision': '?', 'not-checked': '–', 'not-applicable': '∅', blocked: '⊘' };
+const CELL_TEXT: Record<OwnerCell['state'], string> = {
+  pending: 'Checking…',
+  ok: 'As expected',
+  mismatch: 'Problem: running when it should be off',
+  'needs-decision': 'Needs your decision',
+  'not-checked': 'Couldn’t test — the scan could not complete this',
+  'not-applicable': 'Not applicable — nothing to test',
+  blocked: 'Blocked — a visitor can’t do this either (a problem)',
+};
+/** Column states that carry a note shown once under the matrix, with the icon its cells use. */
+const GAP_ICON: Partial<Record<OwnerColumn['state'], string>> = { 'not-checked': '–', 'not-applicable': '∅', blocked: '⊘' };
 
 export interface ReportActions {
   onCancel?: () => void;
@@ -301,7 +311,7 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
     );
   }
   const { columns, tools } = report.matrix;
-  const gaps = columns.filter((c) => c.state === 'not-checked');
+  const gaps = columns.filter((c) => GAP_ICON[c.state] !== undefined);
   const unverified = report.scan.location && !report.scan.location.verified;
   const colName = (i: number) => columns[i].label + (columns[i].locationLabel ? ` (${columns[i].locationLabel})` : '');
   const purposeOf = (t: OwnerToolRow) => (ui.saved?.[t.classKey] && !t.classified ? `${PURPOSE_LABEL[ui.saved[t.classKey]] ?? ui.saved[t.classKey]} (saved)` : t.purpose);
@@ -322,7 +332,13 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
           <b data-state="needs-decision">?</b> needs your decision
         </span>
         <span>
-          <b data-state="not-checked">–</b> not checked
+          <b data-state="blocked">⊘</b> blocked: a visitor can’t do this either (a problem)
+        </span>
+        <span>
+          <b data-state="not-checked">–</b> couldn’t test: the scan could not complete this
+        </span>
+        <span>
+          <b data-state="not-applicable">∅</b> not applicable: nothing to test
         </span>
         {scanning ? (
           <span>
@@ -422,8 +438,11 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
       {gaps.length ? (
         <ul className="rp-gaps" data-testid="column-gaps">
           {gaps.map((g) => (
-            <li key={g.id}>
-              <b>– {g.label}:</b> {g.note}
+            <li key={g.id} data-state={g.state}>
+              <b>
+                {GAP_ICON[g.state]} {g.label}:
+              </b>{' '}
+              {g.note}
             </li>
           ))}
         </ul>

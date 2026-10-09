@@ -26,7 +26,7 @@ function twoLocations(stage: 'live' | 'final'): OwnerReport {
         { id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', cells: [bad, ok, ok, bad], cookies: [{ id: 'c1', name: '_fbp', kind: 'cookie', purpose: 'Advertising', classified: true, cells: [bad, ok, wait, ok] }] },
         { id: 'tool:ca-only', partyId: 'w', label: 'widgets.test', domain: 'widgets.test', purpose: 'Unclassified', categories: [], classified: false, recognized: false, classKey: 'class:w', cells: [wait, wait, ask, ask], cookies: [] },
       ],
-      counts: { ok: 4, mismatch: 3, needsDecision: 2, pending: 3, notChecked: 0 },
+      counts: { ok: 4, mismatch: 3, needsDecision: 2, pending: 3, notChecked: 0, notApplicable: 0, blocked: 0 },
     },
     decisions: [{ partyId: 'w', label: 'widgets.test', domain: 'widgets.test', classKey: 'class:w' }],
     locations: [
@@ -45,7 +45,20 @@ describe('reportForLocation', () => {
     expect(meta.cells).toEqual([ok, bad]);
     expect(meta.cookies[0].cells).toEqual([wait, ok]);
     expect(r.matrix.tools.find((t) => t.partyId === 'w')!.cells).toEqual([ask, ask]);
-    expect(r.matrix.counts).toEqual({ ok: 2, mismatch: 1, needsDecision: 2, pending: 1, notChecked: 0 });
+    expect(r.matrix.counts).toEqual({ ok: 2, mismatch: 1, needsDecision: 2, pending: 1, notChecked: 0, notApplicable: 0, blocked: 0 });
+  });
+
+  it('counts not-applicable and blocked cells under their own keys (blocked is a problem, not a gap)', () => {
+    const na: OwnerCell = { state: 'not-applicable', reason: 'nothing to test' };
+    const blocked: OwnerCell = { state: 'blocked', reason: 'no way to withdraw' };
+    const gap: OwnerCell = { state: 'not-checked', reason: 'click did not land' };
+    const rep = twoLocations('final');
+    rep.matrix.tools[0] = { ...rep.matrix.tools[0], cells: [na, blocked, gap, na], cookies: [] };
+    rep.matrix.tools.length = 1;
+    const r = reportForLocation(rep, 'de');
+    expect(r.matrix.counts).toEqual({ ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0, notApplicable: 1, blocked: 1 });
+    const ca = reportForLocation(rep, 'us-ca');
+    expect(ca.matrix.counts).toEqual({ ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 1, notApplicable: 1, blocked: 0 });
   });
 
   it('takes the banner, location and visit counts from that location’s summary', () => {

@@ -12,6 +12,8 @@ const COUNT_KEY: Record<OwnerCell['state'], keyof Counts> = {
   'needs-decision': 'needsDecision',
   pending: 'pending',
   'not-checked': 'notChecked',
+  'not-applicable': 'notApplicable',
+  blocked: 'blocked',
 };
 
 /** That location's view of a multi-location owner report: its columns, its cells, its banner. */
@@ -27,7 +29,7 @@ export function reportForLocation(report: OwnerReport, locationId: string): Owne
     .map((t) => ({ ...t, cells: pick(t.cells), cookies: t.cookies.map((c) => ({ ...c, cells: pick(c.cells) })) }))
     .filter((t) => !(final && t.cells.every((c) => c.state === 'pending')));
 
-  const counts: Counts = { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0 };
+  const counts: Counts = { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0, notApplicable: 0, blocked: 0 };
   for (const t of tools) {
     for (const c of t.cells) counts[COUNT_KEY[c.state]] += 1;
     for (const k of t.cookies) for (const c of k.cells) counts[COUNT_KEY[c.state]] += 1;
