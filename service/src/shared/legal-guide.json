@@ -1123,8 +1123,12 @@
       "scenarios": [
         "do-nothing",
         "browse",
+        "dismiss",
         "reject",
         "accept",
+        "partial",
+        "withdraw",
+        "return-visit",
         "gpc",
         "opt-out-all",
         "opt-out-link",
@@ -1268,8 +1272,12 @@
       "scenarios": [
         "do-nothing",
         "browse",
+        "dismiss",
         "reject",
         "accept",
+        "partial",
+        "withdraw",
+        "return-visit",
         "gpc",
         "markers"
       ],
@@ -1349,8 +1357,12 @@
       "scenarios": [
         "do-nothing",
         "browse",
+        "dismiss",
         "reject",
         "accept",
+        "partial",
+        "withdraw",
+        "return-visit",
         "gpc",
         "markers"
       ],
@@ -1569,8 +1581,12 @@
       "scenarios": [
         "do-nothing",
         "browse",
+        "dismiss",
         "reject",
         "accept",
+        "partial",
+        "withdraw",
+        "return-visit",
         "gpc",
         "opt-out-all",
         "opt-out-link",
@@ -2074,8 +2090,12 @@
       "scenarios": [
         "do-nothing",
         "browse",
+        "dismiss",
         "reject",
         "accept",
+        "partial",
+        "withdraw",
+        "return-visit",
         "gpc",
         "markers"
       ],
