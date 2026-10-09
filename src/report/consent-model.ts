@@ -3,7 +3,7 @@ import type { BehaviorMatrix } from '../../types/index.js';
 import { consentResearch, type ResearchWorkflow } from './research.js';
 import { buildCompatibilityReport, type CompatibilityReport } from './consent-compatibility.js';
 import { buildConsentToolProofReport, type ConsentToolProofReport } from './consent-tool-proof.js';
-import type { Finding, TrackingEvaluation, ScenarioId, Evidence } from '../record/index.js';
+import type { Finding, TrackingEvaluation, ScenarioId, Evidence, SkipCause } from '../record/index.js';
 import { getRequirement, WIRETAP_STATES, describeLocationRules, citationLabel, type LocationRules } from '../registry/index.js';
 
 // The citation label lives in the registry (citation.ts) so the location popover
@@ -58,6 +58,8 @@ export interface GridCell {
   choice?: string;
   /** Why the visitor choice this scenario depends on was not completed, in the owner's words (absent = completed or no choice). */
   choiceGap?: string;
+  /** Why the visit was skipped or its choice not completed, as a code (skip-kind.ts sorts it). */
+  cause?: SkipCause;
   /** Visits that completed (1 = a single run; 2 = plus the throttled pass). Absent = not recorded. */
   runs?: number;
 }
@@ -158,6 +160,14 @@ export function choiceGap(s: TrackingEvaluation['locations'][number]['scenarios'
   return `The scan could not confirm ${CHOICE_NAME[s.choice?.kind ?? s.scenario] ?? 'this visitor choice'} worked.`;
 }
 
+/** The opt-out link walk's outcome as a cause: no link, or a link that asks for personal data. */
+function walkCause(s: TrackingEvaluation['locations'][number]['scenarios'][number]): SkipCause | undefined {
+  if (!s.choice || s.choice.ok || (s.scenario !== 'opt-out-link' && s.choice.kind !== 'opt-out-link')) return undefined;
+  if (s.optOutWalk && !s.optOutWalk.found) return 'no-opt-out-link';
+  if (s.optOutWalk?.requiredFields.length || /requires (.+?) — not submitted/.test(s.choice.method)) return 'opt-out-asks-personal-data';
+  return undefined;
+}
+
 export function buildConsentReportModel(evaluation: TrackingEvaluation, findings: Finding[]): ConsentReportModel {
   const scenarioSet = new Set<ScenarioId>();
   for (const l of evaluation.locations) for (const s of l.scenarios) scenarioSet.add(s.scenario);
@@ -178,6 +188,7 @@ export function buildConsentReportModel(evaluation: TrackingEvaluation, findings
           banner: s.banner?.found ? s.banner.cmp ?? 'banner' : 'no banner',
           choice: s.choice ? `${s.choice.kind}${s.choice.ok ? '' : ' (failed)'}` : undefined,
           choiceGap: s.choice && !s.choice.ok ? choiceGap(s) : undefined,
+          ...(s.cause ?? walkCause(s) ? { cause: s.cause ?? walkCause(s) } : {}),
           runs: s.runs,
         };
       }

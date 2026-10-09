@@ -370,7 +370,7 @@ export async function dismissBanner(page: Page): Promise<{ ok: boolean; method: 
 const ANALYTICS_LABEL = /analytic|statistic|performance|measurement|mesure|statistik/i;
 const SAVE_LABEL = /save|confirm|allow selection|accept selected|submit|apply|speichern|enregistrer/i;
 
-export async function partialConsent(page: Page): Promise<{ ok: boolean; method: string; reason?: string }> {
+export async function partialConsent(page: Page): Promise<{ ok: boolean; method: string; reason?: string; cause?: 'settings-dead' | 'no-category-choice' }> {
   // complykit (D10): exact toggles and buttons, no text matching — also when its
   // banner is not showing (the tool is running): never fall through to heuristics.
   if ((await page.$(CK.banner).catch(() => null)) || (await complykitRunning(page))) return complykitPartial(page);
@@ -454,7 +454,7 @@ export async function partialConsent(page: Page): Promise<{ ok: boolean; method:
  *  missed both — the toggle's label is a sibling button, not a <label> (storyfolder.com, 2026-10-08).
  *  Opened the way a visitor opens it, through the banner's own settings control: when that control
  *  does nothing, the visitor cannot choose per category either, and the reason says so. */
-async function cookieconsentPartial(page: Page): Promise<{ ok: boolean; method: string; reason?: string }> {
+async function cookieconsentPartial(page: Page): Promise<{ ok: boolean; method: string; reason?: string; cause?: 'settings-dead' | 'no-category-choice' }> {
   const open = (): Promise<boolean> => page.evaluate(() => document.documentElement.classList.contains('show--preferences')).catch(() => false);
   if (!(await open())) {
     const control = await page
@@ -465,10 +465,10 @@ async function cookieconsentPartial(page: Page): Promise<{ ok: boolean; method: 
         return (c.textContent ?? '').trim().slice(0, 40);
       })
       .catch(() => null);
-    if (control === null) return { ok: false, method: 'cookieconsent3:no-settings-control', reason: 'the banner offers no control that opens per-category settings' };
+    if (control === null) return { ok: false, method: 'cookieconsent3:no-settings-control', reason: 'the banner offers no control that opens per-category settings', cause: 'no-category-choice' };
     await page.click('[data-complykit-cc-show]', { timeout: 4000 }).catch(() => {});
     await page.waitForTimeout(900);
-    if (!(await open())) return { ok: false, method: 'cookieconsent3:settings-did-not-open', reason: `the banner’s “${control}” control did not open the cookie settings, so a visitor cannot choose per category` };
+    if (!(await open())) return { ok: false, method: 'cookieconsent3:settings-did-not-open', reason: `the banner’s “${control}” control did not open the cookie settings, so a visitor cannot choose per category`, cause: 'settings-dead' };
   }
   const toggled = await page
     .evaluate((a) => {
@@ -484,7 +484,7 @@ async function cookieconsentPartial(page: Page): Promise<{ ok: boolean; method: 
       return hit;
     }, ANALYTICS_LABEL.source)
     .catch(() => false);
-  if (!toggled) return { ok: false, method: 'cookieconsent3:no-analytics-category', reason: 'the cookie settings have no analytics category to grant on its own' };
+  if (!toggled) return { ok: false, method: 'cookieconsent3:no-analytics-category', reason: 'the cookie settings have no analytics category to grant on its own', cause: 'no-category-choice' };
   const saved = await page.click('#cc-main .pm [data-role="save"]', { timeout: 4000 }).then(() => true, () => false);
   return saved ? { ok: true, method: 'cookieconsent3:analytics' } : { ok: false, method: 'cookieconsent3:no-save', reason: 'the cookie settings have no save control' };
 }

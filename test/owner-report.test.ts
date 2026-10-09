@@ -100,16 +100,16 @@ describe('owner report: live', () => {
 });
 
 describe('owner report: final', () => {
-  it('nothing pending; a choice with no banner to act on is one not-checked column with one note', () => {
+  it('nothing pending; a choice with no banner to act on is one not-applicable column with one note (nothing to test, not a gap)', () => {
     const noBanner = { scenario: 'reject', status: 'not-applicable', reason: 'no banner', banner: { found: false } };
     const model = buildConsentReportModel(evaluation({ scenarios: [{ ...doNothing, banner: { found: false } }, noBanner], inventory: [meta], observations: [obs('do-nothing', [fbpBeforeChoice])] }), []);
     const r = buildOwnerReport({ ...base, stage: 'final', plan: undefined, model, finishedAt: '2026-10-07T10:05:00Z' });
     expect(r.stage).toBe('final');
     expect(r.matrix.columns).toEqual([
       { id: 'de:do-nothing', location: 'de', scenario: 'do-nothing', label: 'Before a choice', state: 'done' },
-      { id: 'de:reject', location: 'de', scenario: 'reject', label: 'After rejection', state: 'not-checked', note: 'There was no consent banner, so this choice couldn’t be made.' },
+      { id: 'de:reject', location: 'de', scenario: 'reject', label: 'After rejection', state: 'not-applicable', note: 'There was no consent banner, so this choice couldn’t be made.' },
     ]);
-    expect(r.matrix.tools[0].cells.map((c) => c.state)).toEqual(['mismatch', 'not-checked']);
+    expect(r.matrix.tools[0].cells.map((c) => c.state)).toEqual(['mismatch', 'not-applicable']);
     expect(r.matrix.counts.pending).toBe(0);
     expect(r.banner).toEqual({ state: 'none', visitsWithBanner: 0, visitsChecked: 2 });
     expect(r.scan).toMatchObject({ visitsDone: 2, visitsTotal: 2, pagesVisited: 2, finishedAt: '2026-10-07T10:05:00Z' });
@@ -118,7 +118,7 @@ describe('owner report: final', () => {
     const noClose = { scenario: 'dismiss', status: 'not-applicable', reason: 'the banner offers no way to close it without choosing', banner: { found: true, cmp: 'onetrust' }, choice: { kind: 'dismiss', ok: false, method: 'none' } };
     const model = buildConsentReportModel(evaluation({ scenarios: [doNothing, noClose], inventory: [meta], observations: [obs('do-nothing', [fbpBeforeChoice])] }), []);
     const r = buildOwnerReport({ ...base, stage: 'final', plan: undefined, model, finishedAt: '2026-10-07T10:05:00Z' });
-    expect(r.matrix.columns.find((c) => c.scenario === 'dismiss')).toMatchObject({ state: 'not-checked', note: 'Not applicable here: the banner offers no way to close it without choosing.' });
+    expect(r.matrix.columns.find((c) => c.scenario === 'dismiss')).toMatchObject({ state: 'not-applicable', note: 'Not applicable here: the banner offers no way to close it without choosing.' });
   });
 
   it('no visit reached the site: one unreachable notice, no tools, decisions or to-do list', () => {
@@ -168,7 +168,7 @@ describe('owner report: the service’s mirror (service/src/shared/api.ts)', () 
     const model = buildConsentReportModel(evaluation({ scenarios: [doNothing], inventory: [meta, widget], observations: [obs('do-nothing', [fbpBeforeChoice])] }), []);
     const r: ServiceOwnerReport = buildOwnerReport({ ...base, model, done: [{ location: 'de', scenario: 'do-nothing' }] });
     expect(Object.keys(r).sort()).toEqual(['banner', 'decisions', 'generatedAt', 'locations', 'matrix', 'runId', 'scan', 'site', 'stage', 'version']);
-    expect(Object.keys(r.matrix.counts).sort()).toEqual(['mismatch', 'needsDecision', 'notChecked', 'ok', 'pending']);
+    expect(Object.keys(r.matrix.counts).sort()).toEqual(['blocked', 'mismatch', 'needsDecision', 'notApplicable', 'notChecked', 'ok', 'pending']);
   });
 });
 

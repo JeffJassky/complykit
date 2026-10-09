@@ -12,6 +12,7 @@ import {
   type Timeline,
   type TimelineEvent,
   type ChoiceEvent,
+  type SkipCause,
 } from '../../../record/index.js';
 import { startCapture, withTimeout, type CaptureHandle } from './capture.js';
 import { AutoconsentDriver } from './autoconsent.js';
@@ -90,6 +91,7 @@ export interface ScenarioOutput {
   timeline: Timeline;
   status: 'tested' | 'not-tested' | 'not-applicable';
   reason?: string;
+  cause?: SkipCause;
   screenshots: string[];
   siteReported: Array<{ source: string; value: string }>;
 }
@@ -463,6 +465,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
   const search: SearchStep = { term: input.markers.text, note: (r) => notTested.push(r) };
   let status: ScenarioOutput['status'] = 'tested';
   let reason: string | undefined;
+  let cause: SkipCause | undefined;
   const landing = input.targetUrl;
 
   if (!driver.available) notTested.push('banner driver (@duckduckgo/autoconsent) not installed — heuristic banner detection only');
@@ -471,6 +474,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
   const choiceGate = (ev: ChoiceEvent | null): boolean => {
     if (ev && !ev.ok) {
       status = 'not-tested';
+      cause = 'choice-failed';
       reason = `could not make the "${ev.choice}" choice (${ev.method}${ev.note ? `; ${ev.note}` : ''})`;
       return false;
     }
@@ -553,6 +557,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
         await v.land(landing);
         if (!v.bannerShown) {
           status = 'not-applicable';
+          cause = 'no-banner';
           reason = noBannerReason(v.silentCmp);
           break;
         }
@@ -564,6 +569,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
           if (!d.ok) {
             // A banner with no close control is a design fact, not a test failure.
             status = d.noClose ? 'not-applicable' : 'not-tested';
+            cause = d.noClose ? 'no-close' : 'choice-failed';
             reason = d.noClose ? 'the banner offers no way to close it without choosing' : 'could not close the banner without choosing';
             break;
           }
@@ -581,6 +587,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
           await v.shot('after-partial');
           if (!p.ok) {
             status = 'not-tested';
+            cause = p.cause ?? 'choice-failed';
             reason = p.reason ?? 'could not grant a single category (no recognizable analytics-only control)';
             break;
           }
@@ -636,10 +643,12 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
           await v.shot('after-withdraw');
           if (!re.ok) {
             // Not a failed test: "no withdrawal entry point" is itself the evidence.
+            cause = 'no-withdraw-entry';
             break;
           }
           if (!ok) {
             status = 'not-tested';
+            cause = 'choice-failed';
             reason = 'reopened settings but could not withdraw';
             break;
           }
@@ -693,6 +702,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
     });
     if (timedOut) {
       status = 'not-tested';
+      cause = 'timeout';
       reason = `scenario exceeded its ${Math.round(budget / 1000)}s budget; evidence up to that point is kept`;
       trace(reason);
       const open = timer.summary().filter((st) => st.open);
@@ -700,6 +710,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
     }
   } catch (err) {
     status = 'not-tested';
+    cause = err instanceof BlockedError ? 'bot-blocked' : 'crashed';
     reason =
       err instanceof BlockedError
         ? `bot protection blocked the visit (${err.message}) — a recorded coverage gap, not evidence about the site`
@@ -773,7 +784,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
   };
   const top = topSteps(steps, 3);
   trace(`${status}${reason ? ` (${reason})` : ''} — ${result.events.filter((e) => e.type === 'request').length} requests, ${result.cookies.length} cookies, ${Math.round(durationMs / 1000)}s${top ? ` (${top})` : ''}`);
-  return { timeline, status, reason, screenshots: v.screenshots, siteReported: [...v.siteReported.values()] };
+  return { timeline, status, reason, ...(cause ? { cause } : {}), screenshots: v.screenshots, siteReported: [...v.siteReported.values()] };
 }
 
 /** Write the timeline evidence file (redacted unless raw). */

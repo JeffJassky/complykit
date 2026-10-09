@@ -334,6 +334,7 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
           scenario,
           status: out.status,
           reason: out.reason,
+          ...(out.cause ? { cause: out.cause } : {}),
           durationMs: tl.snapshot.durationMs,
           banner: { found: Boolean(banner), cmp: banner?.type === 'banner' ? banner.cmp : undefined, shownAtMs: banner?.t },
           consentTool: consentTool?.success ? consentTool.data : undefined,
@@ -350,6 +351,7 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
           scenario,
           status: out.status,
           reason: out.reason,
+          ...(out.cause ? { cause: out.cause } : {}),
           requests: sum.counts?.requests ?? 0,
           thirdPartyRequests: sum.counts?.thirdPartyRequests ?? 0,
           parties: sum.counts?.parties ?? 0,
@@ -384,6 +386,7 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
               run: runNo,
               status: again.status,
               reason: again.reason,
+              ...(again.cause ? { cause: again.cause } : {}),
               ...countsOf(again.timeline),
               durationMs: again.timeline.snapshot.durationMs,
             });

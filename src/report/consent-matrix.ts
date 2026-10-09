@@ -1,6 +1,7 @@
 import type { ConsentReportModel, ScenarioId, BehaviorMatrix, BehaviorMatrixCell } from '../../types/index.js';
 import { DEFAULT_KB, lookupStore, regimeForCodes, describeLocationRules, isWiretapJurisdiction } from '../registry/index.js';
 import { escapeHtml as esc } from './human.js';
+import { skipKindOf, SKIP_LEAD, type SkipKind } from './skip-kind.js';
 import { workspaceId } from './workspace.js';
 import { compareCookieBehavior, cookiePurposes, type ComparisonFacts, type PrivacyRegime } from './cookie-purpose.js';
 import { ScenarioId as ScenarioIds } from '../record/index.js';
@@ -38,14 +39,16 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
   const regimes = new Map(m.locations.map((l) => [l.id, regimeFor(l.jurisdictions, m.startedAt.slice(0, 10))]));
   // A column whose visitor action did not run, or whose choice did not succeed,
   // is ONE gap for the whole column — not a per-cookie "needs a look".
-  const columnGap=(location:string,scenario:ScenarioId):string|undefined=>{
+  // Each gap is one of three kinds (skip-kind.ts): nothing to test, the scan could not, or the site blocked the visitor.
+  const columnGap=(location:string,scenario:ScenarioId):{reason:string;kind:SkipKind}|undefined=>{
     const grid=m.grid[location]?.[scenario];
-    if(!grid||grid.status==='not-run')return 'This visitor action was not run.';
-    if(grid.status!=='tested')return grid.reason??'This action was not completed.';
-    if(CHOICE.has(scenario)&&(!grid.choice||grid.choice.includes('(failed)')))return grid.choiceGap??'The required visitor choice was not confirmed successful.';
+    if(!grid||grid.status==='not-run')return {reason:'This visitor action was not run.',kind:'untestable'};
+    const where={regime:regimes.get(location)?.regime??'unknown',wiretap:isWiretapJurisdiction(m.locations.find(l=>l.id===location)?.jurisdictions??[])};
+    if(grid.status!=='tested')return {reason:grid.reason??'This action was not completed.',kind:skipKindOf(grid,where)};
+    if(CHOICE.has(scenario)&&(!grid.choice||grid.choice.includes('(failed)')))return {reason:grid.choiceGap??'The required visitor choice was not confirmed successful.',kind:skipKindOf({...grid,status:'not-tested'},where)};
     return undefined;
   };
-  const columns = m.locations.filter((l) => scenarios.some((sc) => m.grid[l.id]?.[sc]?.status === 'tested')).flatMap(l=>scenarios.map(s=>{const gap=columnGap(l.id,s);return {id:l.id+':'+s,location:l.id,scenario:s,label:SCENARIO_LABEL[s]??s,locationLabel:`${l.label} · ${(regimes.get(l.id)??{label:''}).label}`,...(gap?{unavailable:{reason:gap}}:{})};}));
+  const columns = m.locations.filter((l) => scenarios.some((sc) => m.grid[l.id]?.[sc]?.status === 'tested')).flatMap(l=>scenarios.map(s=>{const gap=columnGap(l.id,s);return {id:l.id+':'+s,location:l.id,scenario:s,label:SCENARIO_LABEL[s]??s,locationLabel:`${l.label} · ${(regimes.get(l.id)??{label:''}).label}`,...(gap?{unavailable:gap}:{})};}));
   const rows = m.inventory.flatMap((p,i)=>[
     {id:'tool:'+p.partyId,kind:'tool' as const,label:p.label,tool:p.label,partyId:p.partyId,categories:p.categories,categorySource:siteClass(m,p.partyId)?SITE_SOURCE:p.recognized?'tool library':'unknown',link:'#tool-'+(i+1)},
     // A cookie inherits its tool's classification; a known cookie-name pattern
@@ -68,7 +71,7 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
     const actual=!observed?'Detailed observations unavailable':row.kind==='tool'?`${requests} data request(s) observed during this part of the visit; ${facts?.stores.filter(isActiveStore).length??0} cookie or storage item(s) active`:
       !store?'No writes or saved value recorded at the end of this visit':`${store.writePhases.length?'Written '+store.writePhases.map(phase=>PHASE_LABEL[phase]??phase).join(', ')+'. ':''}${store.presentAtEnd?(store.thirdParty?'Still in the browser at the end of the visit, on the vendor’s own domain — only the vendor can remove it.':'Still saved in the browser at the end of the visit.'):'Not saved in the browser at the end of the visit.'}${store.attribution==='known-name'?' Tool attributed by a known name pattern.':''}`;
     let unavailable: ComparisonFacts['unavailable'];
-    if(col.unavailable)unavailable={status:'not-tested',reason:`Not checked: ${col.unavailable.reason} This applies to the whole “${col.label}” column, not to ${row.label} specifically.`};
+    if(col.unavailable)unavailable={status:'not-tested',reason:`${SKIP_LEAD[col.unavailable.kind]}: ${col.unavailable.reason} This applies to the whole “${col.label}” column, not to ${row.label} specifically.`};
     else if(!observed||observed.durationMs<=0)unavailable={status:'unknown',reason:'Per-item observations are missing; a lack of findings is not a pass.'};
     else if(p.recognized&&!facts&&!observed.knownPartyIds.includes(p.partyId))unavailable={status:'unknown',reason:'The saved tool identity could not be matched to the available evidence classifier.'};
     else if(m.locations.find(l=>l.id===col.location)?.verdict!=='verified')unavailable={status:'unknown',reason:'The test location was not verified.'};
@@ -78,7 +81,7 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
     const captureGap=m.notTested.filter(g=>(!g.location||g.location===col.location)&&(!['flow','scenario'].includes(g.scope)||!ScenarioIds.options.includes(g.id as ScenarioId)||g.id===col.scenario)).some(g=>['frame','page','flow','scenario'].includes(g.scope)&&!['server-to-server','vendor-processing','contracts','consent-records','unvisited'].includes(g.id)&&!NOT_A_CAPTURE_GAP.test(g.reason));
     const rg = regimes.get(col.location) ?? { regime: 'unknown' as const, label: 'this location' };
     const comparisonFacts: ComparisonFacts = {scenario:col.scenario,regime:rg.regime,regimeLabel:rg.label,wiretap:isWiretapJurisdiction(m.locations.find(l=>l.id===col.location)?.jurisdictions??[]),...(m.siteWorkspace?.decisions?.limitedPings?{limitedPings:m.siteWorkspace.decisions.limitedPings.choice}:{}),unavailable,hasActivity,limitedOnly:row.kind==='tool'&&requests>0&&limited===requests&&!facts?.stores.some(isActiveStore),captureGap};
-    return {columnId:col.id,...compareCookieBehavior(comparisonFacts,{categories:row.categories}),observed:actual,comparisonFacts,evidencePointers:[`/inventory/${i}`, ...(observed?['/behaviorObservations/'+m.behaviorObservations!.indexOf(observed)]:[])]} satisfies BehaviorMatrixCell;
+    return {columnId:col.id,...compareCookieBehavior(comparisonFacts,{categories:row.categories}),...(col.unavailable?{skip:col.unavailable.kind}:{}),observed:actual,comparisonFacts,evidencePointers:[`/inventory/${i}`, ...(observed?['/behaviorObservations/'+m.behaviorObservations!.indexOf(observed)]:[])]} satisfies BehaviorMatrixCell;
     };
     const built=visits.length?visits.map(build):[build(undefined)];
     const activeRuns=built.filter(c=>c.comparisonFacts?.hasActivity).length;

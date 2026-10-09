@@ -943,10 +943,13 @@ export interface ConsentToolProof {
   notTested: string[];
   scope?: { pages?: number; locations: number; runs: number };
 }
+/** Why a visit was skipped or its choice not completed; the report sorts it into not applicable, couldn't test, or blocked by the site. */
+export type SkipCause = 'no-banner' | 'no-close' | 'settings-dead' | 'no-category-choice' | 'no-withdraw-entry' | 'no-opt-out-link' | 'opt-out-asks-personal-data' | 'choice-failed' | 'timeout' | 'crashed' | 'bot-blocked';
 export interface ScenarioSummary {
   scenario: ScenarioId;
   status: 'tested' | 'not-tested' | 'not-applicable';
   reason?: string;
+  cause?: SkipCause;
   durationMs?: number;
   banner?: { found: boolean; cmp?: string; shownAtMs?: number };
   choice?: { kind: string; ok: boolean; method: string };
@@ -971,12 +974,12 @@ export interface NotTestedItem {
   reason: string;
 }
 export interface BehaviorMatrixCell {
-  columnId:string;status:'match'|'mismatch'|'review'|'unknown'|'not-tested'|'allowed';expected:string;observed:string;reason:string;evidencePointers:string[];runs?:{total:number;active:number};comparisonFacts?:{scenario:string;unavailable?:{status:'unknown'|'not-tested';reason:string};hasActivity:boolean;limitedOnly:boolean;captureGap:boolean};
+  columnId:string;status:'match'|'mismatch'|'review'|'unknown'|'not-tested'|'allowed';/** Set when the column was skipped: nothing to test, the scan could not, or the site blocked the visitor. */skip?:'not-applicable'|'untestable'|'blocked';expected:string;observed:string;reason:string;evidencePointers:string[];runs?:{total:number;active:number};comparisonFacts?:{scenario:string;unavailable?:{status:'unknown'|'not-tested';reason:string};hasActivity:boolean;limitedOnly:boolean;captureGap:boolean};
 }
 export interface BehaviorMatrix {
   version:1;comparison:string;
-  /** `unavailable`: the column's visitor action did not run or its choice did not succeed — one gap for the whole column; its cells are 'not-tested'. */
-  columns:Array<{id:string;location:string;scenario:ScenarioId;label:string;locationLabel:string;unavailable?:{reason:string}}>;
+  /** `unavailable`: the column's visitor action did not run or its choice did not succeed — one gap for the whole column; its cells are 'not-tested'. `kind`: nothing to test (not-applicable), the scan could not (untestable), or the site blocked the visitor (blocked). */
+  columns:Array<{id:string;location:string;scenario:ScenarioId;label:string;locationLabel:string;unavailable?:{reason:string;kind:'not-applicable'|'untestable'|'blocked'}}>;
   rows:Array<{id:string;kind:'tool'|'storage';label:string;tool:string;partyId:string;storageKind?:string;categories:string[];purposeCategories?:string[];categorySource:string;link:string;cells:BehaviorMatrixCell[]}>;
 }
 export interface BehaviorObservation {
@@ -1440,6 +1443,8 @@ export interface GridCell {
   choice?: string;
   /** Why the visitor choice this scenario depends on was not completed, in the owner's words (absent = completed or no choice). */
   choiceGap?: string;
+  /** Why the visit was skipped or its choice not completed, as a code. */
+  cause?: SkipCause;
   /** Visits that completed (1 = a single run; 2 = plus the throttled pass). Absent = not recorded. */
   runs?: number;
 }

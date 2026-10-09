@@ -481,10 +481,29 @@ export const PartyInventoryItem = z.object({
 });
 export type PartyInventoryItem = z.infer<typeof PartyInventoryItem>;
 
+// Why a visit was skipped or its choice not completed, as a code the report sorts into "not
+// applicable" (nothing to test), "couldn't test" (the scan's limit) or "blocked" (the site stopped
+// the visitor — a problem). Absent on reports written before it: the report falls back to the reason.
+export const SkipCause = z.enum([
+  'no-banner', // no banner was shown, so there was no choice to make
+  'no-close', // the banner has no way to close it without choosing
+  'settings-dead', // a visible settings control opened nothing
+  'no-category-choice', // the settings offer no per-category choice
+  'no-withdraw-entry', // no way to reopen the consent settings after a choice
+  'no-opt-out-link', // no opt-out link was found
+  'opt-out-asks-personal-data', // the opt-out asks for personal data the scan does not submit
+  'choice-failed', // the scan could not make or confirm the choice
+  'timeout',
+  'crashed',
+  'bot-blocked',
+]);
+export type SkipCause = z.infer<typeof SkipCause>;
+
 export const ScenarioSummary = z.object({
   scenario: ScenarioId,
   status: z.enum(['tested', 'not-tested', 'not-applicable']),
   reason: z.string().optional(),
+  cause: SkipCause.optional(),
   durationMs: z.number().optional(),
   banner: z.object({ found: z.boolean(), cmp: z.string().optional(), shownAtMs: z.number().optional() }).optional(),
   // The consent tool and its stored default on this scenario's fresh profile, read before any interaction.

@@ -591,7 +591,8 @@ export interface ReportServiceConfig {
 // when the run is written and on every re-render). The service never imports
 // the package; a test checks this mirror against the builder's output.
 
-export type OwnerCellState = 'pending' | 'ok' | 'mismatch' | 'needs-decision' | 'not-checked';
+/** not-checked = the scan could not (its limit); not-applicable = nothing to test; blocked = the site stopped the visitor, a problem. */
+export type OwnerCellState = 'pending' | 'ok' | 'mismatch' | 'needs-decision' | 'not-checked' | 'not-applicable' | 'blocked';
 
 export interface OwnerCell {
   state: OwnerCellState;
@@ -608,7 +609,7 @@ export interface OwnerColumn {
   /** Plain name of the visitor action ("After rejection"). */
   label: string;
   locationLabel?: string;
-  state: 'pending' | 'running' | 'done' | 'not-checked';
+  state: 'pending' | 'running' | 'done' | 'not-checked' | 'not-applicable' | 'blocked';
   /** Why the whole column is not checked — said once, not per cell. */
   note?: string;
 }
@@ -687,7 +688,7 @@ export interface OwnerReport {
   matrix: {
     columns: OwnerColumn[];
     tools: OwnerToolRow[];
-    counts: Record<'ok' | 'mismatch' | 'needsDecision' | 'pending' | 'notChecked', number>;
+    counts: Record<'ok' | 'mismatch' | 'needsDecision' | 'pending' | 'notChecked' | 'notApplicable' | 'blocked', number>;
   };
   /** Tools whose purpose is not known yet (the to-do list's first items while the checklist does not exist yet). */
   decisions: Array<{ partyId: string; label: string; domain: string; classKey: string }>;
