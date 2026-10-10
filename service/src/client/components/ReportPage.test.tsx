@@ -132,6 +132,10 @@ describe('b. consent banner', () => {
     expect(text(<BannerLine data={running({ report: owner({ banner: { state: 'detected', visitsWithBanner: 1, visitsChecked: 1 } }) })} />)).toContain('detected (provider not recognized)');
     expect(text(<BannerLine data={done({ report: owner({ banner: { state: 'none', visitsWithBanner: 0, visitsChecked: 3 } }) })} />)).toContain('No consent banner detected');
     expect(text(<BannerLine data={running({ report: null })} />)).toContain('Looking for a consent banner…');
+    const broken = text(<BannerLine data={done({ report: owner({ banner: { state: 'none', visitsWithBanner: 0, visitsChecked: 3, consentTools: ['WebToffee'], broken: { reason: 'the consent tool (webtoffee-cookie-consent) is on the page but its script crashed before showing a banner, so a visitor gets no banner and no choice: “x”' } } }) })} />);
+    expect(broken).toContain('Your consent tool is broken: no visitor gets a banner');
+    expect(broken).toContain('The consent tool (webtoffee-cookie-consent) is on the page but its script crashed');
+    expect(broken).not.toContain('No consent banner detected');
     expect(text(<BannerLine data={running({ report: owner({ banner: { state: 'pending', visitsWithBanner: 0, visitsChecked: 0 } }) })} />)).toContain('Looking for a consent banner…');
   });
 });

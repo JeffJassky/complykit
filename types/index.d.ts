@@ -946,7 +946,7 @@ export interface ConsentToolProof {
   scope?: { pages?: number; locations: number; runs: number };
 }
 /** Why a visit was skipped or its choice not completed; the report sorts it into not applicable, couldn't test, or blocked by the site. */
-export type SkipCause = 'no-banner' | 'no-close' | 'settings-dead' | 'no-category-choice' | 'no-withdraw-entry' | 'no-opt-out-link' | 'opt-out-asks-personal-data' | 'choice-failed' | 'timeout' | 'crashed' | 'bot-blocked';
+export type SkipCause = 'no-banner' | 'tool-broken' | 'no-close' | 'settings-dead' | 'no-category-choice' | 'no-withdraw-entry' | 'no-opt-out-link' | 'opt-out-asks-personal-data' | 'choice-failed' | 'timeout' | 'crashed' | 'bot-blocked';
 export interface ScenarioSummary {
   scenario: ScenarioId;
   status: 'tested' | 'not-tested' | 'not-applicable';

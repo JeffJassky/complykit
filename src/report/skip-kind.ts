@@ -7,7 +7,8 @@ import type { SkipCause } from '../record/index.js';
 //   untestable      the scan could not do it: a click that did not land, a timeout, bot
 //                   protection, an unverified location. Unknown — rerun or check by hand.
 //   blocked         the site stopped the visitor: a settings control that opens nothing, no way
-//                   to withdraw consent where consent is how choice is offered. A problem to fix:
+//                   to withdraw consent where consent is how choice is offered, a consent tool
+//                   whose script crashed before drawing its banner. A problem to fix:
 //                   if the scan cannot do it, neither can a visitor.
 //
 // The scan records a cause code (record SkipCause); the location's rules decide the kind where
@@ -30,6 +31,7 @@ export interface SkipPlace {
 
 const LEGACY: Array<[RegExp, SkipCause]> = [
   [/offers no way to close it/, 'no-close'],
+  [/crashed before showing a banner/, 'tool-broken'],
   [/showed no banner|no consent banner detected/, 'no-banner'],
   [/did not open the cookie settings/, 'settings-dead'],
   [/No opt-out link was found/, 'no-opt-out-link'],
@@ -56,6 +58,7 @@ export function skipKindOf(f: SkipFacts, where: SkipPlace): SkipKind {
     case 'no-close':
       return 'not-applicable';
     case 'settings-dead':
+    case 'tool-broken':
       return 'blocked';
     case 'no-category-choice':
       return where.regime === 'opt-in' ? 'blocked' : 'not-applicable';

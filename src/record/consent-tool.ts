@@ -346,3 +346,50 @@ export function detectConsentTool(input: StoredConsentInput): ConsentToolRecord 
   }
   return { vendor: null, defaultGrants: {}, decoded: false, source: 'none', note: 'no consent tool detected (no banner, no known stored state)' };
 }
+
+// WordPress consent plugins by directory (ids as in registry/platform.ts CONSENT_PLUGINS;
+// record/ cannot import registry/, so the table is repeated here for the collector).
+const CONSENT_PLUGIN_DIRS: Array<{ id: string; dir: RegExp }> = [
+  { id: 'complianz', dir: /\/wp-content\/plugins\/complianz[^/]*\//i },
+  { id: 'cookieyes', dir: /\/wp-content\/plugins\/cookie-law-info\//i },
+  { id: 'cookie-notice', dir: /\/wp-content\/plugins\/cookie-notice\//i },
+  { id: 'real-cookie-banner', dir: /\/wp-content\/plugins\/real-cookie-banner[^/]*\//i },
+  { id: 'borlabs-cookie', dir: /\/wp-content\/plugins\/borlabs-cookie\//i },
+  { id: 'iubenda', dir: /\/wp-content\/plugins\/iubenda[^/]*\//i },
+  { id: 'cookiebot', dir: /\/wp-content\/plugins\/cookiebot\//i },
+  { id: 'gdpr-cookie-compliance', dir: /\/wp-content\/plugins\/gdpr-cookie-compliance\//i },
+  { id: 'webtoffee-cookie-consent', dir: /\/wp-content\/plugins\/webtoffee-(?:cookie-consent|gdpr-cookie-consent)[^/]*\//i },
+];
+
+// Hosted consent tools, by the host their script loads from.
+const HOSTED_CONSENT_TOOLS: Array<{ id: string; host: RegExp }> = [
+  { id: 'onetrust', host: /(^|\.)(cookielaw\.org|cookiepro\.com|onetrust\.com)$/i },
+  { id: 'cookiebot', host: /(^|\.)cookiebot\.(com|eu)$/i },
+  { id: 'usercentrics', host: /(^|\.)usercentrics\.(eu|com)$/i },
+  { id: 'didomi', host: /(^|\.)privacy-center\.org$/i },
+  { id: 'cookieyes', host: /(^|\.)cdn-cookieyes\.com$/i },
+  { id: 'termly', host: /(^|\.)termly\.io$/i },
+  { id: 'iubenda', host: /(^|\.)iubenda\.com$/i },
+  { id: 'osano', host: /(^|\.)osano\.com$/i },
+  { id: 'trustarc', host: /(^|\.)(trustarc|truste)\.com$/i },
+  { id: 'sourcepoint', host: /(^|\.)privacy-mgmt\.com$/i },
+  { id: 'consentmanager', host: /(^|\.)consentmanager\.(net|de)$/i },
+  { id: 'quantcast-choice', host: /(^|\.)(inmobi\.com|consensu\.org)$/i },
+];
+
+/**
+ * The consent tool whose own script `url` is, or undefined. A WordPress plugin is
+ * named by its directory on any host, so a CDN mirror of the site's /wp-content/
+ * (2026-10-10 field run: WebToffee served from an nxedge.io edge) still counts.
+ */
+export function consentToolOfScript(url: string): string | undefined {
+  const plugin = CONSENT_PLUGIN_DIRS.find((p) => p.dir.test(url));
+  if (plugin) return plugin.id;
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
+  return HOSTED_CONSENT_TOOLS.find((t) => t.host.test(host))?.id;
+}

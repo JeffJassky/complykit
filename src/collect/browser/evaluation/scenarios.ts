@@ -5,6 +5,7 @@ import {
   putEvidence,
   redactTimeline,
   detectConsentTool,
+  consentToolOfScript,
   type RunId,
   type LocationSpec,
   type LocationVerification,
@@ -102,6 +103,30 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 
 const GPC_SCENARIOS: ScenarioId[] = ['gpc', 'opt-out-all'];
 
+/** A script error thrown by the consent tool's own script, host + path only (no query). */
+export interface ToolCrash {
+  tool: string;
+  message: string;
+  source: string;
+}
+
+/** Why a banner scenario could not run: the site's consent tool crashed, so no visitor gets a banner or a choice. */
+export function brokenToolReason(c: ToolCrash): string {
+  return `the consent tool (${c.tool}) is on the page but its script crashed before showing a banner, so a visitor gets no banner and no choice: “${c.message}” in ${c.source}`;
+}
+
+/** The script URL a page error was thrown from: the first frame of its stack, host + path only. */
+export function errorSource(stack: string | undefined): string | undefined {
+  const m = /(https?:\/\/[^\s()]+?):\d+:\d+/.exec(stack ?? '');
+  if (!m) return undefined;
+  try {
+    const u = new URL(m[1]);
+    return `${u.host}${u.pathname}`;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Why a banner scenario was skipped: a tool present but silent is the site's design for this visitor, not a detection failure. */
 export function noBannerReason(cmp?: string): string {
   return cmp
@@ -117,6 +142,10 @@ class Visit {
   cmp?: string;
   /** A consent tool the driver detected that drew no banner for this visitor (e.g. US implied consent). */
   silentCmp?: string;
+  /** The consent tool's script threw before any banner was drawn (a broken install). */
+  toolCrash?: ToolCrash;
+  /** Uncaught script errors on this visit's pages (first few). */
+  readonly pageErrors: Array<{ message: string; source?: string; url?: string }> = [];
   blocked?: string;
   throttleFailed?: string;
   private defaultToolRead = false;
@@ -140,6 +169,11 @@ class Visit {
 
   private async openPage(): Promise<Page> {
     this.page = await this.context.newPage();
+    this.page.on('pageerror', (err) => {
+      if (this.pageErrors.length >= 20) return;
+      const source = errorSource(err.stack);
+      this.pageErrors.push({ message: err.message.slice(0, 200), source, url: /(https?:\/\/[^\s()]+?):\d+:\d+/.exec(err.stack ?? '')?.[1] });
+    });
     this.page.setDefaultTimeout(this.input.throttle ? 45000 : 15000);
     if (this.input.throttle) await this.throttlePage(this.page);
     await this.cap.watchPage(this.page, true);
@@ -276,6 +310,7 @@ class Visit {
         this.ev({ type: 'banner', state: opts.expectBanner === false ? 'reappeared' : 'shown', cmp: this.cmp, via: found.via.startsWith('selector:') ? 'selector' : 'heuristic' });
       } else if (opts.expectBanner !== false) {
         this.ev({ type: 'banner', state: 'not-found' });
+        await step('tool-check', () => this.checkSilentTool());
       }
     }
     const elapsed = Date.now() - since;
@@ -289,6 +324,34 @@ class Visit {
     if (this.input.scenario === 'do-nothing' && opts.expectBanner !== false) {
       await this.design('first');
       if (this.bannerShown) await this.design('second', { open: false });
+    }
+  }
+
+  /**
+   * No banner: is a consent tool on the page anyway, and did its script crash?
+   * A crash is the site's install failing every visitor (blackstaramps, 2026-10-10:
+   * a page optimizer deferred the tool's config past its script), not a detection gap.
+   */
+  private async checkSilentTool(): Promise<void> {
+    if (!this.toolCrash) {
+      for (const e of this.pageErrors) {
+        const tool = e.url ? consentToolOfScript(e.url) : undefined;
+        if (tool && e.source) {
+          this.toolCrash = { tool, message: e.message, source: e.source };
+          this.ev({ type: 'note', text: `consent tool ${tool} crashed before showing a banner: ${e.message} (${e.source})` });
+          break;
+        }
+      }
+    }
+    if (this.toolCrash || this.silentCmp) return;
+    const scripts = await this.page.evaluate(() => Array.from(document.scripts, (s) => s.src).filter(Boolean)).catch(() => [] as string[]);
+    for (const src of scripts) {
+      const tool = consentToolOfScript(src);
+      if (tool) {
+        this.silentCmp = tool;
+        this.ev({ type: 'note', text: `consent tool detected (${tool}) but no banner is visible` });
+        return;
+      }
     }
   }
 
@@ -558,9 +621,9 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
       case 'return-visit': {
         await v.land(landing);
         if (!v.bannerShown) {
-          status = 'not-applicable';
-          cause = 'no-banner';
-          reason = noBannerReason(v.silentCmp);
+          status = v.toolCrash ? 'not-tested' : 'not-applicable';
+          cause = v.toolCrash ? 'tool-broken' : 'no-banner';
+          reason = v.toolCrash ? brokenToolReason(v.toolCrash) : noBannerReason(v.silentCmp);
           break;
         }
         if (scenario === 'dismiss') {

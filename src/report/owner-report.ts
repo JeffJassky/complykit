@@ -151,6 +151,8 @@ export interface OwnerReport {
     visitsChecked: number;
     /** Consent tools the scan saw loading (e.g. OneTrust), banner or not. */
     consentTools?: string[];
+    /** The consent tool is installed but its script crashed before drawing a banner (record cause 'tool-broken'): the scan's reason, error included. */
+    broken?: { reason: string };
   };
   matrix: {
     columns: OwnerColumn[];
@@ -433,6 +435,8 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
   };
   const consentTools = (m?.inventory ?? []).filter((p) => p.categories.includes('consent')).map((p) => p.label);
   if (consentTools.length) banner.consentTools = consentTools;
+  const brokenCell = withBanner.length ? undefined : visits.find((c) => c!.cause === 'tool-broken' && c!.reason);
+  if (brokenCell) banner.broken = { reason: brokenCell.reason! };
 
   const visitsTotal = plan.reduce((n, p) => n + Math.max(1, p.runs ?? 1), 0);
   const visitsDone = allDone ? visitsTotal : Math.min(visitsTotal, done.size);

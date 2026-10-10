@@ -27,6 +27,11 @@ describe('skipKindOf', () => {
     expect(skipKindOf(skipped(undefined, 'not-tested', 'location unverified'), EU)).toBe('untestable');
   });
 
+  it('a consent tool that crashed before drawing its banner blocks the visitor everywhere (the site meant to ask and cannot); older reports are read from the reason', () => {
+    for (const where of [EU, CA, TX]) expect(skipKindOf(skipped('tool-broken'), where)).toBe('blocked');
+    expect(skipCauseOf(skipped(undefined, 'not-tested', 'the consent tool (x) is on the page but its script crashed before showing a banner, so …'))).toBe('tool-broken');
+  });
+
   it('the site blocked the visitor: a dead settings control anywhere; no way to withdraw where consent is the choice; no per-category choice under opt-in; no opt-out link where the law requires one', () => {
     for (const where of [EU, CA, TX]) expect(skipKindOf(skipped('settings-dead'), where)).toBe('blocked');
     expect(skipKindOf(skipped('no-withdraw-entry'), EU)).toBe('blocked');

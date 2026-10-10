@@ -112,6 +112,16 @@ describe('owner report: final', () => {
     expect(r.banner).toEqual({ state: 'none', visitsWithBanner: 0, visitsChecked: 2 });
     expect(r.scan).toMatchObject({ visitsDone: 2, visitsTotal: 2, pagesVisited: 2, finishedAt: '2026-10-07T10:05:00Z' });
   });
+  it('a consent tool that crashed before drawing its banner: the choices are blocked (a visitor cannot make them) and the banner says the tool is broken', () => {
+    const reason = 'the consent tool (webtoffee-cookie-consent) is on the page but its script crashed before showing a banner, so a visitor gets no banner and no choice: “Cannot read properties of undefined (reading \'_lawSelected\')” in cdn.example/wp-content/plugins/webtoffee-cookie-consent/lite/frontend/js/script.min.js';
+    const crashed = { scenario: 'reject', status: 'not-tested', cause: 'tool-broken', reason, banner: { found: false } };
+    const model = buildConsentReportModel(evaluation({ scenarios: [{ ...doNothing, banner: { found: false } }, crashed], inventory: [meta], observations: [obs('do-nothing', [fbpBeforeChoice])] }), []);
+    const r = buildOwnerReport({ ...base, stage: 'final', plan: undefined, model, finishedAt: '2026-10-07T10:05:00Z' });
+    expect(r.matrix.columns.find((c) => c.scenario === 'reject')!.state).toBe('blocked');
+    expect(r.matrix.tools[0].cells.map((c) => c.state)).toEqual(['mismatch', 'blocked']);
+    expect(r.banner).toEqual({ state: 'none', visitsWithBanner: 0, visitsChecked: 2, broken: { reason } });
+  });
+
   it('a choice the banner offers no control for says why, not "no banner"', () => {
     const noClose = { scenario: 'dismiss', status: 'not-applicable', reason: 'the banner offers no way to close it without choosing', banner: { found: true, cmp: 'onetrust' }, choice: { kind: 'dismiss', ok: false, method: 'none' } };
     const model = buildConsentReportModel(evaluation({ scenarios: [doNothing, noClose], inventory: [meta], observations: [obs('do-nothing', [fbpBeforeChoice])] }), []);

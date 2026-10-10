@@ -151,8 +151,14 @@ export function BannerLine({ data }: { data: JobReportResponse }) {
     body = (
       <>
         <span className="rp-dot rp-dot-bad" aria-hidden="true" />
-        <strong>No consent banner detected</strong>
-        {b.consentTools?.length ? <span className="muted">— {b.consentTools.join(', ')} {b.consentTools.length === 1 ? 'is' : 'are'} on the site, but no banner appeared.</span> : null}
+        <strong>{b.broken ? 'Your consent tool is broken: no visitor gets a banner' : 'No consent banner detected'}</strong>
+        {b.broken ? (
+          <span className="muted" data-testid="banner-broken">
+            {' '}— {b.broken.reason.replace(/^the /, 'The ')}. Trackers it should hold back run as if there were no consent tool.
+          </span>
+        ) : b.consentTools?.length ? (
+          <span className="muted">— {b.consentTools.join(', ')} {b.consentTools.length === 1 ? 'is' : 'are'} on the site, but no banner appeared.</span>
+        ) : null}
       </>
     );
   }

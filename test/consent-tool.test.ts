@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectConsentTool } from '../src/record/consent-tool.js';
+import { consentToolOfScript, detectConsentTool } from '../src/record/consent-tool.js';
 
 // Fixture values are synthetic, in each tool's documented stored format.
 const ck = (name: string, value: string) => ({ name, value });
@@ -102,5 +102,26 @@ describe('detectConsentTool', () => {
   it('banner-only fallback, then none detected', () => {
     expect(detect([], [], 'Didomi')).toMatchObject({ vendor: 'Didomi', decoded: false, source: 'banner:detected' });
     expect(detect([ck('session', 'abc')])).toMatchObject({ vendor: null, decoded: false, source: 'none' });
+  });
+});
+
+describe('consentToolOfScript', () => {
+  it('names a WordPress consent plugin by its directory on any host (a CDN mirror of /wp-content/ included)', () => {
+    expect(consentToolOfScript('https://eadn-wc01-3990025.nxedge.io/wp-content/plugins/webtoffee-cookie-consent/lite/frontend/js/script.min.js?ver=3.5.5')).toBe('webtoffee-cookie-consent');
+    expect(consentToolOfScript('https://shop.example/wp-content/plugins/cookie-law-info/lite/frontend/js/script.min.js')).toBe('cookieyes');
+    expect(consentToolOfScript('https://shop.example/wp-content/plugins/complianz-gdpr/assets/js/complianz.min.js')).toBe('complianz');
+  });
+
+  it('names a hosted consent tool by its script host', () => {
+    expect(consentToolOfScript('https://cdn.cookielaw.org/scripttemplates/otSDKStub.js')).toBe('onetrust');
+    expect(consentToolOfScript('https://consent.cookiebot.com/uc.js')).toBe('cookiebot');
+    expect(consentToolOfScript('https://app.termly.io/resource-blocker/abc')).toBe('termly');
+  });
+
+  it('anything else is not a consent tool', () => {
+    expect(consentToolOfScript('https://www.googletagmanager.com/gtag/js?id=G-1')).toBeUndefined();
+    expect(consentToolOfScript('https://shop.example/wp-content/plugins/woocommerce/assets/js/frontend.js')).toBeUndefined();
+    expect(consentToolOfScript('not a url')).toBeUndefined();
+    expect(consentToolOfScript('https://evilcookielaw.org/x.js')).toBeUndefined();
   });
 });

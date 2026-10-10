@@ -4,7 +4,7 @@ import { behaviorCellsFrom } from '../src/rules/tracking/index.js';
 import { compareCookieBehavior, type ComparisonFacts, type PrivacyRegime } from '../src/report/cookie-purpose.js';
 import { scopeLine } from '../src/report/consent-scope.js';
 import { isWiretapJurisdiction, WIRETAP_CATEGORIES, describeLocationRules } from '../src/registry/index.js';
-import { noBannerReason } from '../src/collect/browser/evaluation/scenarios.js';
+import { brokenToolReason, errorSource, noBannerReason } from '../src/collect/browser/evaluation/scenarios.js';
 import type { ConsentReportModel } from '../types/index.js';
 
 // Wiretap posture (field run storyfolder.com, 2026-10-08). California is an
@@ -160,5 +160,22 @@ describe('scenario skipped for no banner: say what was actually seen', () => {
   });
   it('with no consent tool seen, the old wording stands', () => {
     expect(noBannerReason()).toBe('no consent banner detected (if the site shows one, the driver did not recognize it)');
+  });
+});
+
+describe('a consent tool that crashed before drawing its banner', () => {
+  it('the error source is the first stack frame, host + path only (no query)', () => {
+    const stack = "TypeError: Cannot read properties of undefined (reading '_lawSelected')\n    at https://cdn.example/wp-content/plugins/webtoffee-cookie-consent/lite/frontend/js/script.min.js?ver=3.5.5:1:2345\n    at https://shop.example/other.js:2:3";
+    expect(errorSource(stack)).toBe('cdn.example/wp-content/plugins/webtoffee-cookie-consent/lite/frontend/js/script.min.js');
+    expect(errorSource('Error: x\n    at <anonymous>:1:1')).toBeUndefined();
+    expect(errorSource(undefined)).toBeUndefined();
+  });
+
+  it('the reason names the tool, says no visitor gets a choice, and quotes the error', () => {
+    const r = brokenToolReason({ tool: 'webtoffee-cookie-consent', message: "Cannot read properties of undefined (reading '_lawSelected')", source: 'cdn.example/x/script.min.js' });
+    expect(r).toContain('the consent tool (webtoffee-cookie-consent) is on the page but its script crashed before showing a banner');
+    expect(r).toContain('a visitor gets no banner and no choice');
+    expect(r).toContain('_lawSelected');
+    expect(r).toContain('cdn.example/x/script.min.js');
   });
 });

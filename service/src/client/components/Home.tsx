@@ -82,6 +82,7 @@ export function HomeView({ rows, now, loaded, onSubmit, busy, error }: { rows: S
             {busy ? 'Starting…' : 'Scan'}
           </button>
         </div>
+        {consent ? <AuthorizedBox checked={authorized} onChange={setAuthorized} /> : null}
         <details className="home-options">
           <summary>Options</summary>
           <label className="home-option">
@@ -98,7 +99,6 @@ export function HomeView({ rows, now, loaded, onSubmit, busy, error }: { rows: S
           </label>
         </details>
         {consent ? <LawPicker selected={laws} onChange={changeLaws} /> : null}
-        {consent ? <AuthorizedBox checked={authorized} onChange={setAuthorized} /> : null}
         {blocked ? (
           <p className="hint" data-testid="scan-blocked">
             {blocked}

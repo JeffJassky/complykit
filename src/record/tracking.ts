@@ -487,6 +487,7 @@ export type PartyInventoryItem = z.infer<typeof PartyInventoryItem>;
 // the visitor — a problem). Absent on reports written before it: the report falls back to the reason.
 export const SkipCause = z.enum([
   'no-banner', // no banner was shown, so there was no choice to make
+  'tool-broken', // the consent tool is on the page but its script crashed before drawing a banner
   'no-close', // the banner has no way to close it without choosing
   'settings-dead', // a visible settings control opened nothing
   'no-category-choice', // the settings offer no per-category choice

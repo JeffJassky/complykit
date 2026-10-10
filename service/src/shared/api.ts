@@ -684,7 +684,7 @@ export interface OwnerReport {
     /** Set on a finished scan when no visit reached the site: the page shows one notice instead of the banner, matrix and to-do list. */
     unreachable?: { reason: string };
   };
-  banner: { state: 'pending' | 'detected' | 'none'; provider?: string; visitsWithBanner: number; visitsChecked: number; /** Consent tools seen loading (banner or not). */ consentTools?: string[] };
+  banner: { state: 'pending' | 'detected' | 'none'; provider?: string; visitsWithBanner: number; visitsChecked: number; /** Consent tools seen loading (banner or not). */ consentTools?: string[]; /** The consent tool is installed but crashed before drawing a banner. */ broken?: { reason: string } };
   matrix: {
     columns: OwnerColumn[];
     tools: OwnerToolRow[];

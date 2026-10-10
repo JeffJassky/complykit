@@ -14,6 +14,18 @@ const home = () => renderToStaticMarkup(<HomeView rows={[]} now={0} loaded onSub
 const lawBox = (html: string, id: string) => html.match(new RegExp(`<input type="checkbox"[^>]*data-law="${id}"[^>]*/>`))?.[0] ?? '';
 const submitBtn = (html: string) => html.match(/<button type="submit"[^>]*>/)?.[0] ?? '';
 
+describe('new-scan form: authorization', () => {
+  it('sits directly under the address field, before the scan options', () => {
+    const html = home();
+    const url = html.indexOf('class="home-url"');
+    const box = html.indexOf('data-testid="authorized"');
+    const options = html.indexOf('class="home-options"');
+    expect(url).toBeGreaterThan(-1);
+    expect(box).toBeGreaterThan(url);
+    expect(box).toBeLessThan(options);
+  });
+});
+
 describe('new-scan form: laws', () => {
   it('shows one checkbox per law, all checked by default, with label, model and law names', () => {
     const html = home();
