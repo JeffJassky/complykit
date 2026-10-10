@@ -165,6 +165,45 @@ export function phaseAt(t: number, bannerShownT: number | undefined, choices: Ch
   return t < bannerShownT ? 'before-banner' : 'before-choice';
 }
 
+const WP_ASSET = /^\/wp-(?:content|includes)\//;
+const WP_THEME = /^\/wp-content\/themes\/([^/]+)\//;
+
+/**
+ * Hosts that serve the site's own WordPress files from a CDN (a pull zone or an
+ * edge cache mirroring /wp-content/): the site's files, not a third party. Proof
+ * is strict, else the host stays an unknown party for the owner to decide: every
+ * request to it is a WordPress asset path, and it serves a theme directory the
+ * site's own domain also serves (a theme is the site's own; plugins and uploads
+ * paths are shared by every WordPress site). Field run 2026-10-10: blackstaramps.com
+ * served its theme, plugins and uploads from an nxedge.io edge, and the report
+ * asked to gate its consent plugin's script as an unknown advertiser.
+ */
+export function siteAssetMirrors(urls: string[], siteDomain: string): Set<string> {
+  const ownThemes = new Set<string>();
+  const byHost = new Map<string, { allWp: boolean; themes: Set<string> }>();
+  for (const raw of urls) {
+    let u: URL;
+    try {
+      u = new URL(raw);
+    } catch {
+      continue;
+    }
+    if (!/^https?:$/.test(u.protocol)) continue;
+    const theme = WP_THEME.exec(u.pathname)?.[1];
+    if (registrableDomain(u.hostname) === siteDomain) {
+      if (theme) ownThemes.add(theme);
+      continue;
+    }
+    const h = byHost.get(u.hostname) ?? { allWp: true, themes: new Set<string>() };
+    if (!WP_ASSET.test(u.pathname)) h.allWp = false;
+    if (theme) h.themes.add(theme);
+    byHost.set(u.hostname, h);
+  }
+  const out = new Set<string>();
+  for (const [host, h] of byHost) if (h.allWp && [...h.themes].some((t) => ownThemes.has(t))) out.add(host);
+  return out;
+}
+
 function stripHash(u: string): string {
   return u.replace(/#.*$/, '');
 }
@@ -212,11 +251,13 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
 
   const titleAt = (pageIndex: number): string | undefined => snapshot.pages[pageIndex]?.title;
   const parties = new Map<string, PartyFacts>();
+  const mirrors = siteAssetMirrors(events.filter((e): e is RequestEvent => e.type === 'request').map((e) => e.url), siteDomain);
 
   const partyFor = (host: string, pathname: string): { id: string; entry?: KnowledgeEntry; domain: string; cnameOf?: string } | null => {
     const domain = registrableDomain(host);
     let effectiveHost = host;
     let cnameOf: string | undefined;
+    if (mirrors.has(host)) return null; // the site's own files on its CDN
     if (domain === siteDomain) {
       const target = cname.get(host);
       if (!target) return null; // first party
