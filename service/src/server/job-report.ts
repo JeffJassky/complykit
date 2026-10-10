@@ -5,10 +5,10 @@
 //
 // The to-do list is made without a button: when a consent scan finishes, the
 // service generates the site's consent tool config + checklist from it and
-// re-renders the report (rerender with `generate`), unless the owner is
-// already working an earlier scan's list (a task verified, marked done or
-// failed) — regenerating then could move the install hash under a deployed
-// tool. The rescan's report still shows that list, with its status.
+// re-renders the report (rerender with `generate`), unless complykit's tool is
+// deployed from the earlier list (its install task done or verified) —
+// regenerating then could move the install hash under that tool. The rescan's
+// report then still shows that list, with its status.
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -70,16 +70,18 @@ export async function readOwnerReport(file: string | undefined): Promise<OwnerRe
 }
 
 /**
- * Should the finished scan `runId` (re)make the site's checklist? Yes when there
- * is none, when it already came from this run, or when nobody has worked the
- * current one yet (every change still "to do"; decisions don't count — they are
- * classifications, which any regeneration keeps).
+ * Should the finished scan `runId` (re)make the site's checklist? The newest scan
+ * is what the site does now, so yes, unless complykit's consent tool is deployed
+ * from the stored config (its install task done or verified): regenerating then
+ * could move the install hash under that deployed tool. Work on other tasks does
+ * not hold the list back; their status carries over by task id. (2026-10-10: a
+ * failed check on a since-dropped task kept a clean site's nine stale to-dos.)
  */
 export function shouldGenerate(ws: SiteWorkspace, runId: string): boolean {
   const tasks = mergeTaskStatus(storedTasks(ws), ws);
   if (!tasks.length) return true;
   if (ws.config?.runId === runId) return true;
-  return tasks.every((t) => !!t.classKey || t.status === 'todo');
+  return !tasks.some((t) => t.kind === 'install' && (t.status === 'verified' || t.status === 'done-unverified'));
 }
 
 type AutoState = { status: 'preparing' } | { status: 'error'; error: string };

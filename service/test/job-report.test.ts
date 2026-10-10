@@ -120,9 +120,16 @@ describe('shouldGenerate (the automatic to-do list)', () => {
     expect(shouldGenerate(ws({}, undefined), 'run-new')).toBe(true);
     expect(shouldGenerate(ws({ 'task:change:a': { value: { status: 'verified' }, at: 'x' } }, [task('a')], 'run-new'), 'run-new')).toBe(true);
   });
-  it('follows the newest scan while nobody worked the list; keeps a list someone is working', () => {
+  it('follows the newest scan, whatever was done on other tasks (their status carries over by id)', () => {
     expect(shouldGenerate(ws({ 'class:k': { value: { category: 'analytics' }, at: 'x' } }, [task('a'), task('classify:1', { kind: 'classify', classKey: 'class:k' })]), 'run-new')).toBe(true);
-    expect(shouldGenerate(ws({ 'task:change:a': { value: { status: 'done-unverified' }, at: 'x' } }, [task('a')]), 'run-new')).toBe(false);
-    expect(shouldGenerate(ws({ 'task:change:a': { value: { status: 'failed' }, at: 'x' } }, [task('a')]), 'run-new')).toBe(false);
+    expect(shouldGenerate(ws({ 'task:change:a': { value: { status: 'done-unverified' }, at: 'x' } }, [task('a')]), 'run-new')).toBe(true);
+    expect(shouldGenerate(ws({ 'task:change:a': { value: { status: 'failed' }, at: 'x' } }, [task('a')]), 'run-new')).toBe(true);
+  });
+  it('keeps the list while complykit\'s tool is deployed from it (install done or verified): a new config could move its hash', () => {
+    const install = task('install', { kind: 'install' });
+    expect(shouldGenerate(ws({ 'task:change:install': { value: { status: 'verified' }, at: 'x' } }, [install, task('a')]), 'run-new')).toBe(false);
+    expect(shouldGenerate(ws({ 'task:change:install': { value: { status: 'done-unverified' }, at: 'x' } }, [install, task('a')]), 'run-new')).toBe(false);
+    expect(shouldGenerate(ws({ 'task:change:install': { value: { status: 'failed' }, at: 'x' } }, [install, task('a')]), 'run-new')).toBe(true);
+    expect(shouldGenerate(ws({}, [install, task('a')]), 'run-new')).toBe(true);
   });
 });
