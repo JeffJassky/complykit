@@ -32,7 +32,12 @@ function sim(initial: M[] = [], opts: { healthy?: boolean } = {}) {
       const [, id, action] = p.split('/');
       const m = machines.get(id);
       if (!m) return json({ error: 'nf' }, 404);
-      if (!action && method === 'GET') { const r = json(m); pending.splice(0).forEach((fn) => fn()); return r; }
+      if (!action && method === 'GET') {
+        const r = json(m);
+        pending.splice(0).forEach((fn) => fn());
+        if (m.state === 'stopping') m.state = 'stopped'; // the stop lands after one read
+        return r;
+      }
       if (!action && method === 'POST') {
         // Like Fly: the reply shows the replacement in flight; a stopped Machine stays stopped once it lands.
         m.config = body.config;
@@ -79,7 +84,7 @@ describe('flyFleet', () => {
     expect(s.bodies[0]).toMatchObject({
       name: 'worker-fra', region: 'fra',
       config: { image: 'img:2', env: { WORKER: '1', WORKER_SECRET: SECRET, IDLE_SHUTDOWN_MINUTES: '3' },
-        guest: { cpu_kind: 'shared', cpus: 2, memory_mb: 2048 }, restart: { policy: 'no' }, metadata: { complykit_role: 'worker' } },
+        guest: { cpu_kind: 'performance', cpus: 2, memory_mb: 4096 }, restart: { policy: 'no' }, metadata: { complykit_role: 'worker' } },
     });
   });
 
@@ -93,6 +98,22 @@ describe('flyFleet', () => {
     expect(m.config.env).toMatchObject({ KEEP: 'x', WORKER: '1', WORKER_SECRET: SECRET });
     expect(m.config.metadata.complykit_role).toBe('worker');
     expect(m.state).toBe('started');
+  });
+
+  it('moves an existing shared-cpu worker to dedicated CPUs', async () => {
+    const s = sim([worker({ config: { image: 'img:2', guest: { cpu_kind: 'shared', cpus: 2, memory_mb: 2048 }, metadata: { complykit_role: 'worker' } } })]);
+    await s.fleet.acquire('fra');
+    expect(s.calls.indexOf('POST /w1')).toBeLessThan(s.calls.indexOf('POST /w1/start'));
+    expect(s.machines.get('w1')!.config.guest).toEqual({ cpu_kind: 'performance', cpus: 2, memory_mb: 4096 });
+    expect(s.machines.get('w1')!.state).toBe('started');
+  });
+
+  it('waits for a worker still stopping from the previous scan, then starts it', async () => {
+    const s = sim([worker({ config: { image: 'img:2', guest: { cpu_kind: 'performance', cpus: 2, memory_mb: 4096 }, metadata: { complykit_role: 'worker' } }, state: 'stopping' })]);
+    const h = await s.fleet.acquire('fra');
+    expect(h.machineId).toBe('w1');
+    expect(s.calls.filter((c) => c === 'POST /w1/start')).toHaveLength(1);
+    expect(s.machines.get('w1')!.state).toBe('started');
   });
 
   it('serializes concurrent acquires of one region: one create', async () => {
@@ -123,6 +144,7 @@ describe('flyFleet', () => {
     const h = await s.fleet.acquire('fra');
     await s.fleet.release(h);
     expect(s.machines.get('w1')!.state).toBe('stopped');
+    expect(s.calls).toContain('GET /w1/wait');
     await expect(s.fleet.release({ ...h, machineId: 'gone' })).resolves.toBeUndefined();
     const boom = flyFleet({ app: 'a', token: TOKEN, image: 'i', secret: 's', fetch: (async () => { throw new Error('net'); }) as typeof fetch });
     await expect(boom.release(h)).resolves.toBeUndefined();

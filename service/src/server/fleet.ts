@@ -43,6 +43,20 @@ interface Machine {
 const HEALTH_TIMEOUT_MS = 90_000;
 const HEALTH_POLL_MS = 1_000;
 const SETTLE_TIMEOUT_MS = 30_000;
+/**
+ * Dedicated CPUs. A shared-cpu worker runs on burst credit: Chromium on a heavy
+ * page drains it within minutes and the Machine is throttled to a fraction of a
+ * core. A 2026-10-10 field run on a large Shopify store went from 11 s visits to
+ * 150-400 s and hit the 30-minute remote limit in every region, while the
+ * primary (performance-2x) ran the same visits at normal speed.
+ */
+const WORKER_GUEST = { cpu_kind: 'performance', cpus: 2, memory_mb: 4096 };
+const sameGuest = (g: unknown) => {
+  const x = (g ?? {}) as Record<string, unknown>;
+  return x.cpu_kind === WORKER_GUEST.cpu_kind && x.cpus === WORKER_GUEST.cpus && x.memory_mb === WORKER_GUEST.memory_mb;
+};
+/** States a Machine can be started from, or is already up in. Anything else (stopping, replacing…) is in flight. */
+const SETTLED = new Set(['stopped', 'suspended', 'started', 'starting']);
 
 /** Fly macaroon tokens ("FlyV1 fm2_…", from `fly tokens create`) carry their own scheme; older API tokens take Bearer. */
 export function authHeader(token: string): string {
@@ -84,24 +98,33 @@ export function flyFleet(cfg: FlyFleetConfig): Fleet {
         config: {
           image: cfg.image,
           env: workerEnv,
-          guest: { cpu_kind: 'shared', cpus: 2, memory_mb: 2048 },
+          guest: WORKER_GUEST,
           restart: { policy: 'no' },
           metadata: { complykit_role: 'worker' },
         },
       });
     }
-    if (m.config?.image !== cfg.image) {
+    if (m.config?.image !== cfg.image || !sameGuest(m.config?.guest)) {
       const updated = await call<Machine | undefined>('POST', `${base}/${m.id}`, {
         region,
-        config: { ...m.config, image: cfg.image, env: { ...m.config?.env, ...workerEnv } },
+        config: { ...m.config, image: cfg.image, env: { ...m.config?.env, ...workerEnv }, guest: WORKER_GUEST },
       });
       m = { ...m, ...(updated ?? {}), config: updated?.config ?? { ...m.config, image: cfg.image } };
       // Fly leaves a stopped Machine stopped after an update, but its reply shows a
       // transitional state. Wait for it to settle, then start it below.
       m.state = await settle(m.id);
     }
+    // The previous scan's release may still be stopping it: Fly refuses a start
+    // until the stop lands (412), so wait for it to settle first.
+    if (!SETTLED.has(m.state)) m.state = await settle(m.id);
     if (m.state !== 'started' && m.state !== 'starting') {
-      await call('POST', `${base}/${m.id}/start`);
+      try {
+        await call('POST', `${base}/${m.id}/start`);
+      } catch {
+        // Raced a transition between the read and the start: settle and try once more.
+        m.state = await settle(m.id);
+        if (m.state !== 'started' && m.state !== 'starting') await call('POST', `${base}/${m.id}/start`);
+      }
     }
     return m;
   }
@@ -158,6 +181,8 @@ export function flyFleet(cfg: FlyFleetConfig): Fleet {
   async function release(h: WorkerHandle): Promise<void> {
     try {
       await call('POST', `${base}/${h.machineId}/stop`);
+      // Hand the region over stopped, not stopping: the next scan starts it right away.
+      await call('GET', `${base}/${h.machineId}/wait?state=stopped&timeout=60`).catch(() => undefined);
     } catch {
       /* best effort */
     }
