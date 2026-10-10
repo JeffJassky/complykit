@@ -6,7 +6,7 @@ const SECRET = 'worker-secret';
 
 interface M { id: string; region: string; state: string; private_ip: string; config: any }
 
-function sim(initial: M[] = [], opts: { healthy?: boolean } = {}) {
+function sim(initial: M[] = [], opts: { healthy?: boolean; fullHost?: string } = {}) {
   const machines = new Map<string, M>(initial.map((m) => [m.id, m]));
   const calls: string[] = [];
   const bodies: any[] = [];
@@ -37,6 +37,10 @@ function sim(initial: M[] = [], opts: { healthy?: boolean } = {}) {
         pending.splice(0).forEach((fn) => fn());
         if (m.state === 'stopping') m.state = 'stopped'; // the stop lands after one read
         return r;
+      }
+      if (!action && method === 'DELETE') { machines.delete(id); return json({ ok: true }); }
+      if (!action && method === 'POST' && opts.fullHost === id) {
+        return json({ error: 'aborted: could not reserve resource for machine: insufficient memory available to fulfill request on the current host' }, 409);
       }
       if (!action && method === 'POST') {
         // Like Fly: the reply shows the replacement in flight; a stopped Machine stays stopped once it lands.
@@ -106,6 +110,15 @@ describe('flyFleet', () => {
     expect(s.calls.indexOf('POST /w1')).toBeLessThan(s.calls.indexOf('POST /w1/start'));
     expect(s.machines.get('w1')!.config.guest).toEqual({ cpu_kind: 'performance', cpus: 2, memory_mb: 4096 });
     expect(s.machines.get('w1')!.state).toBe('started');
+  });
+
+  it('replaces a worker whose host has no room for the new size', async () => {
+    const s = sim([worker({ config: { image: 'img:2', guest: { cpu_kind: 'shared', cpus: 2, memory_mb: 2048 }, metadata: { complykit_role: 'worker' } } })], { fullHost: 'w1' });
+    const h = await s.fleet.acquire('fra');
+    expect(s.calls).toContain('DELETE /w1');
+    expect(h.machineId).toBe('m1');
+    expect([...s.machines.keys()]).toEqual(['m1']);
+    expect(s.machines.get('m1')!.config.guest).toEqual({ cpu_kind: 'performance', cpus: 2, memory_mb: 4096 });
   });
 
   it('waits for a worker still stopping from the previous scan, then starts it', async () => {

@@ -90,23 +90,41 @@ export function flyFleet(cfg: FlyFleetConfig): Fleet {
 
   async function ensureMachine(region: string): Promise<Machine> {
     const all = (await call<Machine[]>('GET', base)) ?? [];
-    let m = all.find((x) => x.region === region && x.config?.metadata?.complykit_role === 'worker');
-    if (!m) {
-      return call<Machine>('POST', base, {
-        name: `worker-${region}`,
-        region,
-        config: {
-          image: cfg.image,
-          env: workerEnv,
-          guest: WORKER_GUEST,
-          restart: { policy: 'no' },
-          metadata: { complykit_role: 'worker' },
-        },
-      });
+    const m = all.find((x) => x.region === region && x.config?.metadata?.complykit_role === 'worker');
+    if (!m) return create(region);
+    try {
+      return await prepare(m);
+    } catch (err) {
+      if (!noRoom(err)) throw err;
+      // The Machine's host has no room for it (a resize, or a start on a full host).
+      // A worker keeps no state: destroy it and let Fly place a new one elsewhere.
+      await call('DELETE', `${base}/${m.id}?force=true`);
+      return create(region);
     }
+  }
+
+  /** Fly's answer when a Machine's current host cannot fit it (409/412 "could not reserve resource", "insufficient memory/cpu"). */
+  const noRoom = (err: unknown) => /could not reserve resource|insufficient (memory|cpu|resources)/i.test(err instanceof Error ? err.message : String(err));
+
+  function create(region: string): Promise<Machine> {
+    return call<Machine>('POST', base, {
+      name: `worker-${region}`,
+      region,
+      config: {
+        image: cfg.image,
+        env: workerEnv,
+        guest: WORKER_GUEST,
+        restart: { policy: 'no' },
+        metadata: { complykit_role: 'worker' },
+      },
+    });
+  }
+
+  /** Bring an existing worker to this image and size, then start it. */
+  async function prepare(m: Machine): Promise<Machine> {
     if (m.config?.image !== cfg.image || !sameGuest(m.config?.guest)) {
       const updated = await call<Machine | undefined>('POST', `${base}/${m.id}`, {
-        region,
+        region: m.region,
         config: { ...m.config, image: cfg.image, env: { ...m.config?.env, ...workerEnv }, guest: WORKER_GUEST },
       });
       m = { ...m, ...(updated ?? {}), config: updated?.config ?? { ...m.config, image: cfg.image } };
