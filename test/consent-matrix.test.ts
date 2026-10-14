@@ -117,6 +117,22 @@ describe('consent behavior matrix',()=>{
   expect(c.status).toBe('mismatch');
   expect(c.observed).toMatch(/set by a server \(HttpOnly\).*only the server can/);
  });
+ it('the tool row names the HttpOnly leftover only on a mismatch cell, and says when the cookie is the whole problem',()=>{
+  const cookie={name:'_fbp',value:'x',domain:'.shop.example',path:'/',expires:-1,httpOnly:true,secure:true};
+  const events=(withRequest:boolean)=>[{type:'banner',t:0,state:'shown',pageIndex:0},{type:'choice',t:200,choice:'reject',ok:true,method:'test',pageIndex:0},...(withRequest?[{type:'request',t:400,id:'r1',url:'https://www.facebook.com/tr/?ev=PageView',method:'GET',resourceType:'image',origin:'page',pageUrl:evaluation.site.url,pageIndex:0,initiator:{type:'other',chain:[]}}]:[])];
+  const t=(withRequest:boolean)=>Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'reject',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies:[cookie],storage:[],frames:[]},events:events(withRequest)});
+  const tool=(withRequest:boolean)=>{
+   const mm={...buildConsentReportModel({...evaluation,inventory:[{...inventory,stores:[...inventory.stores]}]} as unknown as typeof evaluation,[]),behaviorObservations:summarizeBehavior([t(withRequest)])};
+   return status(mm,'tool','Meta Pixel','reject');
+  };
+  const sent=tool(true);
+  expect(sent.status).toBe('mismatch');
+  expect(sent.serverCookies).toEqual(['_fbp']);
+  expect(sent.cookieOnly).toBeUndefined();
+  const bare=tool(false);
+  expect(bare.status).toBe('mismatch');
+  expect(bare).toMatchObject({serverCookies:['_fbp'],cookieOnly:true});
+ });
  it('each cookie sits under one tool: the one its name belongs to, not the tag loader that wrote it (storyfolder.com, 2026-10-08)',()=>{
   const gtag='https://www.googletagmanager.com/gtag/js?id=G-TEST';
   const t=Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'accept',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies:[{name:'GCL_AW_P',value:'x',domain:'.googleadservices.com',path:'/',expires:-1,httpOnly:false,secure:true}],storage:[],frames:[]},events:[

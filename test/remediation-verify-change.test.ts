@@ -39,7 +39,7 @@ const LAUNCH_ARGS = ['--host-resolver-rules=MAP *.test 127.0.0.1'];
 interface Site {
   port: number;
   base: string;
-  routes: Map<string, { type: string; body: string; status?: number; headers?: Record<string, string> }>;
+  routes: Map<string, { type: string; body: string; status?: number; headers?: Record<string, string>; headersFor?: (cookie: string) => Record<string, string> }>;
   config: ConsentToolConfig;
   close(): Promise<void>;
 }
@@ -51,7 +51,7 @@ const vendorScript = (host: string, cookie: string, port: number): string =>
   `(function(){ document.cookie='${cookie}=1; path=/'; new Image().src='http://${host}:${port}/p?u='+encodeURIComponent(location.href); })();`;
 
 async function startSite(): Promise<Site> {
-  const routes = new Map<string, { type: string; body: string; status?: number; headers?: Record<string, string> }>();
+  const routes = new Map<string, { type: string; body: string; status?: number; headers?: Record<string, string>; headersFor?: (cookie: string) => Record<string, string> }>();
   const server = http.createServer((req, res) => {
     const hostHeader = (req.headers.host ?? '').split(':')[0];
     const host = hostHeader === SHOP ? 'shop' : hostHeader;
@@ -61,7 +61,7 @@ async function startSite(): Promise<Site> {
       res.end();
       return;
     }
-    res.writeHead(route.status ?? 200, { 'content-type': route.type, 'access-control-allow-origin': '*', ...(route.headers ?? {}) });
+    res.writeHead(route.status ?? 200, { 'content-type': route.type, 'access-control-allow-origin': '*', ...(route.headers ?? {}), ...(route.headersFor?.(req.headers.cookie ?? '') ?? {}) });
     res.end(route.body);
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
@@ -89,6 +89,9 @@ async function startSite(): Promise<Site> {
   routes.set('shop/gone', { type: 'text/html', body: '<!doctype html><title>gone</title>', status: 404 });
   // The tool installed; one vendor gated (adpixel), one deliberately not (stats).
   routes.set('shop/tool', html([head, adsHeld, stats]));
+  // A server-set (HttpOnly) cookie: one page never clears it, one expires it once the visitor's choice cookie arrives.
+  routes.set('shop/tool-httponly', { ...html([head]), headers: { 'set-cookie': '_srv=1; Path=/; HttpOnly' } });
+  routes.set('shop/tool-clears', { ...html([head]), headersFor: (cookie) => ({ 'set-cookie': /complykit_consent=/.test(cookie) ? '_srv=; Max-Age=0; Path=/; HttpOnly' : '_srv=1; Path=/; HttpOnly' }) });
   routes.set('shop/complykit-consent.js', { type: js, body: clientBuilt() ? fs.readFileSync(CLIENT_CORE, 'utf8') : '' });
   routes.set('shop/complykit-consent-ui.js', { type: js, body: clientBuilt() ? fs.readFileSync(CLIENT_UI, 'utf8') : '' });
   routes.set('adpixel.test/ads.js', { type: js, body: vendorScript('adpixel.test', '_fa', port) });
@@ -129,6 +132,7 @@ describe('verify-change input and budgets (no browser)', () => {
       fetchHtml: () => new Promise(() => {}),
       fetchContainer: () => new Promise(() => {}),
       spotCheck: () => new Promise(() => {}),
+      cookieCheck: () => new Promise(() => {}),
       close: async () => {},
     };
     const out = await verifyChange(spec, { browser: slow, staticBudgetMs: 50 });
@@ -280,6 +284,25 @@ spotSuite('verify-change spot check with the built tool (client/dist)', () => {
     const out = await run(spot('tool', ['stats.test'], 'fixture.stats'));
     expect(out).toMatchObject({ result: 'fail', message: expect.stringContaining('after the reject') });
     expect(out.evidence.some((e) => e.includes('stats.test'))).toBe(true);
+  }, 60000);
+
+  const cookieCheck = (p: string): RemediationVerifySpec => ({ check: 'server-cookie', method: 'browser', page: `${site.base}${p}`, partyId: 'fixture.ads', names: ['_srv'] });
+
+  it('server-cookie: an HttpOnly cookie the server keeps setting after a refusal fails, even though no script can see it', async () => {
+    const out = await run(cookieCheck('tool-httponly'));
+    expect(out, `${out.message} | ${out.evidence.join(' | ')}`).toMatchObject({ result: 'fail', evidence: expect.arrayContaining([expect.stringContaining('_srv on')]) });
+    expect(out.evidence[0]).toContain('(HttpOnly)');
+    expect(out.cookieObservation!.before.some((c) => c.name === '_srv')).toBe(true);
+  }, 60000);
+
+  it('server-cookie: a server that expires it once the refusal reaches it passes', async () => {
+    const out = await run(cookieCheck('tool-clears'));
+    expect(out, `${out.message} | ${out.evidence.join(' | ')}`).toMatchObject({ result: 'pass', message: expect.stringContaining('gone after it') });
+  }, 60000);
+
+  it('server-cookie: without the tool on the page nothing is refused: cannot-verify', async () => {
+    const out = await run(cookieCheck('not-rewritten'));
+    expect(out).toMatchObject({ result: 'cannot-verify', message: expect.stringContaining('not on the page'), cookieObservation: { toolPresent: false } });
   }, 60000);
 
   it('a bot challenge at the landing: nothing is driven, cannot-verify', async () => {

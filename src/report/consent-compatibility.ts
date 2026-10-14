@@ -193,6 +193,8 @@ export interface ChangeItem {
   target?: string;
   /** clear-server-cookie: the HttpOnly cookie names. */
   names?: string[];
+  /** clear-server-cookie: the cookies are the whole problem (nothing was sent, no other storage), so this task also covers the generic behavior-mismatch one. */
+  cookieOnly?: boolean;
   /** rewrite-tag: the consent-tool category id for data-category. */
   category?: string;
   categoryNote?: string;
@@ -729,9 +731,10 @@ export function buildCompatibilityReport(section: CompatibilitySection, ctx: Com
           add('dns', c.host ?? row.partyId, row, { kind: c.kind, host: c.host, partyId: row.partyId }, () => ({ ...fields, ...(c.host ? { host: c.host } : {}), ...(c.target ? { target: c.target } : {}) }));
           break;
         case 'clear-server-cookie':
-          add('server-cookies', row.partyId, row, { kind: c.kind, partyId: row.partyId }, () => ({ ...fields, names: [...(c.names ?? [])] }), (it) => {
+          add('server-cookies', row.partyId, row, { kind: c.kind, partyId: row.partyId }, () => ({ ...fields, names: [...(c.names ?? [])], ...(c.cookieOnly ? { cookieOnly: true } : {}) }), (it) => {
             // Same tool seen twice never happens (one change per party); another tool's cookies join the item.
             it.names = [...new Set([...(it.names ?? []), ...(c.names ?? [])])];
+            if (!c.cookieOnly) delete it.cookieOnly;
           });
           break;
         case 'accepted-exposure':

@@ -6,6 +6,7 @@ import {
   type MarkupElement,
   type RemediationVerifySpec,
   type SpotCheckObservation,
+  type ServerCookieObservation,
   type VerifyOutcome,
 } from '../../record/index.js';
 import { DEFAULT_KB, registrableDomain, hostOf, type KnowledgeBase } from '../../registry/index.js';
@@ -390,6 +391,41 @@ export function judgeSpotCheck(spec: SpotCheckSpec, obs: SpotCheckObservation): 
   return ok(`held after the reject (0 requests to ${spec.hosts.join(', ')}), ran after the accept (${granted.length} request${granted.length === 1 ? '' : 's'}) — on this page, this visit`, granted.slice(0, 3).map((r) => short(r.url)));
 }
 
+// --- browser server-cookie check: the judge ----------------------------------------------------
+
+export interface ServerCookieSpec {
+  page: string;
+  names: string[];
+}
+
+/** A cookie belongs to the site when its domain is the page's host or a parent of it (a leading dot ignored). */
+const onSite = (cookieDomain: string, host: string): boolean => {
+  const d = cookieDomain.replace(/^\./, '').toLowerCase();
+  const h = host.toLowerCase();
+  return !!d && (h === d || h.endsWith(`.${d}`));
+};
+
+/**
+ * Judge a refuse-then-reload visit: pass only when NONE of the named cookies is in the
+ * browser's jar (HttpOnly included) on the page's domain. Unknown when the refusal could
+ * not be made — a cookie that was never refused proves nothing.
+ */
+export function judgeServerCookie(spec: ServerCookieSpec, obs: ServerCookieObservation): VerifyOutcome {
+  if (obs.toolPresent === false) return unknown('complykit’s consent tool was not on the page: install it first, so a refusal can be made and the server can see it');
+  if (!obs.choiceMade) return unknown('the refusal could not be made on this page (no banner found, or the control did not respond): nothing is established');
+  const host = hostOf(obs.page);
+  const names = new Set(spec.names);
+  const left = obs.after.filter((c) => names.has(c.name) && onSite(c.domain, host));
+  if (left.length) return fail(`${[...new Set(left.map((c) => c.name))].join(', ')} ${left.length === 1 ? 'is' : 'are'} still in the browser after a refusal and a reload: the server has not stopped setting ${left.length === 1 ? 'it' : 'them'} or has not expired ${left.length === 1 ? 'it' : 'them'}`, left.slice(0, 5).map((c) => `${c.name} on ${c.domain}${c.httpOnly ? ' (HttpOnly)' : ''}`));
+  const had = obs.before.filter((c) => names.has(c.name) && onSite(c.domain, host));
+  return ok(
+    had.length
+      ? `${[...new Set(had.map((c) => c.name))].join(', ')} ${had.length === 1 ? 'was' : 'were'} in the browser before the refusal and gone after it and a reload — on this page, this visit`
+      : `none of ${spec.names.join(', ')} is in the browser after a refusal and a reload (it was not set before the refusal on this visit either, so this visit did not show it being expired)`,
+    had.slice(0, 5).map((c) => `${c.name} on ${c.domain} before the refusal`),
+  );
+}
+
 // --- dispatcher -----------------------------------------------------------------------------
 
 export interface StaticVerifyInput {
@@ -399,6 +435,8 @@ export interface StaticVerifyInput {
   containerJs?: string;
   /** A browser observation (spot-check), when R4 has run one. */
   observation?: SpotCheckObservation;
+  /** A server-cookie observation, when the browser check has run one. */
+  cookieObservation?: ServerCookieObservation;
 }
 
 /** Run the checker a spec names over what was fetched. Browser specs need an observation; manual ones are never decided here. */
@@ -418,6 +456,8 @@ export function runVerify(spec: RemediationVerifySpec, input: StaticVerifyInput,
       return input.containerJs === undefined ? unknown('the container was not fetched') : verifyGtmTagConsent(input.containerJs, spec);
     case 'spot-check':
       return input.observation ? judgeSpotCheck(spec, input.observation) : unknown('a browser spot check is needed: reject, then accept, on one page');
+    case 'server-cookie':
+      return input.cookieObservation ? judgeServerCookie(spec, input.cookieObservation) : unknown('a browser check is needed: refuse on one page, reload, and read the cookie jar');
     case 'manual':
       return unknown(`cannot be checked from outside: ${spec.reason}`);
   }

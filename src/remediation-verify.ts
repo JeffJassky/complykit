@@ -3,6 +3,7 @@ import {
   RemediationVerifySpec,
   type LocationSpec,
   type SpotCheckObservation,
+  type ServerCookieObservation,
   type VerifyOutcome,
 } from './record/index.js';
 import type { KnowledgeBase } from './registry/index.js';
@@ -49,6 +50,8 @@ export interface VerifyChangeOutput extends VerifyOutcome {
   /** What was fetched (URL and HTTP status), or why it could not be. */
   fetched?: { url: string; status?: number; via?: string; error?: string };
   observation?: SpotCheckObservation;
+  /** server-cookie: the jar before the refusal and after the reload. */
+  cookieObservation?: ServerCookieObservation;
 }
 
 /** A task (its `verify`) or a bare verify spec → the spec, or an error message. */
@@ -120,6 +123,14 @@ export async function verifyChange(spec: RemediationVerifySpec, opts: VerifyChan
       if (challenge) return done(challenged(challenge as BotChallenge, spec.page), { observation });
       const out = runVerify(spec, { observation }, vopts);
       return done({ ...out, evidence: [...out.evidence, ...notes] }, { observation });
+    }
+    if (spec.check === 'server-cookie') {
+      opts.trace?.(`server cookie check: ${spec.page} (refuse, reload, read the cookie jar)`);
+      const run = await browser.cookieCheck(spec.page, { bannerWaitMs: opts.bannerWaitMs, settleMs: opts.settleMs, challenge: (html, headers, status) => detectBotChallenge(html, headers, status) });
+      const { notes, challenge, ...cookieObservation } = run;
+      if (challenge) return done(challenged(challenge as BotChallenge, spec.page), { cookieObservation });
+      const out = runVerify(spec, { cookieObservation }, vopts);
+      return done({ ...out, evidence: [...out.evidence, ...notes] }, { cookieObservation });
     }
     if (spec.check === 'gtm-tag-consent') {
       const url = containerUrlOf(spec);

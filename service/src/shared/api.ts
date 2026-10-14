@@ -407,7 +407,7 @@ export interface RemediationTaskValue {
 
 /** What Verify needs: `method` says what runs it (static fetch, browser spot check, or nothing: manual). */
 export interface RemediationVerifySpec {
-  check: 'install' | 'rewrite-tag' | 'remove-leak' | 'gtm-tag-consent' | 'consent-default' | 'remove-existing-tool' | 'spot-check' | 'manual';
+  check: 'install' | 'rewrite-tag' | 'remove-leak' | 'gtm-tag-consent' | 'consent-default' | 'remove-existing-tool' | 'spot-check' | 'server-cookie' | 'manual';
   method: 'static' | 'browser' | 'manual';
   page?: string;
   [key: string]: unknown;

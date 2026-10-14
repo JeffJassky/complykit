@@ -423,10 +423,45 @@ describe('buildRemediationTasks: a cookie only a server can clear', () => {
     expect(t).toHaveLength(1);
     expect(t[0].title).toBe('Have your server clear Server Tag’s cookies after a refusal');
     expect(t[0].summary).toMatch(/_srv_id/);
-    expect(t[0].steps.join(' ')).toMatch(/Set-Cookie: _srv_id=; Max-Age=0; Path=\/;/);
-    expect(t[0].verify.check).toBe('spot-check');
+    expect(t[0].steps.join(' ')).toMatch(/Set-Cookie: _srv_id=; Max-Age=0, with the same Path and Domain it was set with/);
+    expect(t[0].steps.join(' ')).toMatch(/missing or unreadable cookie as not consented/);
+    expect(t[0].steps.join(' ')).toMatch(/Sec-GPC/);
+    expect(t[0].steps.join(' ')).not.toMatch(/nothing reaches/);
+    expect(t[0].verify).toEqual({ check: 'server-cookie', method: 'browser', page: PAGE, partyId: 'srv.tag', names: ['_srv_id'] });
     expect(RemediationTaskSchema.safeParse(t[0]).success).toBe(true);
     expect(byKind(tasks, 'behavior-mismatch')).toHaveLength(0);
+    // The cookie task checks the tool itself: no browser confirm task is added.
+    expect(byKind(tasks, 'confirm-in-browser')).toHaveLength(0);
+  });
+
+  it('cookies are the only fix: no install task (installing the tool fixes nothing here)', () => {
+    const tasks = gen(evalWith(true)).tasks;
+    expect(tasks.map((t) => t.kind).filter((k) => k !== 'classify' && k !== 'accepted-exposure')).toEqual(['clear-server-cookie']);
+    expect(byKind(tasks, 'install')).toHaveLength(0);
+    expect(byKind(tasks, 'remove-existing-tool')).toHaveLength(0);
+  });
+
+  it('requests plus an HttpOnly leftover keeps the generic behavior task too (and the cookie task, and install)', () => {
+    const ev = evalWith(true);
+    ev.behaviorObservations![0].parties[0] = { ...ev.behaviorObservations![0].parties[0], dataRequests: 2, requestPhases: ['after-reject'], dataRequestPhases: { 'after-reject': 2 } } as never;
+    const tasks = gen(ev).tasks;
+    expect(byKind(tasks, 'clear-server-cookie')).toHaveLength(1);
+    expect(byKind(tasks, 'behavior-mismatch')).toHaveLength(1);
+    expect(byKind(tasks, 'install')).toHaveLength(1);
+  });
+
+  it('install stays when another real fix exists next to the cookie task', () => {
+    const ev = compatibilityEvaluation();
+    const withSrv = {
+      ...ev,
+      inventory: [...ev.inventory, srvParty],
+      behaviorObservations: ev.behaviorObservations!.map((o) =>
+        o.scenario === 'reject' ? { ...o, knownPartyIds: [...o.knownPartyIds, 'srv.tag'], parties: [...o.parties, { partyId: 'srv.tag', dataRequests: 0, requestPhases: [], dataRequestPhases: {}, limitedRequestsByPhase: {}, stores: stores(true) }] } : o,
+      ),
+    } as unknown as TrackingEvaluation;
+    const tasks = gen(withSrv).tasks;
+    expect(byKind(tasks, 'clear-server-cookie')).toHaveLength(1);
+    expect(byKind(tasks, 'install')).toHaveLength(1);
   });
 
   it('the same cookie readable from script keeps the generic task and has no server-cookie task', () => {

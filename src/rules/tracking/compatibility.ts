@@ -140,6 +140,8 @@ export interface BehaviorCell {
    * remove them. They still make the cell a mismatch; this only says who can fix it.
    */
   serverCookies?: string[];
+  /** With serverCookies: nothing was sent and those cookies are the only active items, so they are the whole problem. */
+  cookieOnly?: boolean;
 }
 
 export interface CompatibilityInput {
@@ -361,7 +363,7 @@ export function behaviorCellsFrom(ev: Pick<TrackingEvaluation, 'locations' | 'in
             const serverCookies = SAID_NO.has(sc.scenario) ? [...new Set(activeStores.filter((s) => s.kind === 'cookie' && s.presentAtEnd && !s.thirdParty && s.httpOnly).map((s) => s.name))] : [];
             out.push({
               ...cell,
-              ...(serverCookies.length ? { serverCookies } : {}),
+              ...(serverCookies.length ? { serverCookies, ...(requests === 0 && activeStores.every((st) => st.kind === 'cookie' && serverCookies.includes(st.name)) ? { cookieOnly: true } : {}) } : {}),
               status: 'mismatch',
               reason: `${requests} data request(s)${activeStores.length ? ` and ${activeStores.length} cookie / storage item(s)` : ''} ${when}, ${wiretap && regime !== 'opt-in' && p.categories.some(isWiretapCategory) && !CHOICE_SCENARIOS.has(sc.scenario) && sc.scenario !== 'gpc' ? 'before any choice, in a wiretap-litigation state where it is expected off until the visitor accepts (firing before a choice is what wiretap suits are built on)' : `where ${regime} rules expect it off`}`,
             });
@@ -1076,8 +1078,8 @@ export function compatibilityFor(party: PartyInventoryItem, input: Compatibility
       changes.splice(1, 0, {
         kind: 'clear-server-cookie',
         names,
-        note: `${names.join(', ')} ${many ? 'are' : 'is'} still in the browser after the visitor refused or withdrew consent, and ${many ? 'are' : 'is'} set by a server (HttpOnly), so no script on the page — complykit's consent tool included — can remove ${many ? 'them' : 'it'}. Whoever sets ${many ? 'them' : 'it'} (your server, a server-side tag container, or ${party.label}'s first-party integration) must stop setting ${many ? 'them' : 'it'} while the visitor has not consented to ${what}, and expire ${many ? 'them' : 'it'} (${names.map((n) => `Set-Cookie: ${n}=; Max-Age=0; Path=/;`).join(' ')} with the same Domain as when set) on responses where the ${COMPLYKIT_CONSENT_COOKIE} cookie records a refusal or withdrawal: its value is URL-encoded JSON, and "categories" holds true / false per category, so read the ${what} entries (a missing cookie means no choice yet).`,
-      });
+        ...(mismatches.every((m) => m.serverCookies?.length && m.cookieOnly) ? { cookieOnly: true } : {}),
+        note: `${names.join(', ')} ${many ? 'are' : 'is'} still in the browser after the visitor refused or withdrew consent, and ${many ? 'are' : 'is'} set by a server (HttpOnly), so no script on the page — complykit's consent tool included — can remove ${many ? 'them' : 'it'}. Whoever sets ${many ? 'them' : 'it'} (your server, a server-side tag container, or ${party.label}'s first-party integration) must stop setting ${many ? 'them' : 'it'} while the visitor has not consented to ${what}, and expire ${many ? 'them' : 'it'} (${names.map((n) => `Set-Cookie: ${n}=; Max-Age=0`).join(' ')}, with the same Path and Domain ${many ? 'each was' : 'it was'} set with) on responses where the ${COMPLYKIT_CONSENT_COOKIE} cookie records a refusal or withdrawal: its value is URL-encoded JSON, and "categories" holds true / false per category, so read the ${what} entries. Treat a missing or unreadable cookie as not consented (Safari caps script-set cookies at 7 days, so a visitor who refused may arrive without it). If the visitor opted out through your own opt-out link, or sent the Sec-GPC header, the refusal may not be in ${COMPLYKIT_CONSENT_COOKIE} at all: honor the site's own opt-out record and that header the same way.`,      });
     }
   } else if (!checked) {
     const why = [...new Set(cells.map((c) => c.reason))];
