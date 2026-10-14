@@ -9,6 +9,7 @@ const CONNECTION_LABEL: Record<Connection, string> = {
   reconnecting: 'Reconnecting…',
   polling: 'Updates every few seconds',
   offline: 'Offline',
+  idle: 'Nothing running',
 };
 
 const VIEWS: Array<{ id: View; href: string; label: string; icon: IconName }> = [

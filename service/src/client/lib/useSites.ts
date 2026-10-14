@@ -34,48 +34,35 @@ export function useSiteWorkspace(domain: string) {
   return useFetched<SiteWorkspace>(load, domain);
 }
 
-/** How often an open, visible page re-reads the site (its checklist can change elsewhere: the report, the API, another tab). */
-export const LIVE_REFRESH_MS = 30_000;
-
 type Listenable = Pick<EventTarget, 'addEventListener' | 'removeEventListener'>;
 
 /**
- * Re-read on window focus, when the page becomes visible again, and every
- * `intervalMs` while it is visible: a Verify or a "made this change" done in the
- * report (or through the API) shows up here without a reload. Returns the stop
- * function. Pure over the passed window/document so it is testable without a DOM.
+ * Re-read on window focus and when the page becomes visible again: a Verify or a
+ * "made this change" done in the report (or through the API) shows up here
+ * without a reload. No timer: a page left open on a screen would keep the
+ * server from its idle shutdown. Returns the stop function. Pure over the passed
+ * window/document so it is testable without a DOM.
  */
-export function startLiveRefresh(
-  refresh: () => unknown,
-  env: { win: Listenable; doc: Listenable & { visibilityState: string }; setInterval?: typeof setInterval; clearInterval?: typeof clearInterval },
-  intervalMs = LIVE_REFRESH_MS,
-): () => void {
+export function startLiveRefresh(refresh: () => unknown, env: { win: Listenable; doc: Listenable & { visibilityState: string } }): () => void {
   const { win, doc } = env;
-  const set = env.setInterval ?? setInterval;
-  const clear = env.clearInterval ?? clearInterval;
-  const visible = () => doc.visibilityState !== 'hidden';
   const onFocus = () => void refresh();
   const onVisibility = () => {
-    if (visible()) void refresh();
+    if (doc.visibilityState !== 'hidden') void refresh();
   };
   win.addEventListener('focus', onFocus);
   doc.addEventListener('visibilitychange', onVisibility);
-  const timer = set(() => {
-    if (visible()) void refresh();
-  }, intervalMs);
   return () => {
     win.removeEventListener('focus', onFocus);
     doc.removeEventListener('visibilitychange', onVisibility);
-    clear(timer);
   };
 }
 
 /** startLiveRefresh for a component's lifetime; always calls the latest `refresh`. */
-export function useLiveRefresh(refresh: () => unknown, intervalMs = LIVE_REFRESH_MS): void {
+export function useLiveRefresh(refresh: () => unknown): void {
   const ref = useRef(refresh);
   ref.current = refresh;
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
-    return startLiveRefresh(() => ref.current(), { win: window, doc: document }, intervalMs);
-  }, [intervalMs]);
+    return startLiveRefresh(() => ref.current(), { win: window, doc: document });
+  }, []);
 }

@@ -5,6 +5,7 @@ import { AuthorizedBox, JobLaws, LawPicker } from './Laws';
 import type { JobSummary, RemediationStatus, RemediationTask, SiteSummary, SiteWorkspace, WorkspaceRun } from '../../shared/api';
 import { formatAbsolute, formatRelative } from '../lib/format';
 import { api } from '../lib/api';
+import { notifyJobsChanged } from '../lib/useJobs';
 import { configDownloads, configStoredOf, generatableRuns, generateErrorText, REPORT_REFRESH_FAILED, summarizeWorkspace } from '../lib/sites';
 import { PHASE_LABEL } from '../lib/format';
 import { checklistFromWorkspace, checklistProgress, installZipHref, openDecisions, reportChecklistHref, reportTaskHref, taskStatusLabel, TASK_CHANGE_PREFIX } from '../lib/checklist';
@@ -708,6 +709,7 @@ export function SitePage({ domain, jobs }: { domain: string; jobs: Record<string
     setRescan({ busy: true });
     try {
       const res = await api.rescan(domain, { quick: opts.quick, slowRepeat: opts.slowRepeat, ...(opts.laws ? { laws: opts.laws, authorized: opts.authorized } : {}) });
+      notifyJobsChanged();
       setRescan({ started: { jobId: res.job.id, url: res.job.url, quick: res.job.quick, slowRepeat: res.job.slowRepeat } });
     } catch (err) {
       setRescan({ error: err instanceof Error ? err.message : String(err) });

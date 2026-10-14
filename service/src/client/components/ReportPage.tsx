@@ -2,6 +2,7 @@ import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactNode }
 import type { JobReportResponse, OwnerCell, OwnerColumn, OwnerReport, OwnerToolActivity, OwnerToolRow, RemediationTask } from '../../shared/api';
 import { LAWS, type LawId } from '../../shared/laws';
 import { api } from '../lib/api';
+import { notifyJobsChanged } from '../lib/useJobs';
 import { JobLaws, LawProgress, RescanButton } from './Laws';
 import { lawRows } from '../lib/laws';
 import { tabReport } from '../lib/lawReport';
@@ -970,6 +971,7 @@ export function ReportPage({ jobId }: { jobId: string }) {
       setUi((u) => ({ ...u, rescanning: true }));
       try {
         const res = await api.rescan(d.domain, extra?.laws ? { laws: extra.laws, authorized: extra.authorized } : {});
+        notifyJobsChanged();
         window.location.hash = reportHref(res.job.id);
       } catch (e) {
         err('rescan', e);

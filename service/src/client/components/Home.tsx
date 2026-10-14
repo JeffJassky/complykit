@@ -1,6 +1,7 @@
 import { useId, useMemo, useState, type FormEvent } from 'react';
 import { parseUrlList, type JobSummary, type SiteSummary } from '../../shared/api';
 import { api } from '../lib/api';
+import { notifyJobsChanged } from '../lib/useJobs';
 import { formatRelative } from '../lib/format';
 import { reportHref } from '../lib/useHashView';
 import { readStoredLaws, scanBlockedReason, scanRequestOf, writeStoredLaws, type ScanRequest } from '../lib/laws';
@@ -150,6 +151,7 @@ export function Home({ jobs, sites, loaded, now }: { jobs: JobSummary[]; sites: 
     setError(null);
     try {
       const res = await api.createBatch({ urls: req.url, checks: { consent: req.consent, accessibility: req.accessibility }, quick: req.quick, slowRepeat: req.slowRepeat, ...(req.laws ? { laws: req.laws, authorized: req.authorized } : {}) });
+      notifyJobsChanged();
       const first = res.jobs[0];
       if (first) window.location.hash = reportHref(first.id);
       else setError(res.rejected.length ? `not a website address: ${res.rejected.join(', ')}` : 'nothing to scan');

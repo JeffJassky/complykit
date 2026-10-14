@@ -4,8 +4,6 @@ import { api } from './api';
 
 /** While something is moving (scan, list being made, report updating): poll this often. */
 export const ACTIVE_POLL_MS = 2000;
-/** Otherwise: still re-read now and then (a Verify or a classification from another tab). */
-export const IDLE_POLL_MS = 15_000;
 
 /** Is anything on the report page still changing on its own? */
 export function isMoving(r: JobReportResponse | null): boolean {
@@ -14,9 +12,11 @@ export function isMoving(r: JobReportResponse | null): boolean {
 }
 
 /**
- * GET /api/jobs/:id/report, polled: every 2 s while the scan runs (or the list
- * is being made, or the report re-renders), every 15 s otherwise, and at once
- * when the tab comes back into view. Newest response wins.
+ * GET /api/jobs/:id/report, polled every 2 s while the scan runs (or the list
+ * is being made, or the report re-renders). Once nothing is moving it stops
+ * polling and re-reads only on focus or when the tab comes back into view (a
+ * Verify or a classification from another tab): a timer on a settled report
+ * would keep the server from its idle shutdown. Newest response wins.
  */
 export function useJobReport(jobId: string) {
   const [data, setData] = useState<JobReportResponse | null>(null);
@@ -40,18 +40,25 @@ export function useJobReport(jobId: string) {
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // True from a loop's start until it settles without scheduling another: at most one loop at a time.
+    let polling = false;
     dataRef.current = null;
     setData(null);
     setError(null);
     const loop = async () => {
       if (stopped) return;
+      polling = true;
       if (typeof document === 'undefined' || document.visibilityState !== 'hidden') await refresh();
       if (stopped) return;
-      timer = setTimeout(loop, isMoving(dataRef.current) ? ACTIVE_POLL_MS : IDLE_POLL_MS);
+      timer = isMoving(dataRef.current) ? setTimeout(loop, ACTIVE_POLL_MS) : undefined;
+      polling = !!timer;
     };
     void loop();
     const onVisible = () => {
-      if (document.visibilityState !== 'hidden') void refresh();
+      if (document.visibilityState === 'hidden') return;
+      // Moving: re-read now, the loop keeps polling. Settled: one loop pass, which polls again only if something started moving.
+      if (polling) void refresh();
+      else void loop();
     };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onVisible);
