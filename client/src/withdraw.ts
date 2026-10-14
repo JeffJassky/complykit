@@ -20,7 +20,9 @@
 //                 whatever the subscription order (idempotent).
 //   4. cleanup  — cookies and localStorage / sessionStorage keys matching the
 //                 `config.vendors[].stores` name regexes of the revoked
-//                 categories are deleted. The consent cookie itself never is.
+//                 categories are deleted. Never deleted: the consent cookie, and
+//                 any name a vendor of a necessary or a still-granted category
+//                 also claims (protection wins over a broad pattern).
 //   5. reload   — on 'withdraw', after the other listeners ran (next task, so
 //                 the record beacon is queued first).
 //
@@ -71,20 +73,24 @@ export const RELOAD_ATTR = 'data-complykit-reload';
 // Read while the tool's own <script> executes (null later).
 const ownScript = typeof document !== 'undefined' ? (document.currentScript as HTMLScriptElement | null) : null;
 
-/** Does `name` match a `kind` store pattern of a vendor in `categories`? Our own key never does. */
-const matches = (config: ConsentToolConfig, categories: string[], kind: string, name: string): boolean =>
+const hits = (v: ConsentToolConfig['vendors'][number], kind: string, name: string): boolean =>
+  v.stores.some((s) => {
+    try {
+      return s.kind === kind && new RegExp(s.name).test(name);
+    } catch {
+      return false; // a bad pattern matches nothing
+    }
+  });
+
+/**
+ * Does `name` match a `kind` store pattern of a vendor in `categories`, and is it not protected? Protected: our own
+ * key, and any name a vendor of a necessary category or of a category the visitor currently GRANTED (`granted`)
+ * also claims — protection wins, so a denied vendor's broad pattern never deletes another vendor's cookie.
+ */
+const matches = (config: ConsentToolConfig, categories: string[], granted: string[], kind: string, name: string): boolean =>
   name !== COOKIE_NAME &&
-  config.vendors.some(
-    (v) =>
-      categories.includes(v.category) &&
-      v.stores.some((s) => {
-        try {
-          return s.kind === kind && new RegExp(s.name).test(name);
-        } catch {
-          return false; // a bad pattern deletes nothing
-        }
-      }),
-  );
+  config.vendors.some((v) => categories.includes(v.category) && hits(v, kind, name)) &&
+  !config.vendors.some((v) => (isNecessaryCategory(v.category) || granted.includes(v.category)) && !categories.includes(v.category) && hits(v, kind, name));
 
 /** Upper bound on waiting for the async cookieStore deletions (and so on the reload). */
 const SETTLE_MS = 500;
@@ -102,7 +108,7 @@ export function deletionStrings(hostname: string, pathname: string, https: boole
     for (const path of paths) {
       const base = `${name}=; Max-Age=0; Path=${path}${d}`;
       // A partitioned cookie is only deleted by a write that is itself Partitioned (+ Secure).
-      out.push(...(https ? [`${base}; Secure`, `${base}; Secure; Partitioned`] : [base]));
+      out.push(...(https ? [`${base}; Secure`, `${base}; Secure; SameSite=None; Partitioned`] : [base]));
     }
   }
   return out;
@@ -113,22 +119,22 @@ const expireCookie = (name: string): void => {
 };
 
 /** Names in document.cookie that match (deduped). */
-const cookieNames = (config: ConsentToolConfig, categories: string[]): string[] => {
+const cookieNames = (config: ConsentToolConfig, categories: string[], granted: string[]): string[] => {
   const names = new Set<string>();
   for (const part of document.cookie.split(';')) {
     const name = part.split('=')[0].trim();
-    if (name && matches(config, categories, 'cookie', name)) names.add(name);
+    if (name && matches(config, categories, granted, 'cookie', name)) names.add(name);
   }
   return [...names];
 };
 
 /** Matching storage keys as [kind, key]. */
-const storageKeys = (config: ConsentToolConfig, categories: string[]): [string, string][] => {
+const storageKeys = (config: ConsentToolConfig, categories: string[], granted: string[]): [string, string][] => {
   const out: [string, string][] = [];
   for (const kind of ['local', 'session']) {
     try {
       const st = kind === 'local' ? localStorage : sessionStorage;
-      for (const k of Object.keys(st)) if (k !== STORAGE_KEY && matches(config, categories, kind, k)) out.push([kind, k]);
+      for (const k of Object.keys(st)) if (k !== STORAGE_KEY && matches(config, categories, granted, kind, k)) out.push([kind, k]);
     } catch {
       /* storage blocked: nothing reachable */
     }
@@ -137,20 +143,20 @@ const storageKeys = (config: ConsentToolConfig, categories: string[]): [string, 
 };
 
 /** Everything matching that is visible to the page now, as `cookie:NAME` / `local:KEY` / `session:KEY`. */
-const present = (config: ConsentToolConfig, categories: string[]): string[] => [
-  ...cookieNames(config, categories).map((n) => `cookie:${n}`),
-  ...storageKeys(config, categories).map(([kind, k]) => `${kind}:${k}`),
+const present = (config: ConsentToolConfig, categories: string[], granted: string[]): string[] => [
+  ...cookieNames(config, categories, granted).map((n) => `cookie:${n}`),
+  ...storageKeys(config, categories, granted).map(([kind, k]) => `${kind}:${k}`),
 ];
 
 /** Delete matching cookies precisely with the Domain / Path / partitioned flag the Cookie Store API reports. Never throws. */
-async function cookieStoreDelete(config: ConsentToolConfig, categories: string[]): Promise<void> {
+async function cookieStoreDelete(config: ConsentToolConfig, categories: string[], granted: string[]): Promise<void> {
   try {
     const cs = (window as any).cookieStore;
     if (!cs?.getAll) return;
     const all: any[] = await cs.getAll();
     await Promise.all(
       all
-        .filter((c) => c && matches(config, categories, 'cookie', c.name))
+        .filter((c) => c && matches(config, categories, granted, 'cookie', c.name))
         .map(async (c) => {
           try {
             const o: Record<string, unknown> = { name: c.name };
@@ -182,18 +188,18 @@ export interface WithdrawalReport {
  * The synchronous deletions all happen before the first await; the promise settles (never rejects, bounded) once the
  * cookieStore deletions did, with what was cleared and what survived.
  */
-export async function clearStores(config: ConsentToolConfig, categories: string[]): Promise<WithdrawalReport> {
-  const before = present(config, categories);
-  for (const n of cookieNames(config, categories)) expireCookie(n);
-  for (const [kind, k] of storageKeys(config, categories)) {
+export async function clearStores(config: ConsentToolConfig, categories: string[], granted: string[] = []): Promise<WithdrawalReport> {
+  const before = present(config, categories, granted);
+  for (const n of cookieNames(config, categories, granted)) expireCookie(n);
+  for (const [kind, k] of storageKeys(config, categories, granted)) {
     try {
       (kind === 'local' ? localStorage : sessionStorage).removeItem(k);
     } catch {
       /* blocked */
     }
   }
-  await Promise.race([cookieStoreDelete(config, categories), new Promise((r) => setTimeout(r, SETTLE_MS))]);
-  const leftover = present(config, categories);
+  await Promise.race([cookieStoreDelete(config, categories, granted), new Promise((r) => setTimeout(r, SETTLE_MS))]);
+  const leftover = present(config, categories, granted);
   return { at: Date.now(), categories, cleared: before.filter((k) => !leftover.includes(k)), leftover };
 }
 
@@ -207,14 +213,15 @@ export function installWithdrawal(config: ConsentToolConfig, store: ConsentStore
   // Cleanup in flight (bounded, never rejects): a reload waits for it so it cannot race the cookieStore deletions.
   let cleanup: Promise<unknown> = Promise.resolve();
   const reload = () => void cleanup.then(() => setTimeout(() => location.reload()));
-  const run = (cats: string[], key: 'withdrawal' | 'withdrawalSweep') =>
-    clearStores(config, cats).then(
+  const run = (cats: string[], granted: string[], key: 'withdrawal' | 'withdrawalSweep') =>
+    clearStores(config, cats, granted).then(
       (r) => {
         diagnostics[key] = r;
         if (r.leftover.length && typeof console !== 'undefined') console.warn(`[complykit] ${key === 'withdrawal' ? 'withdrawal' : 'sweep'} left ${r.leftover.join(', ')}`);
       },
       () => {},
     );
+  const grantedOf = (s: { categories: Record<string, boolean> }) => Object.keys(s.categories).filter((id) => s.categories[id]);
   let last = store.state();
   let revoked: string[] = [];
   store.subscribe((s) => {
@@ -222,7 +229,7 @@ export function installWithdrawal(config: ConsentToolConfig, store: ConsentStore
     last = s;
     if (!revoked.length) return;
     adapters?.()?.sync();
-    cleanup = run(revoked, 'withdrawal');
+    cleanup = run(revoked, grantedOf(s), 'withdrawal');
     // Only a visitor's own choice reloads (not a regime / GPC update before one).
     if (policy === 'revoke' && s.status === 'chosen') reload();
   });
@@ -232,7 +239,7 @@ export function installWithdrawal(config: ConsentToolConfig, store: ConsentStore
   const denied = Object.keys(last.categories).filter((id) => !last.categories[id] && !isNecessaryCategory(id));
   // Once, when the page has loaded (inline scripts have run), so a cookie they set is caught too.
   if (last.status === 'chosen' && denied.length) {
-    const sweep = () => void run(denied, 'withdrawalSweep');
+    const sweep = () => void run(denied, grantedOf(last), 'withdrawalSweep');
     if (document.readyState === 'complete') sweep();
     else addEventListener('load', sweep, { once: true });
   }

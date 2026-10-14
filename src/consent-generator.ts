@@ -320,13 +320,16 @@ function storesOf(
   e: KnowledgeEntry | undefined,
   protectedName: (kind: string, name: string) => boolean,
   protectedNames: ReadonlyArray<{ kind: string; name: string }> = [],
+  otherNames: ReadonlyArray<{ partyId: string; kind: string; name: string }> = [],
 ): ConsentVendor['stores'] {
   if (e?.stores.length) return e.stores.map((s) => ({ name: s.name, kind: s.kind }));
   // No KB patterns: the names this scan saw. Never a name a necessary tool (or
   // the team) claims — withdrawal deletes these. A name ending in an ID-like
   // token is generalized: a suffix varies per visitor/account, so the exact
   // name would leave the cookie behind after withdrawal. Never to a pattern
-  // that would also match a protected name.
+  // that would also match a protected name, a literal store name observed for
+  // any OTHER party, or (when this tool's own names include the bare prefix as
+  // a cookie of its own) the family is not an ID-suffixed one.
   const out: ConsentVendor['stores'] = [];
   for (const s of p.stores) {
     const kind = s.kind === 'local' || s.kind === 'session' ? s.kind : 'cookie';
@@ -335,7 +338,11 @@ function storesOf(
     const general = generalizeName(s.name);
     if (general) {
       const re = new RegExp(general);
-      if (!protectedNames.some((x) => x.kind === kind && re.test(x.name))) name = general;
+      const prefix = /^\^(.*)\[A-Za-z0-9\]\+\$$/.exec(general)![1].replace(/\\(.)/g, '$1'); // the literal prefix incl. separator
+      const bare = (x: { kind?: string; name: string }) => x.name === prefix || x.name === prefix.slice(0, -1);
+      const ownBare = p.stores.some((x) => (x.kind === 'local' || x.kind === 'session' ? x.kind : 'cookie') === kind && bare(x));
+      const clash = (x: { kind: string; name: string }) => x.kind === kind && re.test(x.name);
+      if (!ownBare && !protectedNames.some(clash) && !otherNames.some((x) => x.partyId !== p.partyId && clash(x))) name = general;
     }
     if (!out.some((x) => x.name === name && x.kind === kind)) out.push({ name, kind });
   }
@@ -390,6 +397,8 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
       necessaryList.push({ kind: String(c.storageKind), name: c.name });
     }
   }
+  // Every literal store name observed for any party (a generalized pattern must not reach another tool's cookie).
+  const observedList = ev.inventory.flatMap((p) => p.stores.map((s) => ({ partyId: p.partyId, kind: s.kind === 'local' || s.kind === 'session' ? s.kind : 'cookie', name: s.name })));
   const protectedName = (kind: string, name: string): boolean => necessaryNames.has(`${kind}|${name}`) || necessaryPatterns.some((x) => x.kind === kind && x.re.test(name));
 
   // A consent plugin fingerprinted on the platform (a WordPress plugin served from
@@ -515,7 +524,7 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
       category,
       control,
       ...(adapter ? { adapter } : {}),
-      stores: category === NECESSARY_CATEGORY ? [] : storesOf(p, e, protectedName, necessaryList),
+      stores: category === NECESSARY_CATEGORY ? [] : storesOf(p, e, protectedName, necessaryList, observedList),
       ...(vnotes.length ? { note: vnotes.join('; ') } : {}),
     });
   }

@@ -195,6 +195,25 @@ describe('stores for a tool with no knowledge-base patterns: ID-like tails gener
     expect(names).toEqual(['^shared_abc123$', '^other_[A-Za-z0-9]+$']);
   });
 
+  it('a pattern that would match a literal name observed for ANY other party falls back to exact', () => {
+    const names = run(['shared_abc123', 'other_abc123'], (e) => {
+      e.inventory.push(party('unknown:other.test', 'other.test', ['advertising'], { stores: [st('shared_zzz999')] as never }));
+    });
+    expect(names).toEqual(['^shared_abc123$', '^other_[A-Za-z0-9]+$']);
+  });
+
+  it('the same name on another party of a different kind does not block generalizing', () => {
+    const names = run(['shared_abc123'], (e) => {
+      e.inventory.push(party('unknown:other.test', 'other.test', ['advertising'], { stores: [{ ...st('shared_zzz999'), kind: 'local' }] as never }));
+    });
+    expect(names).toEqual(['^shared_[A-Za-z0-9]+$']);
+  });
+
+  it("not generalized when the tool's own names include the bare prefix as a different cookie", () => {
+    expect(run(['_hjSession_1234567', '_hjSession'])).toEqual(['^_hjSession_1234567$', '^_hjSession$']);
+    expect(run(['uid_2024', 'uid_'])).toEqual(['^uid_2024$', '^uid_$']);
+  });
+
   it('knowledge-base patterns are untouched', () => {
     const e = compatibilityEvaluation();
     const meta = e.inventory.find((p) => p.partyId === 'meta.pixel')!;
