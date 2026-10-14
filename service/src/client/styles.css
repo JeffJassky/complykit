@@ -3117,7 +3117,7 @@ textarea.input {
   background: var(--surface-2);
 }
 .rp-matrix tr.rp-cookie th:first-child {
-  padding-left: 24px;
+  padding-left: 46px;
   font-weight: 400;
 }
 .rp-matrix th small {
@@ -3305,13 +3305,168 @@ span.rp-cell {
   font-size: 13px;
 }
 
-/* d. the to-do list */
-.rp-todo-title {
+/* overview: compliance score */
+.rp-overview {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
   flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 32px;
+}
+.rp-score {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.rp-score-num {
+  font-size: 48px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.rp-score[data-severity='ok'] .rp-score-num {
+  color: var(--green);
+}
+.rp-score[data-severity='warning'] .rp-score-num {
+  color: var(--amber);
+}
+.rp-score[data-severity='problem'] .rp-score-num {
+  color: var(--red);
+}
+.rp-score-label {
+  font-weight: 600;
+}
+.rp-score-label small,
+.rp-stats small {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.rp-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  margin: 0;
+}
+.rp-stats > div {
+  min-width: 0;
+}
+.rp-stats dt {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.rp-stats dd {
+  margin: 2px 0;
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.rp-stats [data-severity='problem'] dd,
+.rp-stats [data-trend='down'] dd {
+  color: var(--red);
+}
+.rp-stats [data-severity='warning'] dd {
+  color: var(--amber);
+}
+.rp-stats [data-trend='up'] dd {
+  color: var(--green);
+}
+
+/* tool rows fold their cookies */
+.rp-matrix tr.rp-tool th:first-child {
+  padding-left: 30px;
+}
+.rp-fold {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.rp-fold:hover {
+  background: var(--grey-bg);
+}
+.rp-fold span {
+  display: inline-block;
+  transition: transform 0.15s;
+}
+.rp-fold[aria-expanded='true'] span {
+  transform: rotate(90deg);
+}
+.rp-fold:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* d. the to-do list */
+.rp-todo-fold > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 4px 0 12px;
+}
+.rp-todo-fold > summary::-webkit-details-marker {
+  display: none;
+}
+.rp-todo-fold > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.rp-todo-toggle {
+  flex: none;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+}
+.rp-todo-fold > summary:hover .rp-todo-toggle {
+  background: var(--grey-bg);
+}
+.rp-todo-fold[open] .rp-todo-show,
+.rp-todo-fold:not([open]) .rp-todo-hide {
+  display: none;
+}
+.rp-todo-sum {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.rp-todo-big {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.rp-todo-of {
+  font-size: 18px;
+  font-weight: 600;
+}
+.rp-todo-meter {
+  display: block;
+  height: 6px;
+  max-width: 320px;
+  border-radius: 3px;
+  background: var(--grey-bg);
+  overflow: hidden;
+}
+.rp-todo-meter span {
+  display: block;
+  height: 100%;
+  background: var(--green);
 }
 .rp-todos {
   list-style: decimal;
@@ -3742,6 +3897,16 @@ span.rp-cell {
   background: var(--green);
 }
 .law-dot[data-state='failed'] {
+  background: var(--red);
+}
+/* A finished law's dot shows its worst finding. */
+.law-dot[data-severity='ok'] {
+  background: var(--green);
+}
+.law-dot[data-severity='warning'] {
+  background: var(--amber);
+}
+.law-dot[data-severity='problem'] {
   background: var(--red);
 }
 .law-tabs [role='tabpanel'] {

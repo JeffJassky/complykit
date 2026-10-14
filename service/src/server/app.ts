@@ -295,7 +295,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     siteRoute(async (_req, res) => {
       const job = res.locals.job as JobDetail;
       res.set('Cache-Control', 'no-store');
-      res.json(await jobReport(job, { jobDir: store.jobDir(job.id), workspaces, maker: checklists, jobs: store.list() }));
+      res.json(await jobReport(job, { jobDir: store.jobDir(job.id), workspaces, maker: checklists, jobs: store.list(), jobDirOf: (id) => store.jobDir(id) }));
     }),
   );
 

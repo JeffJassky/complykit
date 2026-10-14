@@ -22,6 +22,20 @@ async function scan(s: S, url: string, status: 'done' | 'failed' = 'done'): Prom
 const report = async (s: S, id: string): Promise<JobReportResponse> => (await request(s.app).get(`/api/jobs/${id}/report`).expect(200)).body as JobReportResponse;
 
 describe('scan history on the report', () => {
+  it('names the site’s first finished scan as the score baseline, with its score', async () => {
+    const s = await startService();
+    const first = await scan(s, 'shop.example.com');
+    await scan(s, 'fail.example.com', 'failed');
+    const latest = await scan(s, 'www.example.com');
+
+    const a = await report(s, first);
+    expect(a.firstScan).toMatchObject({ jobId: first, current: true });
+    const b = await report(s, latest);
+    expect(b.firstScan?.jobId).toBe(first);
+    expect(b.firstScan?.current).toBeUndefined();
+    expect(typeof b.firstScan?.score).toBe('number');
+  });
+
   it('lists every scan of the site, newest first, marking this one; other sites are left out', async () => {
     const s = await startService();
     const first = await scan(s, 'shop.example.com');

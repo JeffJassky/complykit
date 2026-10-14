@@ -747,6 +747,8 @@ export interface JobReportResponse {
   history: ScanHistoryItem[];
   /** Set when a newer finished consent scan of the site exists: this report is an earlier scan and can't make the to-do list. */
   newerScan?: { jobId: string; at: string };
+  /** The site's first finished consent scan, the compliance score's baseline (shared/score.ts). `current`: this is it. `score` absent when it couldn't be scored. */
+  firstScan?: { jobId: string; at: string; current?: true; score?: number };
 }
 
 /** One scan of a site, for the report page's scan list. */

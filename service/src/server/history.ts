@@ -35,6 +35,24 @@ export function newerScan(job: JobDetail, jobs: JobDetail[], domainOf: DomainOf)
   return newest;
 }
 
+/**
+ * The site's first finished consent scan (the score baseline): the oldest, or the job itself
+ * when nothing finished before it. Undefined when the job isn't finished and none other is.
+ */
+export function firstScan(job: JobDetail, jobs: JobDetail[], domainOf: DomainOf): JobDetail | undefined {
+  const domain = jobDomain(job, domainOf);
+  if (!domain) return undefined;
+  let oldest: JobDetail | undefined;
+  for (const j of jobs) {
+    if (j.status !== 'done' || !j.checks.includes('consent') || !j.result?.consent?.runId) continue;
+    if (jobDomain(j, domainOf) !== domain) continue;
+    if (!oldest || j.createdAt < oldest.createdAt) oldest = j;
+  }
+  // A scan always compares against what came before it, never a later one.
+  if (oldest && oldest.createdAt > job.createdAt) return job.status === 'done' ? job : undefined;
+  return oldest;
+}
+
 /** Every scan of the site, newest first: the service's jobs, plus workspace runs whose job is gone or ran elsewhere. */
 export function siteHistory(domain: string, jobs: JobDetail[], ws: SiteWorkspace, domainOf: DomainOf, currentJobId?: string): ScanHistoryItem[] {
   const out: ScanHistoryItem[] = [];

@@ -1,10 +1,11 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { JobReportResponse, ScanHistoryItem, OwnerCell, OwnerColumn, OwnerReport, OwnerToolActivity, OwnerToolRow, RemediationTask } from '../../shared/api';
 import { LAWS, type LawId } from '../../shared/laws';
+import { reportSeverity, scoreReport, type Severity } from '../../shared/score';
 import { api } from '../lib/api';
 import { notifyJobsChanged } from '../lib/useJobs';
 import { JobLaws, LawProgress, RescanButton } from './Laws';
-import { lawRows } from '../lib/laws';
+import { lawRows, type LawRow } from '../lib/laws';
 import { tabReport } from '../lib/lawReport';
 import { formatAbsolute, formatClock, jobDuration, STATUS_LABEL as JOB_STATUS_LABEL } from '../lib/format';
 import { openDecisions, STATUS_LABEL as TASK_STATUS_LABEL, TASK_CHANGE_PREFIX } from '../lib/checklist';
@@ -305,6 +306,14 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
   const scanning = data.job.status === 'queued' || data.job.status === 'running';
   const [open, setOpen] = useState<{ row: string; col?: number } | null>(null);
   const toggle = (row: string, col?: number) => setOpen((o) => (o && o.row === row && o.col === col ? null : { row, col }));
+  // Tools start folded: their cookies and storage show when the tool is opened.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleTool = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
   if (!report) {
     return (
       <section className="rp-section" aria-labelledby="rp-matrix-title" data-testid="matrix">
@@ -381,9 +390,10 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
               ) : null}
               {tools.map((t) => {
                 const decide = !t.classified && !ui.saved?.[t.classKey];
+                const isOpen = expanded.has(t.id);
                 const rows = [
                   { key: t.id, name: t.label, sub: purposeOf(t), cells: t.cells, tool: true, unclassified: !t.classified },
-                  ...t.cookies.map((k) => ({ key: k.id, name: k.name, sub: k.kind === 'cookie' ? 'cookie' : `${k.kind} storage`, cells: k.cells, tool: false, unclassified: false })),
+                  ...(isOpen ? t.cookies : []).map((k) => ({ key: k.id, name: k.name, sub: k.kind === 'cookie' ? 'cookie' : `${k.kind} storage`, cells: k.cells, tool: false, unclassified: false })),
                 ];
                 return (
                   <Fragment key={t.id}>
@@ -391,6 +401,11 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
                       <Fragment key={r.key}>
                         <tr className={r.tool ? 'rp-tool' : 'rp-cookie'} data-row={r.key}>
                           <th scope="row">
+                            {r.tool && t.cookies.length ? (
+                              <button type="button" className="rp-fold" aria-expanded={isOpen} aria-label={`${isOpen ? 'Hide' : 'Show'} the ${plural(t.cookies.length, 'cookie or storage key', 'cookies and storage keys')} ${t.label} sets`} onClick={() => toggleTool(t.id)}>
+                                <span aria-hidden="true">▸</span>
+                              </button>
+                            ) : null}
                             <button type="button" className="rp-row-label" aria-expanded={open?.row === r.key && open.col === undefined} onClick={() => toggle(r.key)}>
                               {r.name}
                             </button>
@@ -616,22 +631,17 @@ export function TodoList({ data, ui = {}, actions = {} }: { data: JobReportRespo
   const nextId = required.find((t) => t.kind !== 'classify' && !finishedTask(t) && !openDecisions(t, tasks).some((d) => !ui.saved?.[d.classKey ?? '']))?.id;
   return (
     <section className="rp-section" aria-labelledby="rp-todo-title" data-testid="todo" data-state={todo.state}>
-      <div className="rp-todo-title">
-        <h2 id="rp-todo-title" className="rp-h2">
-          Your to-do list
-        </h2>
-        {todo.state === 'ready' ? (
-          <span className="muted" data-testid="todo-progress">
-            {doneCount} of {required.length} done
-          </span>
-        ) : null}
-      </div>
+      <h2 id="rp-todo-title" className="rp-h2">
+        Your to-do list
+      </h2>
       {ui.rerender && ui.rerender !== 'idle' ? (
         <p className="muted" role="status" data-testid="updating">
           <span className="rp-spinner rp-spinner-sm" aria-hidden="true" /> Updating the report with your answers…
         </p>
       ) : null}
       {todo.state === 'ready' && todo.fromThisRun === false ? <p className="muted rp-note">This list comes from an earlier scan of this site; your progress on it is kept.</p> : null}
+      {/* Folded by default to a summary; with no list yet, the make-my-list prompt shows as is. */}
+      <TodoFold fold={todo.state !== 'error' && todo.state !== 'none'} summary={<TodoSummary state={todo.state} done={doneCount} required={required.length} optional={optional.length} decisions={liveDecisions.length} scanning={scanning} />}>
       <ol className="rp-todos">
         {liveDecisions.map((d) => (
           <DecisionTodo key={d.classKey} label={d.label} classKey={d.classKey} ui={ui} actions={actions} tool={toolFor(d.classKey)} />
@@ -699,8 +709,56 @@ export function TodoList({ data, ui = {}, actions = {} }: { data: JobReportRespo
           </li>
         ) : null}
       </ol>
+      </TodoFold>
     </section>
   );
+}
+
+function TodoFold({ fold, summary, children }: { fold: boolean; summary: ReactNode; children: ReactNode }) {
+  if (!fold) return <>{children}</>;
+  return (
+    <details className="rp-todo-fold" data-testid="todo-fold">
+      <summary data-testid="todo-summary">
+        {summary}
+        <span className="rp-todo-toggle" aria-hidden="true">
+          <span className="rp-todo-show">Show tasks ▾</span>
+          <span className="rp-todo-hide">Hide tasks ▴</span>
+        </span>
+      </summary>
+      {children}
+    </details>
+  );
+}
+
+/** The to-do list folded: how much is left, big enough to read at a glance. */
+function TodoSummary({ state, done, required, optional, decisions, scanning }: { state: JobReportResponse['todo']['state']; done: number; required: number; optional: number; decisions: number; scanning: boolean }) {
+  if (state === 'ready') {
+    const left = required - done;
+    return (
+      <span className="rp-todo-sum" data-testid="todo-progress">
+        <span className="rp-todo-big">
+          {done}
+          <span className="rp-todo-of"> of {required} done</span>
+        </span>
+        <span className="rp-todo-meter" aria-hidden="true">
+          <span style={{ width: `${required ? (100 * done) / required : 100}%` }} />
+        </span>
+        <span className="muted">
+          {left === 0 ? 'Nothing left to do.' : `${plural(left, 'task')} left`}
+          {optional ? ` · ${optional} only if they apply` : ''}
+        </span>
+      </span>
+    );
+  }
+  if (state === 'preparing') return <span className="rp-todo-sum muted">Preparing the changes to make on your site…</span>;
+  if (state === 'waiting')
+    return (
+      <span className="rp-todo-sum">
+        {decisions ? <span className="rp-todo-big">{plural(decisions, 'tool')} to describe</span> : null}
+        <span className="muted">{scanning ? 'The changes to make on your site appear when the scan finishes.' : 'The rest of your list appears when the scan finishes.'}</span>
+      </span>
+    );
+  return null;
 }
 
 // --- site not reached ---------------------------------------------------------------
@@ -787,6 +845,81 @@ export function EarlierScan({ newer }: { newer: NonNullable<JobReportResponse['n
   );
 }
 
+// --- overview: compliance score -----------------------------------------------------
+
+/** The whole scan's report: the final one, or while a multi-law job runs, its laws' live reports together. */
+function overviewReport(data: JobReportResponse): Pick<OwnerReport, 'matrix'> | null {
+  if (data.report) return data.report;
+  const live = (data.laws ?? []).map((l) => l.report).filter((r): r is OwnerReport => r !== null);
+  if (!live.length) return null;
+  return { matrix: { columns: live.flatMap((r) => r.matrix.columns), tools: live.flatMap((r) => r.matrix.tools), counts: live[0].matrix.counts } };
+}
+
+/** Above the law tabs: the compliance score, how it moved since the site's first scan, and what's wrong. */
+export function Overview({ data }: { data: JobReportResponse }) {
+  const report = overviewReport(data);
+  const sum = scoreReport(report);
+  if (sum.score === undefined) return null;
+  const running = data.job.status === 'queued' || data.job.status === 'running';
+  const first = data.firstScan;
+  const delta = first && !first.current && first.score !== undefined ? sum.score - first.score : undefined;
+  const severity = reportSeverity(report) ?? 'ok';
+  return (
+    <section className="rp-section rp-overview" aria-label="Overview" data-testid="overview">
+      <div className="rp-score" data-severity={severity}>
+        <span className="rp-score-num" data-testid="score">
+          {sum.score}
+        </span>
+        <span className="rp-score-label">
+          Compliance score{running ? ' so far' : ''}
+          <small>
+            {sum.passed} of {plural(sum.scored, 'check')} passed
+          </small>
+        </span>
+      </div>
+      <dl className="rp-stats">
+        <div data-severity={sum.problems ? 'problem' : 'ok'}>
+          <dt>Problems</dt>
+          <dd data-testid="problems">{sum.problems}</dd>
+          <small>{sum.problems === 1 ? 'tool with a problem' : 'tools with a problem'}</small>
+        </div>
+        {sum.decisions ? (
+          <div data-severity="warning">
+            <dt>To describe</dt>
+            <dd>{sum.decisions}</dd>
+            <small>{sum.decisions === 1 ? 'tool needs' : 'tools need'} a purpose</small>
+          </div>
+        ) : null}
+        {first ? (
+          <div data-testid="score-change" data-trend={delta === undefined ? undefined : delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat'}>
+            <dt>Since the first scan</dt>
+            {first.current ? (
+              <>
+                <dd>—</dd>
+                <small>This is the site’s first scan</small>
+              </>
+            ) : delta !== undefined ? (
+              <>
+                <dd>{delta > 0 ? `+${delta}` : delta < 0 ? `−${-delta}` : '±0'}</dd>
+                <small>
+                  from {first.score} on <a href={reportHref(first.jobId)}>{formatAbsolute(first.at)}</a>
+                </small>
+              </>
+            ) : (
+              <>
+                <dd>—</dd>
+                <small>
+                  the <a href={reportHref(first.jobId)}>first scan</a> has no score
+                </small>
+              </>
+            )}
+          </div>
+        ) : null}
+      </dl>
+    </section>
+  );
+}
+
 // --- law tabs (plans/per-law-report-contract.md, C3) ---------------------------------
 
 /** The tabs for a multi-law job: stateless, so render tests can pick the selected law. */
@@ -834,7 +967,7 @@ export function LawTabsView({ data, selected, onSelect, ui = {}, actions = {} }:
         {rows.map((r) => (
           <button key={r.id} type="button" role="tab" id={tabId(r.id)} aria-selected={r.id === row?.id} aria-controls={panelId} tabIndex={r.id === row?.id ? 0 : -1} onClick={() => onSelect(r.id)}>
             {r.label}
-            <span className="law-dot" data-state={r.state} aria-hidden="true" />
+            <span className="law-dot" data-state={r.state} data-severity={tabSeverity(r.state, tabReport(data, r.id)) ?? undefined} aria-hidden="true" />
           </button>
         ))}
       </div>
@@ -843,6 +976,13 @@ export function LawTabsView({ data, selected, onSelect, ui = {}, actions = {} }:
       </div>
     </div>
   );
+}
+
+/** A finished law's dot: red for any problem, amber for anything short of a clean pass, green only when every check passed. */
+function tabSeverity(state: LawRow['state'], report: OwnerReport | null): Severity | null {
+  if (state === 'failed') return 'problem';
+  if ((state !== 'done' && state !== 'collected') || !report) return null;
+  return reportSeverity(report) ?? 'ok';
 }
 
 /** Initial tab: the first law scanning, else the first. */
@@ -888,6 +1028,7 @@ export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: Job
       {consent && data.report?.scan.unreachable ? <Unreachable data={data} ui={ui} actions={actions} /> : null}
       {consent && !data.report?.scan.unreachable ? (
         <>
+          <Overview data={data} />
           {(job.laws?.length ?? 0) >= 2 ? (
             <LawTabs data={data} ui={ui} actions={actions} />
           ) : (

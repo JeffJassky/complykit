@@ -3,10 +3,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { JobReportResponse, JobSummary, LawScanProgress, OwnerReport, RemediationTask, SiteSummary } from '../../shared/api';
 import { LAWS, type LawId } from '../../shared/laws';
+import { reportSeverity, scoreReport } from '../../shared/score';
 import { parseHash, reportHref } from '../lib/useHashView';
 import { createRerenderQueue, isMoving } from '../lib/useJobReport';
 import { HomeView, siteRows, siteStatus } from './Home';
-import { BannerLine, LawTabsView, Matrix, ReportPageView, pagesVisited, ScanHistory, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
+import { BannerLine, LawTabsView, Matrix, Overview, ReportPageView, pagesVisited, ScanHistory, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
 
 // The report page (plans/simple-report.md), rendered per section and state.
 
@@ -141,15 +142,16 @@ describe('b. consent banner', () => {
 });
 
 describe('c. the matrix', () => {
-  it('tools with their cookies under them; spinners for pending cells; ✕ and ? cells', () => {
+  it('tools folded to one row each (cookies behind a toggle); spinners for pending cells; ✕ and ? cells', () => {
     const out = html(<Matrix data={running()} />);
     expect(out).toContain('Before a choice');
     expect(out).toContain('After rejection');
-    expect(out.match(/class="rp-cell" data-state="pending"/g)?.length).toBe(6);
-    expect(out.match(/class="rp-cell" data-state="mismatch"/g)?.length).toBe(2);
+    expect(out.match(/class="rp-cell" data-state="pending"/g)?.length).toBe(4);
+    expect(out.match(/class="rp-cell" data-state="mismatch"/g)?.length).toBe(1);
     expect(out).toContain('aria-label="widgets.test · Before a choice: Tell us what this tool is for"');
-    expect(out.indexOf('Meta Pixel')).toBeLessThan(out.indexOf('_fbp'));
-    expect(out.indexOf('_fbp')).toBeLessThan(out.indexOf('widgets.test'));
+    expect(out).not.toContain('_fbp');
+    expect(out).toContain('class="rp-fold" aria-expanded="false" aria-label="Show the 1 cookie or storage key Meta Pixel sets"');
+    expect(out.match(/class="rp-fold"/g)).toHaveLength(1); // widgets.test sets nothing: no toggle
     expect(out).toContain('data-unclassified="true"');
     expect(out).toContain('aria-label="visiting now"');
   });
@@ -493,3 +495,60 @@ describe('law tabs', () => {
     expect(html(<ReportPageView data={running()} now={NOW} />)).toContain('data-testid="current"');
   });
 });
+
+describe('overview and folds', () => {
+  it('score: the share of scored tool checks that passed; gaps and n/a don’t count', () => {
+    expect(scoreReport(finalOwner)).toEqual({ score: 50, problems: 1, decisions: 0, passed: 1, scored: 2 });
+    expect(scoreReport(owner())).toMatchObject({ problems: 1, decisions: 1, passed: 0, scored: 2, score: 0 });
+    expect(scoreReport(null).score).toBeUndefined();
+  });
+  it('severity: any ✕/⊘ is a problem; ? or a check that couldn’t run is a warning; ok only when clean', () => {
+    expect(reportSeverity(finalOwner)).toBe('problem');
+    const tools = [{ ...finalOwner.matrix.tools[0], cells: [ok, gap, ok] }];
+    expect(reportSeverity({ matrix: { ...finalOwner.matrix, tools } })).toBe('warning');
+    const clean = { matrix: { ...finalOwner.matrix, columns: finalOwner.matrix.columns.map((c) => ({ ...c, state: 'done' as const })), tools: [{ ...tools[0], cells: [ok, ok, ok] }] } };
+    expect(reportSeverity(clean)).toBe('ok');
+  });
+  it('the overview shows the score, problems, and the change since the site’s first scan', () => {
+    const out = text(<Overview data={done({ firstScan: { jobId: 'old', at: '2026-10-01T10:00:00Z', score: 20 } })} />);
+    expect(out).toMatch(/50 Compliance score 1 of 2 checks passed/);
+    expect(out).toMatch(/Problems 1 tool with a problem/);
+    expect(out).toContain('Since the first scan +30 from 20 on');
+    expect(html(<Overview data={done({ firstScan: { jobId: 'old', at: '2026-10-01T10:00:00Z', score: 20 } })} />)).toContain('href="#report/old"');
+    expect(text(<Overview data={done({ firstScan: { jobId: 'job1', at: 'x', current: true } })} />)).toContain('This is the site’s first scan');
+    expect(text(<Overview data={done({ firstScan: { jobId: 'old', at: 'x', score: 80 } })} />)).toContain('−30');
+  });
+  it('the overview sits above the law tabs', () => {
+    const d = { ...running({ job: job({ laws: ['eu', 'ca'] }) }) };
+    const out = html(<ReportPageView data={d} now={NOW} />);
+    expect(out.indexOf('data-testid="overview"')).toBeGreaterThan(-1);
+    expect(out.indexOf('data-testid="overview"')).toBeLessThan(out.indexOf('role="tablist"'));
+  });
+  it('a finished law’s dot is its worst finding: red for a problem, amber for a gap, green only when clean', () => {
+    const final = owner({
+      stage: 'final',
+      matrix: {
+        columns: [
+          { id: 'de:do-nothing', location: 'de', scenario: 'do-nothing', label: 'Before a choice', state: 'done' },
+          { id: 'us-ca:gpc', location: 'us-ca', scenario: 'gpc', label: 'Privacy signal (GPC)', state: 'not-checked' },
+          { id: 'us-tx:do-nothing', location: 'us-tx', scenario: 'do-nothing', label: 'Before a choice', state: 'done' },
+        ],
+        tools: [{ id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', cells: [bad, gap, ok], cookies: [] }],
+        counts: { ok: 1, mismatch: 1, needsDecision: 0, pending: 0, notChecked: 1, notApplicable: 0, blocked: 0 },
+      },
+    });
+    const laws = (['eu', 'ca', 'tx'] as const).map((id) => ({ id, progress: { id, locationId: LAWS.find((l) => l.id === id)!.locationId, region: 'x', local: false, state: 'done' as const, visitsDone: 1, visitsTotal: 1 }, report: null }));
+    const data = done({ job: job({ status: 'done', laws: ['eu', 'ca', 'tx'], metrics: { ...job().metrics, laws: laws.map((l) => l.progress) } }), report: final, laws });
+    const dots = [...html(<LawTabsView data={data} selected="eu" onSelect={() => {}} />).matchAll(/class="law-dot" data-state="(\w+)"(?: data-severity="(\w+)")?/g)].map((m) => m[2]);
+    expect(dots).toEqual(['problem', 'warning', 'ok']);
+  });
+  it('the to-do list folds to a summary by default; the make-my-list prompt stays open', () => {
+    const out = html(<TodoList data={done()} />);
+    expect(out).toMatch(/<details class="rp-todo-fold" data-testid="todo-fold"><summary/);
+    expect(text(<TodoList data={done()} />)).toMatch(/0 of 3 done .*3 tasks left/);
+    const none = html(<TodoList data={done({ todo: { state: 'none', tasks: [] } })} />);
+    expect(none).not.toContain('rp-todo-fold');
+    expect(none).toContain('data-testid="todo-make"');
+  });
+});
+
