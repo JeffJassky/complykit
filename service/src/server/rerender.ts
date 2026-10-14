@@ -49,6 +49,12 @@ export interface RerenderDeps {
   origin: string;
 }
 
+/** Upload order: previous copies first, then the side files, the data, and the pages readers open last (the owner report is the final switch). */
+function commitOrder(files: string[]): string[] {
+  const rank = (f: string): number => (/\.prev\./.test(f) ? 0 : f === 'consent-report.json' ? 2 : f === REPORT ? 3 : f === 'owner-report.json' ? 4 : 1);
+  return [...files].sort((a, b) => rank(a) - rank(b));
+}
+
 const prevName = (f: string): string => f.replace(/(\.[a-z]+)$/i, '.prev$1');
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -106,7 +112,7 @@ async function rerender(job: JobDetail, body: RerenderRequest, deps: RerenderDep
         // The config (and so the checklist) is stored; only the report could not follow.
         // Say exactly that, so the client offers "Update report" instead of a generic failure.
         if (storedAt === undefined || !(err instanceof WorkspaceError)) throw err;
-        throw new WorkspaceError(err.status, err.message, { configStored: true, configAt: storedAt });
+        throw new WorkspaceError(err.status, err.message, { ...err.extra, configStored: true, configAt: storedAt });
       }
     } finally {
       await files.clean(job.id);
@@ -145,7 +151,7 @@ async function renderReport(job: JobDetail, runId: string, ws: SiteWorkspace, de
     await fsp.rename(fresh, served);
     changed.push(f);
   }
-  await files.commit(job.id, changed.map((f) => `consent/.comply/runs/${runId}/${f}`));
+  await files.commit(job, commitOrder(changed).map((f) => `consent/.comply/runs/${runId}/${f}`));
   const rel = (f: string) => `/reports/${job.id}/consent/.comply/runs/${encodeURIComponent(runId)}/${f}`;
   return {
     ok: true,

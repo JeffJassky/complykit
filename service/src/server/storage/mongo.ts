@@ -47,7 +47,7 @@ export interface MongoRecords {
 }
 
 export async function mongoRecords(opts: { url: string; db: string; consentMaxBytes?: number; ca?: string }): Promise<MongoRecords> {
-  const client = new MongoClient(opts.url, opts.ca ? { ca: opts.ca } : {});
+  const client = new MongoClient(opts.url, { ignoreUndefined: true, ...(opts.ca ? { ca: opts.ca } : {}) }); // ignoreUndefined: a cleared field stays absent, as with the fs backend (not stored as null)
   await client.connect();
   const db: Db = client.db(opts.db);
   const jobsC: Collection<JobDoc> = db.collection('jobs');
@@ -167,7 +167,9 @@ export async function mongoRecords(opts: { url: string; db: string; consentMaxBy
         if (!docs.length) continue;
         const r = await recC.deleteMany({ _id: { $in: docs.map((d) => d._id) } });
         removed += r.deletedCount;
-        await totalsC.updateOne({ _id: site._id }, { $inc: { bytes: -docs.reduce((n, d) => n + d.bytes, 0) } });
+        // Recompute rather than decrement: a failure between the delete and the update can't leave the total over-counted.
+        const [left] = await recC.aggregate<{ bytes: number }>([{ $match: { domain: site._id } }, { $group: { _id: null, bytes: { $sum: '$bytes' } } }]).toArray();
+        await totalsC.updateOne({ _id: site._id }, { $set: { bytes: left?.bytes ?? 0 } });
       }
       return removed;
     },

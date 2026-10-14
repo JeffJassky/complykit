@@ -55,8 +55,12 @@ export class JobStore extends EventEmitter<StoreEvents> {
   /** Where this store's jobs' files are: scratch under DATA_DIR/jobs, finished files in blobs. */
   readonly files: JobFiles;
 
-  constructor(dataDir: string, storage: Storage = fsStorage(dataDir)) {
+  /** Waits between attempts at a failed record write (5 attempts over ~30 s by default). */
+  private readonly retryMs: number[];
+
+  constructor(dataDir: string, storage: Storage = fsStorage(dataDir), retryMs: number[] = [2000, 4000, 8000, 16000]) {
     super();
+    this.retryMs = retryMs;
     this.jobsDir = path.join(dataDir, 'jobs');
     this.records = storage.jobs;
     this.files = new JobFiles(storage, this.jobsDir);
@@ -146,14 +150,26 @@ export class JobStore extends EventEmitter<StoreEvents> {
     }
     const run = (async () => {
       await Promise.resolve(); // let writing.set() below happen first
+      let failures = 0;
       do {
         this.dirty.delete(id);
         const job = this.jobs.get(id);
         if (!job) break;
         try {
           await this.records.put(job);
+          failures = 0;
         } catch (err) {
-          if (this.jobs.has(id)) console.error(`[store] failed to persist ${id}: ${(err as Error).message}`);
+          if (!this.jobs.has(id)) break;
+          failures++;
+          if (failures <= this.retryMs.length) {
+            // Keep the job dirty so the loop writes again: a final status (done + runId) must not be lost to a blip.
+            console.warn(`[store] failed to persist ${id} (attempt ${failures}, retrying): ${(err as Error).message}`);
+            this.dirty.add(id);
+            await new Promise((r) => setTimeout(r, this.retryMs[failures - 1]));
+          } else {
+            console.error(`[store] gave up persisting job ${id} after ${failures} attempts: ${(err as Error).message}`);
+            failures = 0; // the next change starts afresh
+          }
         }
       } while (this.dirty.has(id));
       // Same synchronous step as the final dirty check, so a persist() call

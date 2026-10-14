@@ -95,7 +95,9 @@ export async function generateStagedConsentConfig(job: JobDetail, body: ConsentC
   }
   const value: ConsentConfigValue = { config: printed.config, snippet: printed.snippet, changeList: printed.changeList, notes: printed.notes, ...(printed.scriptSrc ? { scriptSrc: printed.scriptSrc } : {}), ...(Array.isArray(printed.tasks) ? { tasks: printed.tasks } : {}) };
   const res = await deps.workspaces.patch(domain, { ...(by ? { by } : {}), config: { value, runId } });
-  await deps.files.commit(job.id, (await walkLocal(outDir)).map((f) => `consent/consent-config/${f}`));
+  // The config itself goes last: it is what readers open, and what says the other files are current.
+  const outFiles = (await walkLocal(outDir)).sort((a, b) => Number(a === 'complykit-config.json') - Number(b === 'complykit-config.json'));
+  await deps.files.commit(job, outFiles.map((f) => `consent/consent-config/${f}`));
   const rel = (f: string) => `/reports/${job.id}/consent/consent-config/${f}`;
   return {
     domain,

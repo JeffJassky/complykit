@@ -179,6 +179,15 @@ export function recordSuite(name: string, make: (opts: { consentMaxBytes?: numbe
         expect(await jobs.loadAll()).toEqual([b]);
       }));
 
+    it('jobs: a field set to undefined is absent when reloaded (a cleared error does not come back as null)', () =>
+      withStorage(async ({ jobs }) => {
+        await jobs.put(job('cccccc3', { status: 'failed', error: 'boom' }));
+        await jobs.put(job('cccccc3', { status: 'done', error: undefined }));
+        const [got] = await jobs.loadAll();
+        expect(got.status).toBe('done');
+        expect('error' in got).toBe(false);
+      }));
+
     it('workspaces: read none; first write needs rev undefined; stale revs lose', () =>
       withStorage(async ({ workspaces }) => {
         expect(await workspaces.read('shop.example')).toBeUndefined();

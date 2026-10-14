@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
+import { MongoClient } from 'mongodb';
 import { MongoMemoryServer } from 'mongodb-memory-server';
-import { afterAll, beforeAll, describe, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SpacesBlobs } from '../src/server/storage/spaces-blobs.js';
 import { mongoRecords } from '../src/server/storage/mongo.js';
 import type { Storage } from '../src/server/storage/types.js';
@@ -47,3 +48,26 @@ if (spacesConfigured) {
     it.skip('set TEST_SPACES_ENDPOINT/BUCKET/KEY/SECRET to run against a real bucket', () => {});
   });
 }
+
+describe('mongo: prune keeps the site totals exact', () => {
+  it('recomputes the total from the remaining records (an over-counted total is corrected)', async () => {
+    const db = `ck_test_${crypto.randomBytes(4).toString('hex')}`;
+    const records = await mongoRecords({ url: mongo.getUri(), db });
+    const client = new MongoClient(mongo.getUri());
+    try {
+      const rec = (id: string, receivedAt: string) => ({ id, at: receivedAt, receivedAt, categories: { analytics: true }, configHash: 'sha256:ab12cd34', toolVersion: '0.1.0', regime: 'opt-in' }) as never;
+      await records.consentRecords.append('shop.example', rec('old-0000000000000000', '2020-01-01T00:00:00.000Z'));
+      await records.consentRecords.append('shop.example', rec('new-0000000000000000', new Date().toISOString()));
+      const totals = client.db(db).collection<{ _id: string; bytes: number }>('consentTotals');
+      const before = (await totals.findOne({ _id: 'shop.example' }))!.bytes;
+      await totals.updateOne({ _id: 'shop.example' }, { $inc: { bytes: 100_000 } }); // as if an earlier prune died between deleteMany and the update
+      expect(await records.consentRecords.prune(Date.parse('2025-01-01T00:00:00.000Z'))).toBe(1);
+      const after = (await totals.findOne({ _id: 'shop.example' }))!.bytes;
+      expect(after).toBe(before / 2);
+    } finally {
+      await client.close();
+      await records.dropDatabase();
+      await records.close();
+    }
+  });
+});

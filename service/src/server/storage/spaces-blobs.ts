@@ -148,7 +148,10 @@ export class SpacesBlobs implements Blobs {
   async download(prefix: string, localDir: string, filter?: (rel: string) => boolean): Promise<number> {
     assertKey(prefix, { prefix: true });
     const items: BlobInfo[] = [];
-    for await (const o of this.list(prefix)) if (!filter || filter(o.key.slice(prefix.length))) items.push(o);
+    for await (const o of this.list(prefix)) {
+      assertKey(o.key); // a listed key becomes a local path below: never trust the bucket's idea of a safe name
+      if (!filter || filter(o.key.slice(prefix.length))) items.push(o);
+    }
     await pool(items, CONCURRENCY, async (o) => {
       const dest = path.join(localDir, ...o.key.slice(prefix.length).split('/'));
       await fsp.mkdir(path.dirname(dest), { recursive: true });

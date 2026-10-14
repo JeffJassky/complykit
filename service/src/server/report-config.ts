@@ -12,7 +12,7 @@
 // on the local disk or in blobs.
 
 import path from 'node:path';
-import type { Readable } from 'node:stream';
+import { pipeline, Transform, type Readable, type TransformCallback } from 'node:stream';
 import type { Request, RequestHandler, Response } from 'express';
 import type { JobDetail, ReportServiceConfig } from '../shared/api.js';
 import { siteDomain } from './domains.js';
@@ -21,7 +21,6 @@ import type { BlobInfo } from './storage/types.js';
 
 export const SERVICE_CONFIG_ID = 'ck-service';
 const WORKBENCH_MARKER = '<script type="application/json" id="workspace-config">';
-const MAX_HTML_BYTES = 64 * 1024 * 1024;
 
 /** The config for a job's reports, or undefined when its URL names no site. */
 export function reportServiceConfig(job: Pick<JobDetail, 'id' | 'url'>): ReportServiceConfig | undefined {
@@ -45,9 +44,51 @@ export function injectServiceConfig(html: string, config: ReportServiceConfig): 
 }
 
 /**
+ * Streams a report through, inserting the ck-service block just before the workbench marker (the first one).
+ * Holds back only the last marker-length-minus-one bytes of each chunk, so a marker split across chunks is
+ * found and nothing larger than a chunk is ever held: the report's size does not matter. Without a marker the
+ * bytes come out unchanged.
+ */
+export function serviceConfigInjector(config: ReportServiceConfig): Transform {
+  const marker = Buffer.from(WORKBENCH_MARKER);
+  const json = JSON.stringify(config).replace(/</g, '\\u003c');
+  const block = Buffer.from(`<script type="application/json" id="${SERVICE_CONFIG_ID}">${json}</script>`);
+  let found = false;
+  let carry: Buffer = Buffer.alloc(0);
+  return new Transform({
+    transform(chunk: Buffer, _enc, cb: TransformCallback) {
+      if (found) {
+        cb(null, chunk);
+        return;
+      }
+      const buf = carry.length ? Buffer.concat([carry, chunk]) : chunk;
+      const at = buf.indexOf(marker);
+      if (at >= 0) {
+        found = true;
+        carry = Buffer.alloc(0);
+        this.push(buf.subarray(0, at));
+        this.push(block);
+        this.push(buf.subarray(at));
+        cb();
+        return;
+      }
+      const keep = Math.min(marker.length - 1, buf.length);
+      this.push(buf.subarray(0, buf.length - keep));
+      carry = Buffer.from(buf.subarray(buf.length - keep)); // copy: the chunk may be reused by its source
+      cb();
+    },
+    flush(cb: TransformCallback) {
+      if (carry.length) this.push(carry);
+      cb();
+    },
+  });
+}
+
+/**
  * Handler for /reports/:id/…: the job's files, read through JobFiles (blobs for a
- * finished job, scratch for a running one). A workbench .html gets the config
- * injected; everything else is streamed as it is, with a content type from its
+ * finished job, scratch for a running one). A .html report is streamed through
+ * serviceConfigInjector, so a workbench one gets the config and any other is
+ * unchanged; everything else is streamed as it is, with a content type from its
  * extension (dotfile paths such as .comply/ are allowed). The path is decoded
  * and refused if it could leave the job: that is a 403 for `..`, a 404 for
  * anything else that is not a file.
@@ -94,28 +135,16 @@ export function serveReports(store: JobStore): RequestHandler {
         res.status(404).type('text/plain').send('not found');
         return;
       }
-      const isHtml = /\.html?$/i.test(rel);
-      const config = isHtml && info.size <= MAX_HTML_BYTES ? reportServiceConfig(job) : undefined;
-      if (config) {
-        const buf = await files.get(job, rel);
-        if (!buf) {
-          res.status(404).type('text/plain').send('not found');
-          return;
-        }
-        const html = buf.toString('utf8');
-        if (html.includes(WORKBENCH_MARKER)) {
-          // The injected block changes per service, so the stored file's validators don't describe this response.
-          res.set('Cache-Control', 'no-store');
-          res.type('html').send(injectServiceConfig(html, config));
-          return;
-        }
-        // No workbench: the bytes as they are.
-        sendBytes(req, res, info, rel, buf);
-        return;
-      }
+      const config = /\.html?$/i.test(rel) ? reportServiceConfig(job) : undefined;
       const stream = await files.read(job, rel);
       if (!stream) {
         res.status(404).type('text/plain').send('not found');
+        return;
+      }
+      if (config) {
+        // The body may or may not change (only a workbench gets the block), so its length is not known up front;
+        // validators are the stored object's, marked as ours so the injected form and the raw one never share one.
+        sendBytes(req, res, { ...info, etag: `${info.etag}-ck1` }, rel, pipeline(stream, serviceConfigInjector(config), () => undefined), false); // pipeline: destroying the output also closes the source
         return;
       }
       sendBytes(req, res, info, rel, stream);
@@ -125,7 +154,7 @@ export function serveReports(store: JobStore): RequestHandler {
   };
 }
 
-function sendBytes(req: Request, res: Response, info: BlobInfo, rel: string, body: Buffer | Readable): void {
+function sendBytes(req: Request, res: Response, info: BlobInfo, rel: string, body: Buffer | Readable, knownLength = true): void {
   res.type(path.extname(rel) || 'bin');
   res.set('ETag', `"${info.etag}"`);
   res.set('Last-Modified', new Date(info.modified).toUTCString());
@@ -141,10 +170,11 @@ function sendBytes(req: Request, res: Response, info: BlobInfo, rel: string, bod
   }
   if (req.method === 'HEAD') {
     body.destroy();
-    res.set('Content-Length', String(info.size)).end();
+    if (knownLength) res.set('Content-Length', String(info.size));
+    res.end();
     return;
   }
-  res.set('Content-Length', String(info.size));
+  if (knownLength) res.set('Content-Length', String(info.size));
   body.on('error', () => res.destroy());
   res.on('close', () => body.destroy());
   body.pipe(res);

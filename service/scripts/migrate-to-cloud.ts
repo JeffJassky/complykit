@@ -6,17 +6,29 @@
 //
 // Idempotent: a blob already there with the same size is skipped; a job record
 // is replaced; a workspace is replaced (the source is the authority until
-// cutover); a site's consent records already in the cloud are left alone (never
-// appended twice). Raw collections (gather/) and scratch
+// cutover); a site's consent records missing in the cloud (by id) are appended, so an
+// interrupted copy is completed and none is appended twice. Raw collections (gather/) and scratch
 // (rerender/, previous/) are never copied. Running jobs are refused: stop scans first.
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { MAX_FILE_BYTES } from '../src/server/consent-records.js';
 import { loadConfig } from '../src/server/config.js';
 import { cloudStorage, fsStorage, type Storage } from '../src/server/storage/index.js';
 import type { ConsentRecord } from '../src/server/consent-records.js';
 
 const SKIP_DIR = /(^|\/)(gather|rerender|previous)\//;
+
+/** Append the source records whose ids the destination lacks (an interrupted copy is completed; a finished one is left alone). Returns how many. */
+export async function copyMissingRecords(src: Pick<Storage, 'consentRecords'>, dst: Pick<Storage, 'consentRecords'>, domain: string, dry = false): Promise<number> {
+  const have = new Set<string>();
+  for await (const r of dst.consentRecords.records(domain)) have.add(r.id);
+  const records: ConsentRecord[] = [];
+  for await (const r of src.consentRecords.records(domain)) if (!have.has(r.id)) records.push(r);
+  if (!dry) for (const r of records) await dst.consentRecords.append(domain, r);
+  return records.length;
+}
 
 async function main(): Promise<void> {
   const [dataDir, ...rest] = process.argv.slice(2);
@@ -26,7 +38,7 @@ async function main(): Promise<void> {
   if (config.dataBackend !== 'cloud' || !config.cloud) throw new Error('set DATA_BACKEND=cloud and the cloud settings');
 
   const src = fsStorage(path.resolve(dataDir));
-  const dst: Storage = await cloudStorage(config.cloud);
+  const dst: Storage = await cloudStorage(config.cloud, { consentMaxBytes: 2 * MAX_FILE_BYTES }); // the fs cap lets one record past MAX_FILE_BYTES; Mongo would refuse it (507) and abort the copy
   const n = { jobs: 0, blobs: 0, skipped: 0, bytes: 0, workspaces: 0, consentSites: 0, consentRecords: 0, kb: 0 };
   try {
     const jobs = await src.jobs.loadAll();
@@ -65,15 +77,13 @@ async function main(): Promise<void> {
     const sites = path.join(dataDir, 'sites');
     for (const domain of fs.existsSync(sites) ? fs.readdirSync(sites) : []) {
       if (!fs.existsSync(path.join(sites, domain, 'consent-records.jsonl'))) continue;
-      if (await dst.consentRecords.exists(domain)) {
+      const copied = await copyMissingRecords(src, dst, domain, dry);
+      if (!copied) {
         console.log(`consent records ${domain}: already in the cloud, left alone`);
         continue;
       }
-      const records: ConsentRecord[] = [];
-      for await (const r of src.consentRecords.records(domain)) records.push(r);
-      if (!dry) for (const r of records) await dst.consentRecords.append(domain, r);
       n.consentSites++;
-      n.consentRecords += records.length;
+      n.consentRecords += copied;
     }
 
     for await (const b of src.blobs.list('kb/')) {
@@ -95,7 +105,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((err: unknown) => {
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}
