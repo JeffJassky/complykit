@@ -629,6 +629,15 @@ export function TodoList({ data, ui = {}, actions = {} }: { data: JobReportRespo
   const scanning = job.status === 'queued' || job.status === 'running';
   // The change to do next shows its steps open; the rest stay folded.
   const nextId = required.find((t) => t.kind !== 'classify' && !finishedTask(t) && !openDecisions(t, tasks).some((d) => !ui.saved?.[d.classKey ?? '']))?.id;
+  // Done items (required or optional) move to a folded "Completed" list at the bottom.
+  const optionalOpen = optional.filter((t) => !isDone(t));
+  const completed = tasks.filter(isDone);
+  const item = (t: RemediationTask) =>
+    t.kind === 'classify' && t.classKey ? (
+      <DecisionTodo key={t.id} label={t.tools[0] ?? t.title} classKey={t.classKey} decided={t.status === 'verified' ? (report?.matrix.tools.find((x) => x.classKey === t.classKey && x.classified)?.purpose ?? 'saved') : undefined} ui={ui} actions={actions} unblocks={tasks.filter((x) => x.waitingOn?.includes(t.id)).map((x) => x.title)} tool={toolFor(t.classKey)} />
+    ) : (
+      <ChangeTodo key={t.id} task={t} tasks={tasks} data={data} ui={ui} actions={actions} current={t.id === nextId} />
+    );
   return (
     <section className="rp-section" aria-labelledby="rp-todo-title" data-testid="todo" data-state={todo.state}>
       <h2 id="rp-todo-title" className="rp-h2">
@@ -646,13 +655,7 @@ export function TodoList({ data, ui = {}, actions = {} }: { data: JobReportRespo
         {liveDecisions.map((d) => (
           <DecisionTodo key={d.classKey} label={d.label} classKey={d.classKey} ui={ui} actions={actions} tool={toolFor(d.classKey)} />
         ))}
-        {required.map((t) =>
-          t.kind === 'classify' && t.classKey ? (
-            <DecisionTodo key={t.id} label={t.tools[0] ?? t.title} classKey={t.classKey} decided={t.status === 'verified' ? (report?.matrix.tools.find((x) => x.classKey === t.classKey && x.classified)?.purpose ?? 'saved') : undefined} ui={ui} actions={actions} unblocks={tasks.filter((x) => x.waitingOn?.includes(t.id)).map((x) => x.title)} tool={toolFor(t.classKey)} />
-          ) : (
-            <ChangeTodo key={t.id} task={t} tasks={tasks} data={data} ui={ui} actions={actions} current={t.id === nextId} />
-          ),
-        )}
+        {required.filter((t) => !isDone(t)).map(item)}
         {todo.state === 'waiting' ? (
           <li className="rp-todo rp-todo-placeholder" data-testid="todo-waiting">
             <span className="muted">{scanning ? 'The rest of your list — the changes to make on your site — appears when the scan finishes.' : 'The rest of your list appears when the scan finishes.'}</span>
@@ -678,15 +681,21 @@ export function TodoList({ data, ui = {}, actions = {} }: { data: JobReportRespo
             {ui.errors?.list ? <p className="rp-error">{ui.errors.list}</p> : null}
           </li>
         ) : null}
-        {optional.length ? (
+        {optionalOpen.length ? (
           <li className="rp-todo rp-todo-optional">
             <details>
-              <summary>Only if they apply ({optional.length})</summary>
+              <summary>Only if they apply ({optionalOpen.length})</summary>
               <ol className="rp-todos">
-                {optional.map((t) => (
-                  <ChangeTodo key={t.id} task={t} tasks={tasks} data={data} ui={ui} actions={actions} />
-                ))}
+                {optionalOpen.map(item)}
               </ol>
+            </details>
+          </li>
+        ) : null}
+        {completed.length ? (
+          <li className="rp-todo rp-todo-optional rp-todo-completed" data-testid="todo-completed">
+            <details>
+              <summary>Completed ({completed.length})</summary>
+              <ol className="rp-todos">{completed.map(item)}</ol>
             </details>
           </li>
         ) : null}

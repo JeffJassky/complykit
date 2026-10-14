@@ -552,3 +552,20 @@ describe('overview and folds', () => {
   });
 });
 
+describe('completed tasks', () => {
+  it('done tasks leave the list for a folded Completed list at the bottom; open ones stay in order', () => {
+    const tasks = [decision, task('a', { status: 'verified' }), task('b'), task('c', { status: 'done-unverified' }), task('d', { status: 'failed' }), task('e', { optional: true, status: 'verified' }), task('f', { optional: true })];
+    const data = done({ todo: { state: 'ready', tasks, fromThisRun: true } });
+    const out = html(<TodoList data={data} ui={{ saved: { 'class:w': 'analytics' } }} />);
+    const completed = out.slice(out.indexOf('data-testid="todo-completed"'), out.indexOf('data-testid="final-scan"'));
+    const open = out.slice(0, out.indexOf('data-testid="todo-completed"'));
+    for (const id of ['a', 'c', 'e']) expect(completed).toContain(`Hold the ${id} tag`);
+    expect(completed).toContain('widgets.test'); // a decision saved here counts as done
+    for (const id of ['b', 'd', 'f']) expect(open).toContain(`Hold the ${id} tag`);
+    for (const id of ['a', 'c', 'e']) expect(open).not.toContain(`Hold the ${id} tag`);
+    expect(completed).toMatch(/<details><summary>Completed \(4\)<\/summary>/);
+    expect(open).toContain('Only if they apply (1)');
+    expect(html(<TodoList data={done({ todo: { state: 'ready', tasks: [task('b')], fromThisRun: true } })} />)).not.toContain('todo-completed');
+  });
+});
+
