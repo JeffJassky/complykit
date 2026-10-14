@@ -184,7 +184,8 @@ setups. All must produce zero findings:
 
 - the bar layout under opt-in;
 - the modal layout (UK);
-- the box layout under opt-out-signal (California).
+- the box layout under opt-out-signal (California);
+- the bar layout with `blockPage` under opt-in.
 
 The checks are in `test/banner-design.test.ts`. The test skips, and says so in its
 output, when the client has not been built.

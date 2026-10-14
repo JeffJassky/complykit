@@ -94,3 +94,4 @@ rules). Those are described in [Consent tool config](/guide/config).
 | `record` | `object` |  |  |  |
 | `record.endpoint` | `string` | yes |  | min length 1 |
 | `layout` | `"bar"` / `"box"` / `"modal"` |  | `"bar"` |  |
+| `blockPage` | `boolean` |  | `false` | Block the page until the visitor chooses: backdrop, page inert, scrolling locked. Any layout. Released by the choice |

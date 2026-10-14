@@ -224,6 +224,8 @@ export interface ConsentToolConfig {
   privacyPolicyUrl?: string;
   record?: ConsentRecordEndpoint;
   layout: ConsentLayout;
+  /** Block the page (backdrop, inert, no scroll) until the visitor chooses. The guard fills false when absent (configs older than the field). */
+  blockPage: boolean;
 }
 
 // --- version policy ---------------------------------------------------------------
@@ -343,10 +345,13 @@ export function guardConsentToolConfig(raw: unknown): ConsentConfigGuardResult {
   if (raw.record !== undefined && !(isObj(raw.record) && typeof raw.record.endpoint === 'string')) return missing('record.endpoint');
   if (!isObj(raw.consent) || typeof raw.consent.lifetimeDays !== 'number' || !(raw.consent.lifetimeDays > 0)) return missing('consent.lifetimeDays');
   if (typeof raw.layout !== 'string') return missing('layout');
+  if (raw.blockPage !== undefined && typeof raw.blockPage !== 'boolean') return missing('blockPage');
   if (!isObj(raw.theme)) return missing('theme');
   if (!isObj(raw.strings)) return missing('strings');
   if (typeof raw.platform !== 'string') return missing('platform');
-  return { ok: true, config: raw as unknown as ConsentToolConfig, version };
+  // A copy, never the caller's object: the rescan hashes the raw config as deployed.
+  // Configs older than `blockPage` get false.
+  return { ok: true, config: { ...raw, blockPage: raw.blockPage === true } as unknown as ConsentToolConfig, version };
 }
 
 // --- category semantics (fail closed) -----------------------------------------------

@@ -7,7 +7,7 @@
     "complykit": "0.0.0",
     "kb": "2026-10-02"
   },
-  "hash": "5b1c54ae8b6ff296a1e736abedccf0980cba491d3d10528925601e94bbf45368",
+  "hash": "cfe422f58dd900c1ea1dc7a196e6f3be70264bd693645fad085a217ba71379a4",
   "regimeSource": {
     "kind": "header",
     "header": "cf-ipcountry",
@@ -143,5 +143,6 @@
   "record": {
     "endpoint": "/consent-record"
   },
-  "layout": "bar"
+  "layout": "bar",
+  "blockPage": false
 }

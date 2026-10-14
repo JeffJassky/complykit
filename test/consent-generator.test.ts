@@ -92,6 +92,8 @@ describe('the generated config validates (D2)', () => {
     expect(r.config.theme).toEqual({});
     expect(r.config.strings).toEqual({});
     expect(r.config.layout).toBe('bar');
+    expect(r.config.blockPage).toBe(false);
+    expect(gen(undefined, { blockPage: true }).config.blockPage).toBe(true);
     expect(r.config.consent).toEqual({ lifetimeDays: 365 });
   });
 

@@ -823,6 +823,11 @@
         "box",
         "modal"
       ]
+    },
+    "blockPage": {
+      "description": "Block the page until the visitor chooses: backdrop, page inert, scrolling locked. Any layout. Released by the choice.",
+      "default": false,
+      "type": "boolean"
     }
   },
   "required": [

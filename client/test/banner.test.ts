@@ -41,6 +41,7 @@ interface Opts {
   config?: unknown;
   scriptAttrs?: string;
   siteLink?: boolean;
+  bodyAttrs?: string;
 }
 
 async function load(opts: Opts = {}): Promise<Page> {
@@ -53,7 +54,7 @@ async function load(opts: Opts = {}): Promise<Page> {
       body: `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Banner fixture</title>
 <script type="application/json" id="complykit-config">${JSON.stringify(config)}</script>
 <script src="/complykit-consent.js" ${opts.scriptAttrs ?? ''}></script></head>
-<body><main><h1>Shop</h1><p><a href="#a" id="page-first">First page link</a> <a href="#b">Second</a></p></main>
+<body ${opts.bodyAttrs ?? ''}><main><h1>Shop</h1><p><a href="#a" id="page-first">First page link</a> <a href="#b">Second</a></p></main>
 <footer>${opts.siteLink ? '<a href="#" id="site-link" data-complykit-open>Cookie settings</a>' : ''}</footer></body></html>`,
     }),
   );
@@ -340,6 +341,116 @@ describe('modal layout', () => {
     expect(await state(page)).toMatchObject({ status: 'chosen', categories: { analytics: false, advertising: false } });
     expect(await bannerVisible(page)).toBe(false);
     expect(await focused(page)).toBe('privacy-choices');
+    await page.context().close();
+  });
+});
+
+describe('blockPage', () => {
+  // What a visitor can reach: the element at a point outside the banner, the
+  // page's scroll after a wheel, which page elements are inert, the backdrop.
+  const probe = (p: Page) =>
+    p.evaluate(() => {
+      const hit = document.elementFromPoint(20, 20);
+      return {
+        hitPage: !!hit && !hit.closest('#complykit-ui'),
+        mainInert: document.querySelector('main')!.hasAttribute('inert'),
+        rootInert: document.getElementById('complykit-ui')!.hasAttribute('inert'),
+        overflow: getComputedStyle(document.documentElement).overflow,
+        backdrop: (() => {
+          const b = document.querySelector('.ck-backdrop') as HTMLElement | null;
+          return b ? !b.hidden : null;
+        })(),
+      };
+    });
+
+  async function loadBlocking(over: Record<string, unknown> = {}): Promise<Page> {
+    const page = await load({ config: baseConfig({ blockPage: true, ...over }) });
+    await page.evaluate(() => {
+      const tall = document.createElement('div');
+      tall.style.height = '3000px';
+      document.querySelector('main')!.append(tall);
+    });
+    await page.waitForSelector('.ck-banner [data-ck-action=accept]', { state: 'visible' });
+    return page;
+  }
+
+  const wheel = async (p: Page): Promise<number> => {
+    await p.mouse.move(400, 100);
+    await p.mouse.wheel(0, 600);
+    await p.waitForTimeout(150);
+    return p.evaluate(() => window.scrollY);
+  };
+
+  for (const layout of ['bar', 'box'] as const) {
+    it(`${layout}: backdrop, page inert, no scroll until a choice; reject releases all of it`, async () => {
+      const page = await loadBlocking({ layout });
+      expect(await probe(page)).toEqual({ hitPage: false, mainInert: true, rootInert: false, overflow: 'hidden', backdrop: true });
+      expect(await wheel(page)).toBe(0);
+      // A click on the page lands on nothing that acts.
+      await page.mouse.click(20, 20);
+      expect(new URL(page.url()).hash).toBe('');
+      // Tab never reaches the page; reject is the first stop.
+      const stops: string[] = [];
+      for (let i = 0; i < 6; i++) {
+        await page.keyboard.press(TAB);
+        stops.push(await focused(page));
+      }
+      expect(stops[0]).toBe('reject');
+      expect(stops).not.toContain('#page-first');
+      await page.click('.ck-banner [data-ck-action=reject]');
+      expect(await state(page)).toMatchObject({ status: 'chosen', categories: { analytics: false } });
+      expect(await probe(page)).toEqual({ hitPage: true, mainInert: false, rootInert: false, overflow: 'visible', backdrop: false });
+      expect(await wheel(page)).toBeGreaterThan(0);
+      await page.context().close();
+    });
+  }
+
+  it('modal: no extra backdrop (the dialog has one), page inert and scroll locked until accept', async () => {
+    const page = await loadBlocking({ layout: 'modal' });
+    expect(await probe(page)).toMatchObject({ mainInert: true, overflow: 'hidden', backdrop: false });
+    expect(await wheel(page)).toBe(0);
+    await page.click('.ck-banner [data-ck-action=accept]');
+    expect(await probe(page)).toMatchObject({ mainInert: false, overflow: 'visible', backdrop: false });
+    await page.context().close();
+  });
+
+  it('a page node added while blocked is inert; one the site made inert stays inert after release; inline overflow is restored', async () => {
+    const page = await load({ config: baseConfig({ blockPage: true }), bodyAttrs: 'style="overflow:clip"' });
+    await page.waitForSelector('.ck-banner [data-ck-action=accept]', { state: 'visible' });
+    expect(await page.evaluate(() => document.body.style.overflow)).toBe('hidden');
+    await page.evaluate(() => {
+      const own = document.createElement('aside');
+      own.id = 'site-inert';
+      own.setAttribute('inert', '');
+      const late = document.createElement('div');
+      late.id = 'late-widget';
+      document.body.append(own, late);
+    });
+    await page.waitForFunction(() => document.getElementById('late-widget')!.hasAttribute('inert'));
+    await page.click('.ck-banner [data-ck-action=reject]');
+    const after = await page.evaluate(() => ({
+      late: document.getElementById('late-widget')!.hasAttribute('inert'),
+      own: document.getElementById('site-inert')!.hasAttribute('inert'),
+      body: document.body.style.overflow,
+      html: document.documentElement.style.overflow,
+    }));
+    expect(after).toEqual({ late: false, own: true, body: 'clip', html: '' });
+    await page.context().close();
+  });
+
+  it('off by default: nothing is inert, no backdrop, the page scrolls behind the bar', async () => {
+    const page = await load();
+    expect(await probe(page)).toMatchObject({ mainInert: false, backdrop: null });
+    await page.context().close();
+  });
+
+  it('a returning visitor with a stored choice is never blocked', async () => {
+    const page = await loadBlocking();
+    await page.click('.ck-banner [data-ck-action=accept]');
+    await page.reload();
+    await page.waitForSelector('#complykit-ui', { state: 'attached' });
+    await page.waitForSelector('.ck-choices', { state: 'visible' });
+    expect(await probe(page)).toMatchObject({ mainInert: false, overflow: 'visible', backdrop: false });
     await page.context().close();
   });
 });

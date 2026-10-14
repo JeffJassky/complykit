@@ -332,17 +332,18 @@ const clientBuilt = fs.existsSync(CLIENT_IIFE) && fs.existsSync(CLIENT_UI);
 // Chromium: they test the readers, which run in Chromium in a scan.
 const engines = await engineAvailability();
 
-const clientConfig = (layout: string, regime: string): unknown => {
+const clientConfig = (layout: string, regime: string, blockPage = false): unknown => {
   const c = JSON.parse(fs.readFileSync(path.join(here, 'fixtures', 'consent-config', 'example.json'), 'utf8'));
   c.regimeSource = { kind: 'fixed', regime };
   c.consent = { lifetimeDays: 365 };
   delete c.record;
   c.layout = layout;
+  c.blockPage = blockPage;
   return c;
 };
-const clientPage = (layout: string, regime: string): string => `<!doctype html>
+const clientPage = (layout: string, regime: string, blockPage = false): string => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Banner design fixture</title>
-<script type="application/json" id="complykit-config">${JSON.stringify(clientConfig(layout, regime))}</script>
+<script type="application/json" id="complykit-config">${JSON.stringify(clientConfig(layout, regime, blockPage))}</script>
 <script src="/complykit-consent.js"></script>
 </head><body>
 <header><a href="/">Example shop</a></header>
@@ -360,6 +361,7 @@ for (const engine of ENGINE_NAMES) {
       '/bar': clientPage('bar', 'opt-in'),
       '/modal': clientPage('modal', 'opt-in'),
       '/box-ca': clientPage('box', 'opt-out-signal'),
+      '/bar-blocking': clientPage('bar', 'opt-in', true),
     };
     beforeAll(async () => {
       server = http.createServer((req, res) => {
@@ -383,7 +385,7 @@ for (const engine of ENGINE_NAMES) {
       await new Promise<void>((r) => server.close(() => r()));
     });
 
-    for (const [route, place] of [['/bar', 'de'], ['/modal', 'uk'], ['/box-ca', 'ca']] as const) {
+    for (const [route, place] of [['/bar', 'de'], ['/modal', 'uk'], ['/box-ca', 'ca'], ['/bar-blocking', 'de']] as const) {
       it(`${route} (${place}): read by exact selectors, zero findings`, async () => {
         const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
         try {
@@ -394,6 +396,7 @@ for (const engine of ENGINE_NAMES) {
           expect(first.complykit).toBe(true);
           expect(first.controls.map((c) => c.role).sort()).toEqual(['accept', 'manage', 'reject']);
           if (route === '/modal') expect(first.blocking?.inert).toBe(true);
+          if (route === '/bar-blocking') expect(first.blocking).toMatchObject({ inert: true, scrollLocked: true });
           const second = await readSecondLayer(page, true);
           expect(second.source).toBe('complykit');
           expect(second.toggles.length).toBeGreaterThan(0);

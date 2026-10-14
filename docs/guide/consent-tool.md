@@ -293,7 +293,7 @@ Also available from script: `ComplyKit.open()`, `ComplyKit.withdraw()`,
 
 Theming is a handful of tokens, not an engine: `theme` sets `--ck-bg`, `--ck-fg`,
 `--ck-accent`, `--ck-border` and `--ck-radius`; `layout` is `bar`, `box` or `modal`;
-the font is always inherited ([theme and layout](./config.md#theme-and-layout)).
+`blockPage: true` blocks the page until a choice in any layout; the font is always inherited ([theme and layout](./config.md#theme-and-layout)).
 
 Words come from per-regime defaults inside the tool; the config carries overrides
 only, per language and regime ([strings](./config.md#strings), [Banner

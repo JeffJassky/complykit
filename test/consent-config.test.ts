@@ -221,6 +221,15 @@ describe('consent tool config: migration policy', () => {
     expect(g.ok && g.version).toBe('newer-minor');
   });
 
+  it('blockPage: absent → false without touching the caller’s object (the deployed hash still verifies); non-boolean → refused', () => {
+    const { blockPage: _b, ...old } = current();
+    const g = guardConsentToolConfig(old);
+    expect(g.ok && g.config.blockPage).toBe(false);
+    expect('blockPage' in old).toBe(false);
+    expect(guardConsentToolConfig({ ...current(), blockPage: true })).toMatchObject({ ok: true, config: { blockPage: true } });
+    expect(guardConsentToolConfig({ ...current(), blockPage: 'yes' })).toMatchObject({ ok: false, reason: 'missing-field' });
+  });
+
   it('flags an older minor without refusing it', () => {
     const minor = Number(CONSENT_CONFIG_VERSION.split('.')[1]);
     if (minor === 0) {
@@ -343,8 +352,9 @@ describe('consent tool config: emitted artifacts are fresh', () => {
     expect(s.required).toEqual(expect.arrayContaining(['version', 'generatedFrom', 'hash', 'regimeSource', 'categories']));
     expect(s.required).not.toContain('gtm');
     expect(s.required).not.toContain('layout'); // has a default
+    expect(s.required).not.toContain('blockPage'); // has a default
     expect(Object.keys(s.properties).sort()).toEqual(
-      ['categories', 'consent', 'gate', 'generatedFrom', 'gtm', 'hash', 'layout', 'platform', 'privacyPolicyUrl', 'record', 'regimeSource', 'strings', 'theme', 'vendors', 'version'].sort(),
+      ['blockPage', 'categories', 'consent', 'gate', 'generatedFrom', 'gtm', 'hash', 'layout', 'platform', 'privacyPolicyUrl', 'record', 'regimeSource', 'strings', 'theme', 'vendors', 'version'].sort(),
     );
   });
 

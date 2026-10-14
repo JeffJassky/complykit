@@ -1659,6 +1659,8 @@ export interface GenerateConsentConfigOptions {
   privacyPolicyUrl?: string;
   regimeSource?: RegimeSource;
   layout?: ConsentLayout;
+  /** Block the page until the visitor chooses (default false). */
+  blockPage?: boolean;
   theme?: ConsentTheme;
   lifetimeDays?: number;
 }
@@ -2040,9 +2042,11 @@ export interface ConsentToolConfig {
   privacyPolicyUrl?: string;
   record?: ConsentRecordEndpoint;
   layout: ConsentLayout;
+  /** Block the page (backdrop, inert, no scroll) until the visitor chooses. */
+  blockPage: boolean;
 }
 /** The hand-written shape: defaults optional. */
-export type ConsentToolConfigInput = Omit<ConsentToolConfig, 'vendors' | 'gate' | 'gtm' | 'platform' | 'theme' | 'strings' | 'consent' | 'layout' | 'regimeSource'> & {
+export type ConsentToolConfigInput = Omit<ConsentToolConfig, 'vendors' | 'gate' | 'gtm' | 'platform' | 'theme' | 'strings' | 'consent' | 'layout' | 'blockPage' | 'regimeSource'> & {
   regimeSource:
     | { kind: 'header'; header: string; endpoint: string }
     | { kind: 'meta'; name?: string }
@@ -2056,6 +2060,7 @@ export type ConsentToolConfigInput = Omit<ConsentToolConfig, 'vendors' | 'gate' 
   strings?: Record<string, ConsentStringTable>;
   consent?: Partial<ConsentStateConfig>;
   layout?: ConsentLayout;
+  blockPage?: boolean;
 };
 export interface ConsentConfigHeader {
   version?: string;

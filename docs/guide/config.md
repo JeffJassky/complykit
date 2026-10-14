@@ -294,6 +294,22 @@ Each key sets a CSS custom property: `--ck-bg`, `--ck-fg`, `--ck-accent`,
 (corner box) or `modal` (centered). The per-category settings layer is the same in
 all three.
 
+`blockPage` (default `false`) blocks the page until the visitor makes a choice, in
+any layout. A dimmed backdrop covers the page (the `modal` layout uses the
+dialog's own), everything outside the banner is made `inert` (no clicks, no
+keyboard focus, hidden from screen readers), and scrolling is locked. Any choice
+(Accept, Reject or Save) releases all of it. A returning visitor with a stored
+choice is never blocked.
+
+```json
+"layout": "bar",
+"blockPage": true
+```
+
+This is not a cookie wall: Reject sits next to Accept on the first layer, and
+rejecting leaves the site fully usable ([`consent.no-cookie-wall`](./banner-rules.md#consent-no-cookie-wall)).
+It applies in every regime where the banner shows, including opt-out locations.
+
 Guardrails are **not** config: the rescan checks that reject and accept have equal
 weight and contrast, no box is pre-ticked, the required strings are present and
 there is no cookie wall. A theme that fails is a finding like any other.

@@ -72,7 +72,7 @@ export { scriptJson };
 //     <meta name="complykit-region">, which the server must write (a note says
 //     so; without it every visitor is treated as opt-in — fail closed).
 //   - theme and strings empty (the tool's defaults, per regime), layout 'bar',
-//     choices remembered 365 days, no consent-record endpoint unless asked.
+//     blockPage off, choices remembered 365 days, no consent-record endpoint unless asked.
 //   - The output parses against the D2 schema and its hash verifies, or the
 //     generator throws.
 
@@ -184,6 +184,8 @@ export interface GenerateConsentConfigOptions {
   privacyPolicyUrl?: string;
   regimeSource?: RegimeSource;
   layout?: ConsentLayout;
+  /** Block the page until the visitor chooses (default false). */
+  blockPage?: boolean;
   theme?: ConsentTheme;
   lifetimeDays?: number;
 }
@@ -721,6 +723,7 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
     ...(opts.privacyPolicyUrl ? { privacyPolicyUrl: opts.privacyPolicyUrl } : {}),
     ...(opts.recordEndpoint ? { record: { endpoint: opts.recordEndpoint } } : {}),
     layout: opts.layout ?? 'bar',
+    blockPage: opts.blockPage ?? false,
   };
   const config = withConsentConfigHash(input);
   const json = JSON.stringify(config, null, 2) + '\n';

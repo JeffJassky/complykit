@@ -197,6 +197,10 @@ export const ConsentToolConfigSchema = z
     privacyPolicyUrl: z.string().regex(/^https:\/\/[^\s]+$/, 'https URL').optional().describe('Linked from the banner.'),
     record: z.object({ endpoint: z.string().min(1) }).optional(),
     layout: ConsentLayoutSchema.default('bar'),
+    blockPage: z
+      .boolean()
+      .default(false)
+      .describe('Block the page until the visitor chooses: backdrop, page inert, scrolling locked. Any layout. Released by the choice.'),
   })
   .superRefine((cfg, ctx) => {
     const issue = (path: (string | number)[], message: string) => ctx.addIssue({ code: 'custom', path, message });

@@ -14,6 +14,10 @@
 // `[data-complykit-open]` element, the site's own link is the control and ours
 // is not rendered.
 //
+// Page blocking: config.blockPage (default false), any layout. While a choice
+// is owed the page behind is inert, scrolling is locked and bar / box get a
+// .ck-backdrop; the choice releases all of it (see ./block.ts).
+//
 // Styling and theming (F1). config.theme {bg,fg,accent,border,radius} becomes
 // --ck-* custom properties on the root; with no bg/fg the layers use the system
 // colors Canvas / CanvasText and follow prefers-color-scheme (color-scheme:
@@ -35,6 +39,7 @@
 //   .ck-vendors > .ck-vendor[data-ck-vendor=<id>]
 //   .ck-choices[data-ck-position=bottom-left|bottom-right]
 //                                      the persistent Privacy choices button
+//   .ck-backdrop                       full-viewport veil (blockPage, bar / box)
 //   .ck-sr                             visually hidden live status
 //   .ck-note[data-ck-note=gpc|withdraw] GPC-honored / withdrawal notes (F2)
 //   .ck-links > a.ck-link[data-ck-action=privacy-policy]
@@ -48,6 +53,7 @@ import type { ConsentState } from '../store.js';
 import { createBanner } from './banner.js';
 import { createSettings } from './settings.js';
 import { h } from './dom.js';
+import { createBlock } from './block.js';
 import { t } from './strings.js';
 import { choicesContent } from './copy.js';
 import { CHOICES_ATTR, OPEN_ATTR, host, setHost, type UiHost } from './host.js';
@@ -67,7 +73,8 @@ const CSS = [
   ':where(.ck-banner:not(dialog)){position:fixed;z-index:2147483000;left:0;right:0;bottom:0;border-radius:0;border-width:3px 0 0;border-top-color:var(--ck-accent,var(--ck-border,GrayText))}',
   ':where(.ck-banner[data-ck-layout=box]:not(dialog)){left:auto;right:1rem;bottom:1rem;width:min(28rem,calc(100vw - 2rem));border:1px solid var(--ck-border,GrayText);border-top:3px solid var(--ck-accent,var(--ck-border,GrayText));border-radius:var(--ck-radius,.375rem);box-shadow:0 .25rem 1.5rem rgba(0,0,0,.25)}',
   ':where(dialog.ck-banner,.ck-settings){width:min(34rem,calc(100vw - 2rem));box-shadow:0 .5rem 2rem rgba(0,0,0,.35)}',
-  ':where(.ck-banner,.ck-settings)::backdrop{background:rgba(0,0,0,.5)}',
+  ':where(.ck-banner,.ck-settings)::backdrop,:where(.ck-backdrop){background:rgba(0,0,0,.5)}',
+  ':where(.ck-backdrop){position:fixed;inset:0;z-index:2147482999}',
   ':where(.ck-banner[data-ck-layout=bar]:not(dialog)) :where(.ck-title,.ck-body,.ck-note,.ck-actions,.ck-links){max-width:60rem;margin-inline:auto}',
   ':where(.ck-title){font:inherit;font-size:1.125em;font-weight:700;margin:0 0 .5rem}',
   ':where(.ck-body){margin:0 0 1rem}',
@@ -199,6 +206,7 @@ function build(): void {
     choices.hidden = need || position === 'none';
     if (need) banner.show();
     else banner.hide(choicesEl());
+    block?.set(need);
   };
 
   const themed = themeCss(config.theme);
@@ -207,6 +215,8 @@ function build(): void {
   document.head.appendChild(style);
 
   const root = h('div', { id: 'complykit-ui', class: 'ck-root', 'data-ck-themed': themed.colored }, banner.el, choices, settings.el, status);
+  const block = config.blockPage === true ? createBlock(root, config.layout !== 'modal') : undefined;
+  if (block) root.prepend(block.el);
   document.body.prepend(root);
 
   on('change', sync);
