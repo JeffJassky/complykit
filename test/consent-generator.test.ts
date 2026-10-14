@@ -153,6 +153,57 @@ describe('categories and vendors', () => {
   });
 });
 
+describe('stores for a tool with no knowledge-base patterns: ID-like tails generalize', () => {
+  const st = (name: string, kind = 'cookie') => ({ name, kind, writePhases: [], presentAtEnd: true, attribution: 'observed' as const, lifetimeDays: null });
+  const run = (names: string[], extra: (e: TrackingEvaluation) => void = () => {}) => {
+    const e = compatibilityEvaluation();
+    e.inventory.push(party('unknown:ads.test', 'ads.test', ['advertising'], { stores: names.map((n) => st(n)) as never }));
+    extra(e);
+    return gen(e).config.vendors.find((x) => x.id === 'unknown:ads.test')!.stores.map((s) => s.name);
+  };
+
+  it('an ID or account suffix becomes a pattern', () => {
+    expect(run(['_hjSession_1234567', '_uetvid_abc123', 'ab_test_9f8e7d6c', 'vendor.ABCDEF12'])).toEqual([
+      '^_hjSession_[A-Za-z0-9]+$',
+      '^_uetvid_[A-Za-z0-9]+$',
+      '^ab_test_[A-Za-z0-9]+$',
+      '^vendor\\.[A-Za-z0-9]+$',
+    ]);
+  });
+
+  it('a word suffix stays exact', () => {
+    expect(run(['_session', 'vendor_consent', 'a-longword'])).toEqual(['^_session$', '^vendor_consent$', '^a-longword$']);
+  });
+
+  it('a short or no-digit tail, a short prefix and a name with no separator stay exact', () => {
+    expect(run(['sid_a1', 'x_12345', '_1234567', 'plain12345'])).toEqual(['^sid_a1$', '^x_12345$', '^_1234567$', '^plain12345$']);
+  });
+
+  it('a numeric tail of 4+ generalizes', () => {
+    expect(run(['uid_2024'])).toEqual(['^uid_[A-Za-z0-9]+$']);
+    expect(run(['uid_202'])).toEqual(['^uid_202$']);
+  });
+
+  it('names sharing a prefix collapse to one entry', () => {
+    expect(run(['_hjSession_111111', '_hjSession_222222'])).toEqual(['^_hjSession_[A-Za-z0-9]+$']);
+  });
+
+  it('a pattern that would match a necessary tool cookie falls back to exact', () => {
+    const names = run(['shared_abc123', 'other_abc123'], (e) => {
+      e.inventory.push(party('unknown:needed.test', 'needed.test', ['necessary'], { stores: [st('shared_zzz999')] as never }));
+    });
+    expect(names).toEqual(['^shared_abc123$', '^other_[A-Za-z0-9]+$']);
+  });
+
+  it('knowledge-base patterns are untouched', () => {
+    const e = compatibilityEvaluation();
+    const meta = e.inventory.find((p) => p.partyId === 'meta.pixel')!;
+    meta.stores = [st('_fbp_12345678')] as never;
+    const kbNames = DEFAULT_KB.entries.find((x) => x.id === 'meta.pixel')!.stores.map((s) => s.name);
+    expect(gen(e).config.vendors.find((x) => x.id === 'meta.pixel')!.stores.map((s) => s.name)).toEqual(kbNames);
+  });
+});
+
 describe("control 'gate' names something that holds it (#49)", () => {
   const GTM = 'https://www.googletagmanager.com/gtm.js?id=GTM-XXXX01';
   const viaGtm = { class: 'gtm' as const, evidence: [{ class: 'gtm' as const, kind: 'loader' as const, observed: true, url: GTM, note: `loaded by the GTM container ${GTM}` }], alsoSeen: [] };
