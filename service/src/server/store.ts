@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { CheckKind, JobDetail, JobSummary } from '../shared/api.js';
+import { siteDomain } from './domains.js';
 
 export const LOG_LIMIT = 200;
 
@@ -25,7 +26,13 @@ export function newId(): string {
 export function toSummary(job: JobDetail): JobSummary {
   // Everything except the log, which only GET /api/jobs/:id returns.
   const { log: _log, ...summary } = job;
-  return summary;
+  let site: string | undefined;
+  try {
+    site = siteDomain(new URL(job.url).hostname);
+  } catch {
+    /* no usable URL: no site */
+  }
+  return site ? { ...summary, site } : summary;
 }
 
 export interface StoreEvents {

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { JobReportResponse, OwnerCell, OwnerToolActivity, OwnerToolRow, RemediationTask } from '../../shared/api';
+import type { JobReportResponse, ScanHistoryItem, OwnerCell, OwnerToolActivity, OwnerToolRow, RemediationTask } from '../../shared/api';
 import { api } from '../lib/api';
-import { formatClock, jobDuration } from '../lib/format';
+import { formatAbsolute, formatClock, jobDuration, STATUS_LABEL as JOB_STATUS_LABEL } from '../lib/format';
 import { openDecisions, STATUS_LABEL as TASK_STATUS_LABEL, TASK_CHANGE_PREFIX } from '../lib/checklist';
 import { copyText, useReviewer } from '../lib/useKb';
 import { createRerenderQueue, useJobReport } from '../lib/useJobReport';
@@ -618,9 +618,15 @@ export function TodoList({ data, ui = {}, actions = {} }: { data: JobReportRespo
         {todo.state === 'error' || (todo.state === 'none' && job.status === 'done' && report) ? (
           <li className="rp-todo rp-todo-placeholder" data-testid="todo-make">
             {todo.error ? <p className="rp-error">Your list couldn’t be made: {todo.error}</p> : <p className="muted">Your list of changes hasn’t been made yet.</p>}
-            <button type="button" className="btn btn-sm btn-primary" disabled={ui.makingList || !actions.onMakeList} onClick={actions.onMakeList}>
-              {ui.makingList ? 'Making your list…' : todo.error ? 'Try again' : 'Make my to-do list'}
-            </button>
+            {data.newerScan ? (
+              <p className="muted">
+                The list is made from the latest scan. <a href={reportHref(data.newerScan.jobId)}>Open the latest report</a>
+              </p>
+            ) : (
+              <button type="button" className="btn btn-sm btn-primary" disabled={ui.makingList || !actions.onMakeList} onClick={actions.onMakeList}>
+                {ui.makingList ? 'Making your list…' : todo.error ? 'Try again' : 'Make my to-do list'}
+              </button>
+            )}
             {ui.errors?.list ? <p className="rp-error">{ui.errors.list}</p> : null}
           </li>
         ) : null}
@@ -679,6 +685,70 @@ export function Unreachable({ data, ui, actions }: { data: JobReportResponse; ui
   );
 }
 
+// --- scan history -------------------------------------------------------------------
+
+const hostOf = (url: string | undefined): string | undefined => {
+  try {
+    return url ? new URL(url).hostname : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** Date and time, plus the kind when not a full consent scan, plus the host when it isn't this report's. */
+function scanLabel(s: Pick<ScanHistoryItem, 'at' | 'quick' | 'checks' | 'url'>, host?: string): string {
+  const kind = s.checks && !s.checks.includes('consent') ? 'accessibility' : s.quick ? 'quick' : undefined;
+  const other = hostOf(s.url);
+  return [formatAbsolute(s.at), kind, other && host && other !== host ? other : undefined].filter(Boolean).join(' · ');
+}
+
+/** The site's scans, newest first; this one marked. Failed and cancelled scans are greyed; gone ones aren't links. */
+export function ScanHistory({ history }: { history: ScanHistoryItem[] }) {
+  const current = history.find((s) => s.current);
+  if (!current) return null;
+  const host = hostOf(current.url);
+  return (
+    <details className="rp-history" data-testid="scan-history">
+      <summary>
+        Scan of {scanLabel(current)} <span className="muted">· {history.length === 1 ? 'the only scan of this site' : `${history.length} scans of this site`}</span>
+      </summary>
+      <ol className="rp-history-list">
+        {history.map((s, i) => {
+          const ended = s.status === 'failed' || s.status === 'cancelled';
+          const cls = `rp-history-item${ended || !s.available ? ' is-muted' : ''}${s.current ? ' is-current' : ''}`;
+          const note = !s.available ? (s.jobId ? 'no longer on this service' : 'ran outside this service') : s.status && s.status !== 'done' ? JOB_STATUS_LABEL[s.status].toLowerCase() : undefined;
+          return (
+            <li key={s.jobId ?? `${s.at}-${i}`} className={cls} data-status={s.status ?? 'gone'}>
+              {s.current ? (
+                <strong aria-current="page">{scanLabel(s, host)}</strong>
+              ) : s.available && s.jobId ? (
+                <a href={reportHref(s.jobId)}>{scanLabel(s, host)}</a>
+              ) : (
+                <span>{scanLabel(s, host)}</span>
+              )}
+              {note ? <span className="muted"> · {note}</span> : null}
+              {i === 0 && !s.current ? <span className="muted"> · latest</span> : null}
+            </li>
+          );
+        })}
+      </ol>
+    </details>
+  );
+}
+
+/** An earlier scan: what it is, and the way to the latest. */
+export function EarlierScan({ newer }: { newer: NonNullable<JobReportResponse['newerScan']> }) {
+  return (
+    <section className="rp-section rp-earlier" data-testid="earlier-scan">
+      <p>
+        <strong>This is an earlier scan.</strong> A newer scan of this site ran {formatAbsolute(newer.at)}.{' '}
+        <a href={reportHref(newer.jobId)}>Open the latest report</a>
+      </p>
+      <p className="muted">It shows what was observed then. Tool classifications and the to-do list belong to the whole site, so changes you make here apply to every scan.</p>
+    </section>
+  );
+}
+
 // --- the page -----------------------------------------------------------------------
 
 export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: JobReportResponse; now: number; ui?: ReportUiState; actions?: ReportActions }) {
@@ -691,7 +761,9 @@ export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: Job
           <a href="#">← Home</a>
         </p>
         <h1 className="rp-h1">{job.host}</h1>
+        <ScanHistory history={data.history ?? []} />
       </header>
+      {data.newerScan ? <EarlierScan newer={data.newerScan} /> : null}
       <ScanStatus data={data} now={now} onCancel={actions.onCancel} />
       {job.status === 'failed' || job.status === 'cancelled' ? (
         <div className="rp-section rp-alert" role="alert" data-testid="scan-ended">
@@ -885,7 +957,7 @@ export function ReportPage({ jobId }: { jobId: string }) {
           <a href="#">← Home</a>
         </p>
         <div className="banner-error" role="alert">
-          {error.status === 404 ? 'This scan is no longer here (scans are kept for a limited time).' : `Couldn’t load the report: ${error.message}`}
+          {error.status === 404 ? 'This scan is no longer here (it was deleted).' : `Couldn’t load the report: ${error.message}`}
         </div>
       </div>
     );

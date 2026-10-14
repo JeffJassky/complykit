@@ -55,14 +55,32 @@ export function configDownloads(ws: SiteWorkspace): Array<{ label: string; filen
   return out;
 }
 
-/** Runs the generator can work from: the job is still here, finished, and has a consent run.
- *  Newest first, so the first is the latest. Without the jobs list nothing can be said. */
+/**
+ * Every run of the site, newest first: the workspace's run pointers, plus the
+ * service's jobs for the site that never recorded one (failed or cancelled
+ * scans, accessibility-only ones, and jobs from before runs were recorded).
+ */
+export function siteRuns(ws: SiteWorkspace, jobs: Record<string, JobSummary> | null): WorkspaceRun[] {
+  const runs = [...ws.runs];
+  const referenced = new Set(runs.map((r) => r.jobId).filter(Boolean));
+  for (const j of Object.values(jobs ?? {})) {
+    if (j.site !== ws.domain || referenced.has(j.id)) continue;
+    runs.push({ id: j.result?.consent?.runId ?? j.id, at: j.createdAt, jobId: j.id, url: j.url });
+  }
+  return runs.sort((a, b) => b.at.localeCompare(a.at));
+}
+
+/** The run the generator can work from: the latest whose job is still here, finished, with a consent run
+ *  (a one-element list, or empty). Without the jobs list nothing can be said. */
 export function generatableRuns(runs: WorkspaceRun[], jobs: Record<string, JobSummary> | null): WorkspaceRun[] {
   if (!jobs) return [];
-  return runs.filter((r) => {
+  const usable = runs.filter((r) => {
     const job = r.jobId ? jobs[r.jobId] : undefined;
     return job?.status === 'done' && !!job.result?.consent?.runId;
   });
+  // The to-do list is site-wide and made from the latest finished scan; earlier scans can't make it (the service answers 409).
+  const latest = [...usable].sort((a, b) => b.at.localeCompare(a.at))[0];
+  return latest ? [latest] : [];
 }
 
 /** A failed generation, in words for the person who pressed the button. */

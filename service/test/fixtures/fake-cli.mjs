@@ -134,6 +134,9 @@ async function consent() {
   const runDir = path.join(cwd, '.comply', 'runs', runId);
   fs.mkdirSync(path.join(runDir, 'evidence'), { recursive: true });
   fs.writeFileSync(path.join(runDir, 'evidence', 'note.txt'), 'evidence for ' + opts.url + '\n');
+  // One HAR per visit, where the real collector writes it (evidence/tracking/<location>/<scenario>/visit.har).
+  fs.mkdirSync(path.join(runDir, 'evidence', 'tracking', 'local', 'do-nothing'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'evidence', 'tracking', 'local', 'do-nothing', 'visit.har'), JSON.stringify({ log: { version: '1.2', entries: [] } }));
   fs.writeFileSync(path.join(runDir, 'tracking.json'), JSON.stringify({ url: opts.url, ...(widget ? { unknownTool: 'widgets.test' } : {}) }));
   fs.writeFileSync(path.join(runDir, 'findings.jsonl'), '{"ruleId":"fake"}\n');
   fs.writeFileSync(path.join(runDir, 'consent-report.json'), JSON.stringify({ url: opts.url }));

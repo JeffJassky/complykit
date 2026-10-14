@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JobSummary, RemediationTask, SiteWorkspace } from '../../shared/api';
 import { api, ApiError } from '../lib/api';
-import { configDownloads, configStoredOf, generatableRuns, generateErrorText, summarizeWorkspace } from '../lib/sites';
+import { configDownloads, configStoredOf, generatableRuns, siteRuns, generateErrorText, summarizeWorkspace } from '../lib/sites';
 import { parseHash, siteHref } from '../lib/useHashView';
 import { checklistFromWorkspace, checklistProgress, readTaskValue, reportChecklistHref } from '../lib/checklist';
 import { LIVE_REFRESH_MS, startLiveRefresh } from '../lib/useSites';
@@ -68,8 +68,8 @@ describe('site page', () => {
   it('renders a site with two runs, job links and counts', () => {
     const html = renderToStaticMarkup(<SitePageView workspace={workspace} jobs={{ 'job-1': job('job-1'), 'job-2': job('job-2') }} now={NOW} />);
     expect(html).toContain('example-shop.test');
-    expect(html).toContain('href="/reports/job-1/consent/consent-report.html"');
-    expect(html).toContain('href="/reports/job-2/consent/consent-report.html"');
+    expect(html).toContain('href="#report/job-1"');
+    expect(html).toContain('href="#report/job-2"');
     // The workbench's own to-dos are "report notes", after the facts; the header leads with the checklist.
     expect(html).toMatch(/data-testid="report-notes">2 open \/ 1 done</);
     expect(html).not.toContain('Open tasks');
@@ -87,6 +87,22 @@ describe('site page', () => {
     expect(html).toContain('Report deleted or expired');
   });
 
+  it('lists the service’s jobs for the site that recorded no run (failed, cancelled, older), greying the failed and cancelled', () => {
+    const failed = { ...job('job-3'), status: 'failed', site: 'example-shop.test', createdAt: at(1), url: 'https://example-shop.test/', result: undefined } as unknown as JobSummary;
+    const cancelled = { ...job('job-4'), status: 'cancelled', site: 'example-shop.test', createdAt: at(30), url: 'https://example-shop.test/', result: undefined } as unknown as JobSummary;
+    const other = { ...job('job-5'), site: 'elsewhere.test', createdAt: at(1), url: 'https://elsewhere.test/' } as unknown as JobSummary;
+    const jobs = { 'job-1': job('job-1'), 'job-2': job('job-2'), 'job-3': failed, 'job-4': cancelled, 'job-5': other };
+    expect(siteRuns(workspace, jobs).map((r) => r.jobId)).toEqual(['job-3', 'job-2', 'job-4', 'job-1']);
+    const html = renderToStaticMarkup(<SitePageView workspace={workspace} jobs={jobs} now={NOW} />);
+    expect(html).toContain('href="#report/job-3"');
+    expect(html).not.toContain('job-5');
+    expect(html).toContain('class="site-run is-muted" data-status="failed"');
+    expect(html).toContain('class="site-run is-muted" data-status="cancelled"');
+    expect(html).toContain('class="site-run" data-status="done"');
+    // Generation is still offered from the latest finished run only.
+    expect(generatableRuns(siteRuns(workspace, jobs), jobs).map((r) => r.jobId)).toEqual(['job-2']);
+  });
+
   it('renders the sites list, and its empty state', () => {
     const html = renderToStaticMarkup(<SitesListView sites={[{ domain: 'example-shop.test', entries: 3, runs: 2, lastRunAt: at(2) }]} now={NOW} />);
     expect(html).toContain('href="#sites/example-shop.test"');
@@ -99,11 +115,11 @@ describe('generate consent tool config', () => {
   const jobs = { 'job-1': job('job-1'), 'job-2': job('job-2') };
   const labelCount = (html: string) => html.split('Generate consent tool config').length - 1;
 
-  it('offers a primary button for the latest finished run and one per finished run', () => {
+  it('offers generation from the latest finished run only (earlier scans can’t make the site’s list)', () => {
     const html = renderToStaticMarkup(<SitePageView workspace={workspace} jobs={jobs} now={NOW} />);
-    expect(labelCount(html)).toBe(3); // latest (config panel) + both run rows
+    expect(labelCount(html)).toBe(2); // latest: config panel + its run row
     expect(html).toContain('btn btn-sm btn-primary');
-    expect(generatableRuns(summarizeWorkspace(workspace).runs, jobs).map((r) => r.id)).toEqual(['run-2', 'run-1']);
+    expect(generatableRuns(summarizeWorkspace(workspace).runs, jobs).map((r) => r.id)).toEqual(['run-2']);
   });
 
   it('offers nothing for runs whose job is gone, unfinished, or has no consent run', () => {
@@ -121,7 +137,7 @@ describe('generate consent tool config', () => {
     const html = renderToStaticMarkup(<SitePageView workspace={workspace} jobs={jobs} now={NOW} generate={{ busyRunId: 'run-2' }} />);
     expect(html).toContain('Generating…');
     expect(html).toContain('Generating from run run-2');
-    expect(html.match(/<button[^>]*disabled=""[^>]*>(Generat|Generate)/g)?.length).toBe(3);
+    expect(html.match(/<button[^>]*disabled=""[^>]*>(Generat|Generate)/g)?.length).toBe(2);
   });
 
   it('shows an error, and says when a newer config kept this one from being stored', () => {

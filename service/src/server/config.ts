@@ -18,6 +18,7 @@ export interface ServiceConfig {
   /** ANTHROPIC_API_KEY is set, so `kb research` can run on this server. */
   researchAvailable: boolean;
   concurrency: number;
+  /** Days a finished scan is kept (RETENTION_DAYS). 0, the default, keeps every scan: a site's scan history is its evidence. */
   retentionDays: number;
   /** Consent records older than this many days are pruned (CONSENT_RECORD_RETENTION_DAYS, default 1825 = 5 years). Separate from retentionDays: jobs are scan output, these are proof. */
   consentRecordRetentionDays: number;
@@ -120,7 +121,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     kbDir: path.resolve(env.COMPLYKIT_KB_DIR || path.join(dataDir, 'kb')),
     researchAvailable: Boolean(env.ANTHROPIC_API_KEY),
     concurrency: int(env, 'CONCURRENCY', 2, 1),
-    retentionDays: int(env, 'RETENTION_DAYS', 14, 1),
+    retentionDays: int(env, 'RETENTION_DAYS', 0, 0),
     consentRecordRetentionDays: int(env, 'CONSENT_RECORD_RETENTION_DAYS', 1825, 1),
     consentRecordDomains: domainList(env.CONSENT_RECORD_DOMAINS),
     idleShutdownMinutes: int(env, 'IDLE_SHUTDOWN_MINUTES', 0),

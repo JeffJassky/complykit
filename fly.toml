@@ -21,7 +21,8 @@ kill_timeout = 30
 [env]
   IDLE_SHUTDOWN_MINUTES = "15"
   CONCURRENCY = "2"
-  RETENTION_DAYS = "14"
+  # Scans are kept for good (scan history); set a number of days to sweep them.
+  RETENTION_DAYS = "0"
   # The knowledge base (research queue, proposals, confirmed entries) lives on
   # the volume so it outlives deploys; consent checks and the KB view share it.
   COMPLYKIT_KB_DIR = "/data/kb"

@@ -5,7 +5,7 @@ import type { JobReportResponse, JobSummary, OwnerReport, RemediationTask, SiteS
 import { parseHash, reportHref } from '../lib/useHashView';
 import { createRerenderQueue, isMoving } from '../lib/useJobReport';
 import { HomeView, siteRows, siteStatus } from './Home';
-import { BannerLine, Matrix, ReportPageView, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
+import { BannerLine, Matrix, ReportPageView, ScanHistory, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
 
 // The report page (plans/simple-report.md), rendered per section and state.
 
@@ -48,7 +48,7 @@ const task = (id: string, over: Partial<RemediationTask> = {}): RemediationTask 
 const decision = task('classify:1', { kind: 'classify', title: 'Decide: what is widgets.test?', tools: ['widgets.test'], classKey: 'class:w', verify: { check: 'manual', method: 'manual' }, order: 0, snippet: undefined, steps: [] });
 const install = task('install', { kind: 'install', title: 'Install the complykit consent tool', verify: { check: 'install', method: 'static' }, snippet: { after: '<script id="complykit-config"></script>' } });
 
-const running = (over: Partial<JobReportResponse> = {}): JobReportResponse => ({ job: job(), domain: 'shop.example', report: owner(), todo: { state: 'waiting', tasks: [] }, updating: false, ...over });
+const running = (over: Partial<JobReportResponse> = {}): JobReportResponse => ({ job: job(), domain: 'shop.example', report: owner(), todo: { state: 'waiting', tasks: [] }, updating: false, history: [], ...over });
 const finalOwner = owner({
   stage: 'final',
   scan: { startedAt: 'x', finishedAt: 'y', visitsDone: 3, visitsTotal: 3, pagesVisited: 9, location: { id: 'local', label: 'This machine', verified: true } },
@@ -66,7 +66,7 @@ const finalOwner = owner({
 const done = (over: Partial<JobReportResponse> = {}): JobReportResponse => ({
   job: job({ status: 'done', finishedAt: '2026-10-07T12:00:00Z' }), domain: 'shop.example', report: finalOwner,
   todo: { state: 'ready', tasks: [decision, install, task('meta')], progress: { verified: 0, required: 3, doneUnverified: 0, failed: 0 }, fromThisRun: true },
-  updating: false, technicalReportUrl: '/reports/job1/consent/.comply/runs/r/consent-report.html', installZipUrl: '/api/sites/shop.example/install.zip', ...over,
+  updating: false, technicalReportUrl: '/reports/job1/consent/.comply/runs/r/consent-report.html', installZipUrl: '/api/sites/shop.example/install.zip', history: [], ...over,
 });
 
 const html = (el: ReactElement) => renderToStaticMarkup(el);
@@ -315,5 +315,45 @@ describe('home', () => {
     expect(out).toContain('href="#report/b"');
     expect(out).not.toContain('scenario');
     expect(text(<HomeView rows={[]} now={NOW} loaded onSubmit={() => {}} />)).toContain('No sites yet.');
+  });
+});
+
+describe('scan history', () => {
+  const history: JobReportResponse['history'] = [
+    { jobId: 'j3', at: '2026-10-09T10:00:00Z', url: 'https://www.shop.example/', status: 'done', checks: ['consent'], quick: false, available: true },
+    { jobId: 'j2', at: '2026-10-08T10:00:00Z', status: 'failed', checks: ['consent'], quick: true, available: true },
+    { jobId: 'j1', at: '2026-10-07T10:00:00Z', url: 'https://shop.example/', status: 'done', checks: ['consent'], quick: false, available: true, current: true },
+    { jobId: 'gone1', at: '2026-10-01T10:00:00Z', available: false },
+  ];
+
+  it('lists the site’s scans: others link to their report, this one is marked, failed and gone ones are greyed', () => {
+    const out = html(<ScanHistory history={history} />);
+    expect(out).toContain('4 scans of this site');
+    expect(out).toContain('href="#report/j3"');
+    expect(out).toContain('href="#report/j2"');
+    expect(out).not.toContain('href="#report/j1"');
+    expect(out).toContain('aria-current="page"');
+    expect(out).not.toContain('href="#report/gone1"');
+    expect(out).toMatch(/class="rp-history-item is-muted" data-status="failed"/);
+    expect(out).toMatch(/class="rp-history-item is-muted" data-status="gone"/);
+    expect(text(<ScanHistory history={history} />)).toContain('no longer on this service');
+    expect(text(<ScanHistory history={history} />)).toContain('latest');
+    expect(text(<ScanHistory history={history} />)).toContain('· www.shop.example');
+    expect(text(<ScanHistory history={history} />)).not.toContain('· shop.example ');
+    expect(html(<ScanHistory history={[]} />)).toBe('');
+  });
+
+  it('an earlier scan says so, links the latest, and offers no Make-list button', () => {
+    const data = done({ history, newerScan: { jobId: 'j3', at: '2026-10-09T10:00:00Z' }, todo: { state: 'none', tasks: [] } });
+    const out = html(<ReportPageView data={data} now={NOW} actions={{ onMakeList: () => {} }} />);
+    expect(out).toContain('data-testid="earlier-scan"');
+    expect(out).toContain('This is an earlier scan.');
+    expect(out).toContain('href="#report/j3"');
+    expect(out).not.toContain('Make my to-do list');
+    expect(text(<TodoList data={data} actions={{ onMakeList: () => {} }} />)).toContain('The list is made from the latest scan');
+  });
+
+  it('the latest scan shows no earlier-scan notice', () => {
+    expect(html(<ReportPageView data={done({ history })} now={NOW} />)).not.toContain('earlier-scan');
   });
 });

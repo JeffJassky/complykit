@@ -90,6 +90,8 @@ export interface JobSummary {
   metrics: JobMetrics;
   result?: JobResult;
   error?: string;
+  /** The registrable domain whose workspace this job belongs to (set on summaries the API returns). */
+  site?: string;
 }
 
 export interface JobDetail extends JobSummary {
@@ -674,6 +676,27 @@ export interface JobReportResponse {
   downloadUrl?: string;
   /** The site's install bundle (once a checklist exists). */
   installZipUrl?: string;
+  /** Every scan of this site, newest first (this one marked `current`). */
+  history: ScanHistoryItem[];
+  /** Set when a newer finished consent scan of the site exists: this report is an earlier scan and can't make the to-do list. */
+  newerScan?: { jobId: string; at: string };
+}
+
+/** One scan of a site, for the report page's scan list. */
+export interface ScanHistoryItem {
+  /** Absent for a run recorded from outside this service. */
+  jobId?: string;
+  /** When the scan was started (ISO). */
+  at: string;
+  url?: string;
+  /** Absent when the job is no longer on this service. */
+  status?: JobStatus;
+  checks?: CheckKind[];
+  quick?: boolean;
+  /** The report can be opened here (`#report/<jobId>`). */
+  available: boolean;
+  /** The scan this report shows. */
+  current?: boolean;
 }
 
 export interface SiteSummary {
@@ -704,14 +727,16 @@ export interface SitesResponse {
 //   GET    /api/jobs/:id/download           → application/zip
 //   POST   /api/jobs/:id/consent-config  ConsentConfigRequest → ConsentConfigResponse
 //          (a finished consent job: generates the consent tool config with the
-//          site's current workspace and stores it as the workspace `config`)
+//          site's current workspace and stores it as the workspace `config`;
+//          409 when a newer scan of the site exists, unless the stored config came from this scan)
 //   GET    /api/jobs/:id/report             → JobReportResponse (the owner report page: live while
 //          the scan runs, final when done, with the site's to-do list and its status)
 //   POST   /api/jobs/:id/rerender  RerenderRequest → RerenderResponse
 //          (re-renders the job's consent report from its saved run with the
 //          site's current workspace — no rescan; regenerates the stored config
 //          when it came from this run, or from this run in any case with
-//          `generate: true`; the old report is kept as *.prev.html)
+//          `generate: true`; the old report is kept as *.prev.html; `generate: true`
+//          gets 409 when a newer scan of the site exists, as consent-config does)
 //   GET    /api/stream                      → text/event-stream (StreamEvent)
 //
 //   Knowledge base (the store at COMPLYKIT_KB_DIR; `event: kb` on any change):

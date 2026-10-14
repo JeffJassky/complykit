@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ConsentProgress, NdjsonTail } from '../src/server/events.js';
 import { idleReason, sweepRetention } from '../src/server/lifecycle.js';
 import { JobStore } from '../src/server/store.js';
+import { loadConfig } from '../src/server/config.js';
 import type { CreateBatchResponse, JobDetail, JobsResponse } from '../src/shared/api.js';
 import { startService, stopAll, tempDir, waitFor, waitForStatus } from './helpers.js';
 
@@ -69,6 +70,28 @@ describe('retention', () => {
     expect(fs.existsSync(store.jobDir(old.id))).toBe(false);
     expect(store.get(fresh.id)).toBeDefined();
     expect(fs.existsSync(orphan)).toBe(false);
+  });
+});
+
+describe('retention off (the default)', () => {
+  it('keeps every job and orphan dir when RETENTION_DAYS is 0, and 0 is the default', async () => {
+    const dataDir = tempDir();
+    const store = new JobStore(dataDir);
+    await store.load();
+    const old = store.create({ batchId: 'b', url: 'https://old.example.com/', checks: ['consent'], quick: false });
+    old.status = 'done';
+    old.createdAt = new Date(Date.now() - 2000 * 86_400_000).toISOString();
+    const orphan = path.join(store.jobsDir, 'orphan123');
+    fs.mkdirSync(orphan);
+    const past = new Date(Date.now() - 2000 * 86_400_000);
+    fs.utimesSync(orphan, past, past);
+    await store.flush();
+
+    expect(await sweepRetention(store, 0)).toBe(0);
+    expect(store.get(old.id)).toBeDefined();
+    expect(fs.existsSync(orphan)).toBe(true);
+    expect(loadConfig({}).retentionDays).toBe(0);
+    expect(loadConfig({ RETENTION_DAYS: '30' }).retentionDays).toBe(30);
   });
 });
 

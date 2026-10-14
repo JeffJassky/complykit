@@ -61,7 +61,7 @@ supporting evidence.
 
 `CONSENT_RECORD_RETENTION_DAYS` sets how long records are kept. **The default is 1825
 days (5 years).** A sweep runs at boot and hourly and removes lines received before
-the cutoff. This is separate from `RETENTION_DAYS` (14 by default), which only
+the cutoff. This is separate from `RETENTION_DAYS` (0 by default: scans are kept for good), which only
 covers scan jobs. Pick a period with your counsel: it should cover the limitation
 period for claims you want to defend against, and not be longer than you can justify,
 since the records are personal data in some jurisdictions. Five years is a starting

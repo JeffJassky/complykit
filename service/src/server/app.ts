@@ -31,6 +31,7 @@ import { StreamHub } from './stream.js';
 import { sendInstallZip } from './install-zip.js';
 import { WorkspaceError, WorkspaceStore } from './workspace.js';
 import { serveReportWithConfig } from './report-config.js';
+import { assertCanGenerate } from './history.js';
 import { generateConsentConfigForJob } from './consent-config.js';
 import { checklistProgress, RemediationVerifier, remediationView } from './remediation.js';
 import { rescanSite } from './rescan.js';
@@ -269,6 +270,7 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
     withJob,
     siteRoute(async (req, res) => {
       const job = res.locals.job as JobDetail;
+      assertCanGenerate(job, store.list(), await workspaces.get(workspaces.domain(new URL(job.url).hostname)), (h) => workspaces.domain(h));
       const out = await generateConsentConfigForJob(job, (req.body ?? {}) as ConsentConfigRequest, {
         config,
         workspaces,
@@ -286,7 +288,7 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
     siteRoute(async (_req, res) => {
       const job = res.locals.job as JobDetail;
       res.set('Cache-Control', 'no-store');
-      res.json(await jobReport(job, { jobDir: store.jobDir(job.id), workspaces, maker: checklists }));
+      res.json(await jobReport(job, { jobDir: store.jobDir(job.id), workspaces, maker: checklists, jobs: store.list() }));
     }),
   );
 
@@ -296,7 +298,9 @@ export async function createApp(config: ServiceConfig): Promise<Service> {
     withJob,
     siteRoute(async (req, res) => {
       const job = res.locals.job as JobDetail;
-      const out = await rerenderJob(job, (req.body ?? {}) as RerenderRequest, {
+      const body = (req.body ?? {}) as RerenderRequest;
+      if (body.generate === true) assertCanGenerate(job, store.list(), await workspaces.get(workspaces.domain(new URL(job.url).hostname)), (h) => workspaces.domain(h));
+      const out = await rerenderJob(job, body, {
         config,
         workspaces,
         jobDir: (id) => store.jobDir(id),

@@ -263,7 +263,7 @@ describe('queue', () => {
     const res = await request(s.app).post('/api/batches').send({ urls: 'a.example.com b.example.com c.example.com d.example.com e.example.com' }).expect(201);
     const ids = (res.body as CreateBatchResponse).jobs.map((j) => j.id);
     const mid = (await request(s.app).get('/api/jobs').expect(200)).body as JobsResponse;
-    expect(mid.server).toMatchObject({ concurrency: 2, running: 2, queued: 3, retentionDays: 14 });
+    expect(mid.server).toMatchObject({ concurrency: 2, running: 2, queued: 3, retentionDays: 0 });
     for (const id of ids) await waitForStatus(s, id, ['done']);
     expect(maxRunning).toBe(2);
     expect(startOrder).toEqual(ids);
@@ -355,7 +355,7 @@ describe('reports and downloads', () => {
     const names = zipEntries(res.body as Buffer);
     const root = `complykit-site.example.com-${date}`;
     expect(names).toEqual(
-      expect.arrayContaining([`${root}/job.json`, `${root}/consent/consent-report.html`, `${root}/consent/evidence/note.txt`, `${root}/consent/tracking.json`, `${root}/consent/events.ndjson`]),
+      expect.arrayContaining([`${root}/job.json`, `${root}/consent/consent-report.html`, `${root}/consent/evidence/note.txt`, `${root}/consent/evidence/tracking/local/do-nothing/visit.har`, `${root}/consent/tracking.json`, `${root}/consent/events.ndjson`]),
     );
     expect(names.some((n) => n.includes('.comply'))).toBe(false);
   });

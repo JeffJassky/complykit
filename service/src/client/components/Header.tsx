@@ -76,7 +76,9 @@ export function Header({ view, server, running, queued, connection }: Props) {
       </div>
       {server ? (
         <p className="retention">
-          Reports are available for {server.retentionDays} {server.retentionDays === 1 ? 'day' : 'days'}, then deleted. Download anything you need to keep.
+          {server.retentionDays > 0
+            ? `Reports are available for ${server.retentionDays} ${server.retentionDays === 1 ? 'day' : 'days'}, then deleted. Download anything you need to keep.`
+            : 'Reports are kept until you delete them.'}
         </p>
       ) : null}
     </header>

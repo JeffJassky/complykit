@@ -2,7 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import type { JobSummary, RemediationStatus, RemediationTask, SiteSummary, SiteWorkspace, WorkspaceRun } from '../../shared/api';
 import { formatAbsolute, formatRelative } from '../lib/format';
 import { api } from '../lib/api';
-import { configDownloads, configStoredOf, generatableRuns, generateErrorText, REPORT_REFRESH_FAILED, summarizeWorkspace } from '../lib/sites';
+import { configDownloads, configStoredOf, generatableRuns, siteRuns, generateErrorText, REPORT_REFRESH_FAILED, summarizeWorkspace } from '../lib/sites';
 import { PHASE_LABEL } from '../lib/format';
 import { checklistFromWorkspace, checklistProgress, installZipHref, openDecisions, reportChecklistHref, reportTaskHref, taskStatusLabel, TASK_CHANGE_PREFIX } from '../lib/checklist';
 import { reportHref, siteHref } from '../lib/useHashView';
@@ -137,14 +137,19 @@ function GenerateButton({ run, primary, generate, onGenerate }: { run: Workspace
   );
 }
 
+/** A failed or cancelled run (greyed in the list). */
+function runEnded(run: WorkspaceRun, jobs: Record<string, JobSummary> | null): boolean {
+  const status = run.jobId ? jobs?.[run.jobId]?.status : undefined;
+  return status === 'failed' || status === 'cancelled';
+}
+
 function RunReport({ run, jobs }: { run: WorkspaceRun; jobs: Record<string, JobSummary> | null }) {
   if (!run.jobId) return <span className="muted">Ran outside this service</span>;
   const job = jobs?.[run.jobId];
-  const href = job?.result?.consent?.reportUrl ?? job?.result?.accessibility?.reportUrl;
-  if (href) {
+  if (job) {
     return (
       <>
-        <a href={href}>View report</a>
+        <a href={reportHref(job.id)}>View report</a>
         {job?.result?.downloadUrl ? (
           <>
             {' · '}
@@ -154,7 +159,6 @@ function RunReport({ run, jobs }: { run: WorkspaceRun; jobs: Record<string, JobS
       </>
     );
   }
-  if (job) return <span className="muted">Report not ready ({job.status})</span>;
   return <span className="muted">{jobs ? 'Report deleted or expired' : 'Report unavailable'}</span>;
 }
 
@@ -495,7 +499,8 @@ export function SitePageView({
   rescan?: RescanState;
   onRescan?: (opts: { quick: boolean; slowRepeat: boolean }) => void;
 }) {
-  const { runs, openTasks, doneTasks, classifications } = summarizeWorkspace(workspace);
+  const { openTasks, doneTasks, classifications } = summarizeWorkspace(workspace);
+  const runs = siteRuns(workspace, jobs);
   const tasks = checklistFromWorkspace(workspace);
   const progress = checklistProgress(tasks);
   const downloads = configDownloads(workspace);
@@ -622,7 +627,7 @@ export function SitePageView({
         {runs.length ? (
           <ol className="site-runs">
             {runs.map((r) => (
-              <li key={r.id} className="site-run">
+              <li key={r.id} className={`site-run${runEnded(r, jobs) ? ' is-muted' : ''}`} data-status={(r.jobId && jobs?.[r.jobId]?.status) || undefined}>
                 <strong>
                   <When iso={r.at} now={now} />
                 </strong>

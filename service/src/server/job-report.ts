@@ -12,6 +12,7 @@
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { newerScan, siteHistory } from './history.js';
 import type { JobDetail, JobReportResponse, OwnerReport, SiteWorkspace } from '../shared/api.js';
 import { toSummary } from './store.js';
 import { checklistProgress, mergeTaskStatus, storedTasks } from './remediation.js';
@@ -119,7 +120,7 @@ export class ChecklistMaker {
   }
 }
 
-export async function jobReport(job: JobDetail, deps: { jobDir: string; workspaces: WorkspaceStore; maker?: ChecklistMaker }): Promise<JobReportResponse> {
+export async function jobReport(job: JobDetail, deps: { jobDir: string; workspaces: WorkspaceStore; maker?: ChecklistMaker; jobs?: JobDetail[] }): Promise<JobReportResponse> {
   const consent = job.checks.includes('consent');
   const domain = deps.workspaces.domain(new URL(job.url).hostname);
   const report = consent ? await readOwnerReport(await ownerReportFile(job, deps.jobDir)) : null;
@@ -138,6 +139,9 @@ export async function jobReport(job: JobDetail, deps: { jobDir: string; workspac
   else state = 'none';
 
   const ready = state === 'ready';
+  const jobs = deps.jobs ?? [job];
+  const domainOf = (host: string) => deps.workspaces.domain(host);
+  const newer = newerScan(job, jobs, domainOf);
   const progress = ready ? checklistProgress(ws) : undefined;
   return {
     job: toSummary(job),
@@ -157,5 +161,7 @@ export async function jobReport(job: JobDetail, deps: { jobDir: string; workspac
     ...((await jsonReportExists(job, deps.jobDir)) && job.result?.consent ? { jsonReportUrl: job.result.consent.reportUrl.replace(/\.html$/, '.json') } : {}),
     ...(job.result?.downloadUrl ? { downloadUrl: job.result.downloadUrl } : {}),
     ...(ready ? { installZipUrl: `/api/sites/${encodeURIComponent(domain)}/install.zip` } : {}),
+    history: siteHistory(domain, jobs, ws, domainOf, job.id),
+    ...(newer ? { newerScan: { jobId: newer.id, at: newer.createdAt } } : {}),
   };
 }

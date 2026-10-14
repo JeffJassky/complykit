@@ -30,9 +30,11 @@ export function recoverJobs(store: JobStore, jobs: JobDetail[]): string[] {
 
 /** Delete finished jobs created more than `retentionDays` ago. Also removes
  *  orphan dirs (no readable job.json) by mtime. Returns how many went.
+ *  `retentionDays` 0 (the default) keeps everything and sweeps nothing.
  *  Only ever looks inside DATA_DIR/jobs: site workspaces (DATA_DIR/sites) are
  *  a team's work, not scan output, and are never swept. */
 export async function sweepRetention(store: JobStore, retentionDays: number, now = Date.now()): Promise<number> {
+  if (retentionDays <= 0) return 0;
   const cutoff = now - retentionDays * 86_400_000;
   let removed = 0;
   for (const job of store.list()) {
