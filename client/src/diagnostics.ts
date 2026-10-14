@@ -7,6 +7,7 @@ import type { AdapterDiagnostics } from './adapters/index.js';
 import type { WixDiagnostics } from './bridges/wix.js';
 import type { ShopifyDiagnostics } from './bridges/shopify.js';
 import type { UiDiagnostics } from './ui-loader.js';
+import type { WithdrawalReport } from './withdraw.js';
 
 export interface Diagnostics {
   /** Set by the GTM bridge when it installs (ticket D6). */
@@ -21,6 +22,10 @@ export interface Diagnostics {
   shopify?: ShopifyDiagnostics;
   /** Set by the UI-file loader (ticket D9): where the banner file is and whether it loaded. */
   ui?: UiDiagnostics;
+  /** Set after a withdrawal's cleanup: what matched and went (`cleared`) or survived (`leftover`). HttpOnly cookies are invisible and never listed. */
+  withdrawal?: WithdrawalReport;
+  /** Set by the on-load sweep of a stored choice's denied categories (same shape; never overwrites `withdrawal`). */
+  withdrawalSweep?: WithdrawalReport;
 }
 
 export const diagnostics: Diagnostics = {};

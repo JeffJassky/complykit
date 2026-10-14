@@ -366,6 +366,12 @@ export function summarizeBehavior(timelines: Timeline[], kb: KnowledgeBase = DEF
       const jar = tl.snapshot.cookies.filter((c) => c.name === name);
       return jar.length > 0 && jar.every((c) => registrableDomain(c.domain.replace(/^\./, '')) !== siteDomain);
     };
+    // A cookie only a server can remove: every jar entry on the site's own domain is HttpOnly
+    // (set by a Set-Cookie header; no script on the page, the consent tool's included, can delete it).
+    const serverOnly = (name: string): boolean => {
+      const own = tl.snapshot.cookies.filter((c) => c.name === name && registrableDomain(c.domain.replace(/^\./, '')) === siteDomain);
+      return own.length > 0 && own.every((c) => c.httpOnly);
+    };
     const count = (p: { requests: PartyRequest[] }, keep: (r: PartyRequest) => boolean): Record<string, number> => {
       const key = keyFor(p);
       const rs = p.requests;
@@ -396,6 +402,7 @@ export function summarizeBehavior(timelines: Timeline[], kb: KnowledgeBase = DEF
           writePhases: writePhasesOf(p, s),
           presentAtEnd: s.kind === 'cookie' ? tl.snapshot.cookies.some((c) => c.name === s.name) : tl.snapshot.storage.some((v) => v.key === s.name && v.area === s.kind),
           ...(s.kind === 'cookie' && onlyThirdParty(s.name) ? { thirdParty: true } : {}),
+          ...(s.kind === 'cookie' && tl.snapshot.cookies.some((c) => c.name === s.name) && serverOnly(s.name) ? { httpOnly: true } : {}),
           attribution: s.setBy === 'known-name' ? ('known-name' as const) : ('observed' as const),
         })),
       })),

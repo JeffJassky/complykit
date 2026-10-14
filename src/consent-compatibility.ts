@@ -39,7 +39,7 @@ export function matrixBehaviorCells(evaluation: TrackingEvaluation): BehaviorCel
     row.cells.forEach((c, i) => {
       const col = matrix.columns[i];
       const ref = c.evidencePointers.find((p) => p.startsWith('/behaviorObservations/'));
-      out.push({ partyId: row.partyId, location: col.location, scenario: col.scenario, status: STATUS[c.status] ?? 'not-established', reason: c.reason, ...(ref ? { ref } : {}) });
+      out.push({ partyId: row.partyId, location: col.location, scenario: col.scenario, status: STATUS[c.status] ?? 'not-established', reason: c.reason, ...(ref ? { ref } : {}), ...(c.status === 'mismatch' && c.serverCookies?.length ? { serverCookies: [...c.serverCookies], ...(c.cookieOnly ? { cookieOnly: true } : {}) } : {}) });
     });
   }
   return out;

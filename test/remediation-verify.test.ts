@@ -3,9 +3,9 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { generateConsentConfig } from '../src/consent-generator.js';
 import { renderHeadSnippet } from '../src/remediation.js';
-import { verifyInstall, verifyRewriteTag, verifyRemoveLeak, verifyGtmTagConsent, verifyConsentDefault, verifyRemoveExistingTool, judgeSpotCheck, runVerify, elementMatches } from '../src/rules/remediation/verify.js';
+import { verifyInstall, verifyRewriteTag, verifyRemoveLeak, verifyGtmTagConsent, verifyConsentDefault, verifyRemoveExistingTool, judgeSpotCheck, judgeServerCookie, runVerify, elementMatches } from '../src/rules/remediation/verify.js';
 import { rewriteContainerConsent } from '../src/rules/tracking/gtm.js';
-import { parseMarkup, withConsentConfigHash, type ElementSignature, type SpotCheckObservation } from '../src/record/index.js';
+import { parseMarkup, withConsentConfigHash, type ElementSignature, type SpotCheckObservation, type ServerCookieObservation } from '../src/record/index.js';
 import { compatibilityEvaluation, PAGE } from './fixtures/compatibility-report.js';
 
 // Pure verify checkers (plans/remediation-flow.md §5). Generic HTML built
@@ -232,6 +232,42 @@ describe('judgeSpotCheck', () => {
     expect(judgeSpotCheck(spec, { page: PAGE, phases: [phase('reject', [], false)] }).result).toBe('cannot-verify');
     expect(judgeSpotCheck(spec, { page: PAGE, phases: [phase('reject', [])] }).message).toMatch(/accept visit was not made/);
     expect(judgeSpotCheck(spec, { page: PAGE, phases: [phase('reject', []), phase('accept', ['https://www.example-shop.test/'])] }).message).toMatch(/not on this page any more/);
+  });
+});
+
+describe('judgeServerCookie', () => {
+  const spec = { page: PAGE, names: ['_fbp', '_fbc'] };
+  const jar = (names: string[], domain = '.example-shop.test') => names.map((name) => ({ name, domain, httpOnly: true }));
+  const obs = (o: Partial<ServerCookieObservation>): ServerCookieObservation => ({ page: PAGE, toolPresent: true, choiceMade: true, before: [], after: [], ...o });
+
+  it('passes only when none of the names is in the jar on the site’s domain after the refusal and reload', () => {
+    const out = judgeServerCookie(spec, obs({ before: jar(['_fbp']), after: jar(['other']) }));
+    expect(out).toMatchObject({ result: 'pass', message: expect.stringContaining('gone after it') });
+  });
+
+  it('fails when any named cookie is still there (HttpOnly or not, parent domain included)', () => {
+    const out = judgeServerCookie(spec, obs({ before: jar(['_fbp', '_fbc']), after: jar(['_fbc']) }));
+    expect(out).toMatchObject({ result: 'fail', evidence: ['_fbc on .example-shop.test (HttpOnly)'] });
+    expect(out.message).not.toMatch(/nothing reaches/);
+  });
+
+  it('a same-named cookie on another site’s domain does not count', () => {
+    expect(judgeServerCookie(spec, obs({ after: jar(['_fbp'], '.facebook.com') })).result).toBe('pass');
+  });
+
+  it('passing without the cookie ever being set says the visit did not show it expired', () => {
+    expect(judgeServerCookie(spec, obs({})).message).toMatch(/did not show it being expired/);
+  });
+
+  it('cannot verify when the tool is absent or the refusal could not be made — never a pass', () => {
+    expect(judgeServerCookie(spec, obs({ toolPresent: false, choiceMade: false })).result).toBe('cannot-verify');
+    expect(judgeServerCookie(spec, obs({ choiceMade: false, after: jar([]) })).result).toBe('cannot-verify');
+  });
+
+  it('runVerify dispatches it, and wants an observation', () => {
+    const v = { check: 'server-cookie' as const, method: 'browser' as const, page: PAGE, partyId: 'meta.pixel', names: ['_fbp'] };
+    expect(runVerify(v, {}).result).toBe('cannot-verify');
+    expect(runVerify(v, { cookieObservation: obs({ after: jar(['_fbp']) }) }).result).toBe('fail');
   });
 });
 

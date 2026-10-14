@@ -191,6 +191,10 @@ export interface ChangeItem {
   manager?: string;
   host?: string;
   target?: string;
+  /** clear-server-cookie: the HttpOnly cookie names. */
+  names?: string[];
+  /** clear-server-cookie: the cookies are the whole problem (nothing was sent, no other storage), so this task also covers the generic behavior-mismatch one. */
+  cookieOnly?: boolean;
   /** rewrite-tag: the consent-tool category id for data-category. */
   category?: string;
   categoryNote?: string;
@@ -207,7 +211,7 @@ export interface ChangeItem {
 }
 
 export interface ChangeGroup {
-  id: 'mismatch' | 'rewrite' | 'gtm' | 'consent-default' | 'tag-manager' | 'platform' | 'consent-api' | 'leaks' | 'dns' | 'exposures' | 'needs-a-look';
+  id: 'mismatch' | 'rewrite' | 'gtm' | 'consent-default' | 'tag-manager' | 'platform' | 'consent-api' | 'leaks' | 'dns' | 'server-cookies' | 'exposures' | 'needs-a-look';
   title: string;
   intro: string;
   items: ChangeItem[];
@@ -361,10 +365,11 @@ const KIND_SHORT: Record<CompatibilityChangeKind, (n: number) => string> = {
   'use-platform-api': () => 'use the platform’s consent setting',
   'call-consent-api': () => 'call its consent API alongside the block',
   'change-dns': () => 'repoint the DNS alias, or accept the exposure in writing',
+  'clear-server-cookie': () => 'have the server stop setting and expire its cookies after a refusal',
   'accepted-exposure': () => 'accept the exposure in writing, or remove the integration',
   'needs-a-look': () => 'needs a look: the loader was not found',
 };
-const KIND_ORDER: CompatibilityChangeKind[] = ['behavior-mismatch', 'remove-leak', 'rewrite-tag', 'gate-gtm-tag', 'set-consent-default', 'configure-tag-manager', 'use-platform-api', 'call-consent-api', 'change-dns', 'accepted-exposure', 'needs-a-look'];
+const KIND_ORDER: CompatibilityChangeKind[] = ['behavior-mismatch', 'remove-leak', 'rewrite-tag', 'gate-gtm-tag', 'set-consent-default', 'configure-tag-manager', 'use-platform-api', 'call-consent-api', 'change-dns', 'clear-server-cookie', 'accepted-exposure', 'needs-a-look'];
 
 function summarizeChanges(changes: CompatibilityChange[], provenHeld: boolean): string {
   if (provenHeld && !changes.some((c) => c.kind !== 'call-consent-api')) return 'Nothing in the container: keep its consent setting and the denied default (both observed)';
@@ -725,6 +730,13 @@ export function buildCompatibilityReport(section: CompatibilitySection, ctx: Com
         case 'change-dns':
           add('dns', c.host ?? row.partyId, row, { kind: c.kind, host: c.host, partyId: row.partyId }, () => ({ ...fields, ...(c.host ? { host: c.host } : {}), ...(c.target ? { target: c.target } : {}) }));
           break;
+        case 'clear-server-cookie':
+          add('server-cookies', row.partyId, row, { kind: c.kind, partyId: row.partyId }, () => ({ ...fields, names: [...(c.names ?? [])], ...(c.cookieOnly ? { cookieOnly: true } : {}) }), (it) => {
+            // Same tool seen twice never happens (one change per party); another tool's cookies join the item.
+            it.names = [...new Set([...(it.names ?? []), ...(c.names ?? [])])];
+            if (!c.cookieOnly) delete it.cookieOnly;
+          });
+          break;
         case 'accepted-exposure':
           add('exposures', row.partyId, row, { kind: c.kind, partyId: row.partyId }, () => ({ ...fields }));
           break;
@@ -754,10 +766,11 @@ export function buildCompatibilityReport(section: CompatibilitySection, ctx: Com
     'consent-api': { title: 'Vendor consent calls (alongside the block, never instead)', intro: 'These vendors also take a consent signal. The consent tool’s adapters make these calls; a hand-made setup must make them too.', guide: { label: 'Vendor consent APIs', href: VENDOR_GUIDE } },
     leaks: { title: 'Leaks to remove', intro: 'The browser fetches these elements itself, before any script runs (and <noscript> content fires exactly for visitors without JavaScript, when no consent tool can run). No consent tool can hold them back: remove them from the HTML.' },
     dns: { title: 'DNS aliases', intro: 'A first-party subdomain points at the vendor, so its cookies are first-party and no consent tool can remove them.' },
+    'server-cookies': { title: 'Cookies only your server can clear', intro: 'These cookies were still in the browser after the visitor refused or withdrew consent. A server set them (HttpOnly), so no script on the page — the consent tool included — can remove them. Whoever sets them must stop doing so until the visitor consents, and expire them. Then rescan.' },
     exposures: { title: 'Accepted exposures', intro: 'Nothing on the page controls these. Remove the integration, or record in writing that the exposure is accepted — a decision for the owner, not a developer task.' },
     'needs-a-look': { title: 'Needs a look', intro: 'The scan could not establish how these tools get onto the page, so it cannot say what to change. A developer has to find the code that loads them.' },
   };
-  const ORDER: ChangeGroup['id'][] = ['mismatch', 'rewrite', 'gtm', 'consent-default', 'tag-manager', 'platform', 'consent-api', 'leaks', 'dns', 'exposures', 'needs-a-look'];
+  const ORDER: ChangeGroup['id'][] = ['mismatch', 'rewrite', 'gtm', 'consent-default', 'tag-manager', 'platform', 'consent-api', 'leaks', 'dns', 'server-cookies', 'exposures', 'needs-a-look'];
   const outGroups: ChangeGroup[] = ORDER.filter((id) => groups.get(id)?.size).map((id) => ({ id, ...META[id], items: [...groups.get(id)!.values()] }));
 
   return {

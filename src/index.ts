@@ -302,6 +302,7 @@ export type {
   VerifyResult,
   ElementSignature,
   SpotCheckObservation,
+  ServerCookieObservation,
   ChangeIdInput,
 } from './record/index.js';
 export { buildRemediationTasks, installTask, removeExistingToolTasks, remediationTotals, renderHeadSnippet, scriptJson } from './remediation.js';
@@ -309,7 +310,7 @@ export type { RemediationSource, RemediationSourceNote, BuildRemediationTasksOpt
 // R3: the report's "Your to-do list" checklist.
 export { renderRemediationHtml, remediationFromWorkspace, parseRemediationTasks } from './report/consent-remediation.js';
 export type { RemediationSection, RemediationWorkspaceLike } from './report/consent-remediation.js';
-export { verifyInstall, verifyRewriteTag, verifyRemoveLeak, verifyGtmTagConsent, verifyConsentDefault, verifyRemoveExistingTool, judgeSpotCheck, runVerify, elementMatches } from './rules/remediation/verify.js';
+export { verifyInstall, verifyRewriteTag, verifyRemoveLeak, verifyGtmTagConsent, verifyConsentDefault, verifyRemoveExistingTool, judgeSpotCheck, judgeServerCookie, runVerify, elementMatches } from './rules/remediation/verify.js';
 export type { VerifyOptions, StaticVerifyInput, InstallExpectation, SpotCheckSpec, RemoveExistingToolExpectation } from './rules/remediation/verify.js';
 export type {
   ReportFormat,
