@@ -6,12 +6,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { siteDomain } from './domains.js';
+import type { CloudStorageConfig } from './storage/types.js';
 
 export interface ServiceConfig {
   port: number;
   /** HTTP Basic password (any username). Undefined = open (local dev only). */
   password?: string;
   dataDir: string;
+  /** DATA_BACKEND: 'fs' (default; files and records under dataDir) or 'cloud' (Spaces + MongoDB, see cloud). */
+  dataBackend: 'fs' | 'cloud';
+  /** MONGO_URL, MONGO_DB, SPACES_*: set when dataBackend is 'cloud'. */
+  cloud?: CloudStorageConfig;
   /** complykit's knowledge-base store (queue, proposals, confirmed entries).
    *  Consent checks read and feed it; the KB routes manage it. */
   kbDir: string;
@@ -101,6 +106,30 @@ function domainList(raw: string | undefined): string[] | undefined {
   return list.length ? [...new Set(list as string[])] : undefined;
 }
 
+function dataBackend(env: NodeJS.ProcessEnv): 'fs' | 'cloud' {
+  const raw = env.DATA_BACKEND;
+  if (raw === undefined || raw === '' || raw === 'fs') return 'fs';
+  if (raw === 'cloud') return 'cloud';
+  throw new Error(`DATA_BACKEND must be 'fs' or 'cloud' (got ${JSON.stringify(raw)})`);
+}
+
+function cloudConfig(env: NodeJS.ProcessEnv): CloudStorageConfig {
+  const required = ['MONGO_URL', 'SPACES_ENDPOINT', 'SPACES_BUCKET', 'SPACES_KEY', 'SPACES_SECRET'];
+  const missing = required.filter((k) => !env[k]);
+  if (missing.length) throw new Error(`DATA_BACKEND=cloud needs ${missing.join(', ')}`);
+  return {
+    mongoUrl: env.MONGO_URL!,
+    mongoDb: env.MONGO_DB || 'complykit',
+    spaces: {
+      endpoint: env.SPACES_ENDPOINT!,
+      region: env.SPACES_REGION || 'us-east-1',
+      bucket: env.SPACES_BUCKET!,
+      accessKeyId: env.SPACES_KEY!,
+      secretAccessKey: env.SPACES_SECRET!,
+    },
+  };
+}
+
 export function readVersion(): string {
   // complykit's version is the interesting one; the service is private 0.0.0.
   for (const p of [path.join(SERVICE_DIR, '..', 'package.json'), path.join(SERVICE_DIR, 'package.json')]) {
@@ -122,10 +151,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     throw new Error('SERVICE_PASSWORD is required when NODE_ENV=production (refusing to run an open scanner on the internet); set ALLOW_OPEN=1 to run without one on purpose');
   }
   const dataDir = path.resolve(env.DATA_DIR || (fs.existsSync('/data') ? '/data' : path.join(SERVICE_DIR, '.data')));
+  const backend = dataBackend(env);
   return {
     port: int(env, 'PORT', 8080, 1),
     password,
     dataDir,
+    dataBackend: backend,
+    ...(backend === 'cloud' ? { cloud: cloudConfig(env) } : {}),
     kbDir: path.resolve(env.COMPLYKIT_KB_DIR || path.join(dataDir, 'kb')),
     researchAvailable: Boolean(env.ANTHROPIC_API_KEY),
     concurrency: int(env, 'CONCURRENCY', 2, 1),

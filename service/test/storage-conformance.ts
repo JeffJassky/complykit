@@ -146,3 +146,136 @@ const rec = (id: string, receivedAt: string): ConsentRecord => ({ id, at: receiv
 export interface RecordHarness {
   storage: Storage;
   cleanup: () => Promise<void>;
+  /** Make the stored workspace for `domain` unreadable (a broken file / document). */
+  corruptWorkspace: (domain: string) => Promise<void>;
+}
+
+export function recordSuite(name: string, make: (opts: { consentMaxBytes?: number }) => Promise<RecordHarness>) {
+  describe(`${name}: records`, () => {
+    const withStorage = async (fn: (s: Storage, h: RecordHarness) => Promise<void>, opts: { consentMaxBytes?: number } = {}) => {
+      const h = await make(opts);
+      try {
+        await fn(h.storage, h);
+      } finally {
+        await h.storage.close();
+        await h.cleanup();
+      }
+    };
+
+    it('jobs: put / loadAll round-trip deep-equal; put replaces; remove; absent is fine', () =>
+      withStorage(async ({ jobs }) => {
+        expect(await jobs.loadAll()).toEqual([]);
+        const a = job('aaaaaa1');
+        const b = job('bbbbbb2', { status: 'running', log: [] });
+        await jobs.put(a);
+        await jobs.put(b);
+        const sorted = (l: JobDetail[]) => [...l].sort((x, y) => x.id.localeCompare(y.id));
+        expect(sorted(await jobs.loadAll())).toEqual([a, b]);
+        const a2 = job('aaaaaa1', { status: 'failed', log: ['a', 'b', 'c'] });
+        await jobs.put(a2);
+        expect(sorted(await jobs.loadAll())).toEqual([a2, b]);
+        await jobs.remove('aaaaaa1');
+        await jobs.remove('never000');
+        expect(await jobs.loadAll()).toEqual([b]);
+      }));
+
+    it('workspaces: read none; first write needs rev undefined; stale revs lose', () =>
+      withStorage(async ({ workspaces }) => {
+        expect(await workspaces.read('shop.example')).toBeUndefined();
+        expect(await workspaces.write('shop.example', ws('shop.example'), 'bogus')).toBeNull();
+        const r1 = await workspaces.write('shop.example', ws('shop.example'), undefined);
+        expect(typeof r1).toBe('string');
+        expect(await workspaces.write('shop.example', ws('shop.example'), undefined)).toBeNull();
+        const got = await workspaces.read('shop.example');
+        expect(got).toEqual({ ws: ws('shop.example'), rev: r1 });
+        const next = ws('shop.example', { k: { value: 1, at: '2026-10-14T10:00:00.000Z' } });
+        const r2 = await workspaces.write('shop.example', next, r1!);
+        expect(typeof r2).toBe('string');
+        expect(r2).not.toBe(r1);
+        expect(await workspaces.write('shop.example', ws('shop.example'), r1!)).toBeNull();
+        expect(await workspaces.read('shop.example')).toEqual({ ws: next, rev: r2 });
+        await workspaces.write('other.example', ws('other.example'), undefined);
+        expect((await workspaces.domains()).sort()).toEqual(['other.example', 'shop.example']);
+      }));
+
+    it('workspaces: concurrent writers from the same rev — exactly one wins', () =>
+      withStorage(async ({ workspaces }) => {
+        const r0 = await workspaces.write('race.example', ws('race.example'), undefined);
+        const results = await Promise.all(
+          Array.from({ length: 8 }, (_, i) => workspaces.write('race.example', ws('race.example', { [`k${i}`]: { value: i, at: '2026-10-14T10:00:00.000Z' } }), r0!)),
+        );
+        expect(results.filter((r) => r !== null)).toHaveLength(1);
+        const first = await Promise.all(Array.from({ length: 6 }, () => workspaces.write('fresh.example', ws('fresh.example'), undefined)));
+        expect(first.filter((r) => r !== null)).toHaveLength(1);
+      }));
+
+    it('workspaces: an unreadable one is a 500, never empty; bad domains are 400', () =>
+      withStorage(async ({ workspaces }, h) => {
+        await h.corruptWorkspace('broken.example');
+        await expect(workspaces.read('broken.example')).rejects.toMatchObject({ status: 500 });
+        await expect(workspaces.read('../etc')).rejects.toMatchObject({ status: 400 });
+        await expect(workspaces.write('not a domain', ws('x.example'), undefined)).rejects.toMatchObject({ status: 400 });
+      }));
+
+    it('consent records: append order, dedupe by id, exists', () =>
+      withStorage(async ({ consentRecords }) => {
+        const d = 'shop.example';
+        expect(await consentRecords.exists(d)).toBe(false);
+        expect(await all(consentRecords.records(d))).toEqual([]);
+        const t = '2026-10-14T10:00:00.000Z';
+        await consentRecords.append(d, rec('id-aaaaaaaaaaaaaaaa', t));
+        await consentRecords.append(d, rec('id-bbbbbbbbbbbbbbbb', t));
+        await consentRecords.append(d, { ...rec('id-aaaaaaaaaaaaaaaa', t), regime: 'dupe' });
+        await consentRecords.append(d, rec('id-cccccccccccccccc', t));
+        expect(await consentRecords.exists(d)).toBe(true);
+        expect(await consentRecords.exists('other.example')).toBe(false);
+        expect((await all(consentRecords.records(d))).map((r) => [r.id, r.regime])).toEqual([
+          ['id-aaaaaaaaaaaaaaaa', 'opt-in'],
+          ['id-bbbbbbbbbbbbbbbb', 'opt-in'],
+          ['id-cccccccccccccccc', 'opt-in'],
+        ]);
+        await expect(consentRecords.append('not a domain', rec('id-dddddddddddddddd', t))).rejects.toMatchObject({ status: 400 });
+      }));
+
+    it('consent records: concurrent appends all land', () =>
+      withStorage(async ({ consentRecords }) => {
+        await Promise.all(Array.from({ length: 20 }, (_, i) => consentRecords.append('busy.example', rec(`id-${String(i).padStart(16, '0')}`, '2026-10-14T10:00:00.000Z'))));
+        expect(await all(consentRecords.records('busy.example'))).toHaveLength(20);
+      }));
+
+    it('consent records: prune drops records older than the cutoff in every site', () =>
+      withStorage(async ({ consentRecords }) => {
+        await consentRecords.append('a.example', rec('id-old0000000000001', '2020-01-01T00:00:00.000Z'));
+        await consentRecords.append('a.example', rec('id-new0000000000001', '2026-10-01T00:00:00.000Z'));
+        await consentRecords.append('b.example', rec('id-old0000000000002', '2021-01-01T00:00:00.000Z'));
+        await consentRecords.append('b.example', { ...rec('id-odd0000000000001', '2021-01-01T00:00:00.000Z'), receivedAt: 'not a date' });
+        expect(await consentRecords.prune(Date.parse('2025-01-01T00:00:00.000Z'))).toBe(2);
+        expect((await all(consentRecords.records('a.example'))).map((r) => r.id)).toEqual(['id-new0000000000001']);
+        expect((await all(consentRecords.records('b.example'))).map((r) => r.id)).toEqual(['id-odd0000000000001']);
+        expect(await consentRecords.prune(Date.parse('2025-01-01T00:00:00.000Z'))).toBe(0);
+      }));
+
+    it('consent records: a site at the size limit gets a 507; pruning frees room', () =>
+      withStorage(
+        async ({ consentRecords }) => {
+          const d = 'full.example';
+          const old = (id: string) => rec(id, '2020-01-01T00:00:00.000Z');
+          let n = 0;
+          for (;;) {
+            try {
+              await consentRecords.append(d, old(`id-${String(n).padStart(16, '0')}`));
+              n++;
+            } catch (err) {
+              expect(err).toMatchObject({ status: 507 });
+              break;
+            }
+            if (n > 100) throw new Error('the limit never kicked in');
+          }
+          expect(n).toBeGreaterThan(0);
+          expect(await consentRecords.prune(Date.parse('2025-01-01T00:00:00.000Z'))).toBe(n);
+          await consentRecords.append(d, old('id-after0000000000'));
+        },
+        { consentMaxBytes: 1500 },
+      ));
+  });
+}
