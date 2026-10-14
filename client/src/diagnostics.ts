@@ -24,6 +24,8 @@ export interface Diagnostics {
   ui?: UiDiagnostics;
   /** Set after a withdrawal's cleanup: what matched and went (`cleared`) or survived (`leftover`). HttpOnly cookies are invisible and never listed. */
   withdrawal?: WithdrawalReport;
+  /** Set by the on-load sweep of a stored choice's denied categories (same shape; never overwrites `withdrawal`). */
+  withdrawalSweep?: WithdrawalReport;
 }
 
 export const diagnostics: Diagnostics = {};

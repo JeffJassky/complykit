@@ -229,6 +229,59 @@ describe('cleanup reach and report (diagnostics.withdrawal)', () => {
   });
 });
 
+describe('sweep on load of a stored choice (diagnostics.withdrawalSweep)', () => {
+  const sweep = (p: Page) => p.waitForFunction(() => (window as any).ComplyKit.diagnostics.withdrawalSweep).then((h) => h.jsonValue()) as Promise<any>;
+  const hasCookie = async (p: Page, name: string) => (await p.context().cookies()).some((c) => c.name === name);
+
+  it('a deeper-path cookie left behind by the withdrawal is deleted when a page under that path loads', async () => {
+    const page = await load('data-complykit-reload="none"');
+    await grant(page);
+    await page.evaluate(() => (document.cookie = '_fbc=deep; Path=/shop/withdraw-page/sub/'));
+    await page.evaluate(() => (window as any).ComplyKit.withdraw());
+    await page.waitForFunction(() => (window as any).ComplyKit.diagnostics.withdrawal);
+    expect(await hasCookie(page, '_fbc')).toBe(true); // out of reach from the withdrawal page
+    await page.route('**/shop/withdraw-page/sub/x', (route) => route.fulfill({ contentType: 'text/html; charset=utf-8', body: PAGE('data-complykit-reload="none"') }));
+    await page.goto(`${server.origin}/shop/withdraw-page/sub/x`);
+    const w = await sweep(page);
+    expect(w.cleared).toEqual(['cookie:_fbc']);
+    expect(w.leftover).toEqual([]);
+    expect(await hasCookie(page, '_fbc')).toBe(false);
+    expect(await hasCookie(page, 'complykit_consent')).toBe(true);
+    expect(await hasCookie(page, 'site_pref')).toBe(true);
+    await page.context().close();
+  });
+
+  it('a vendor cookie set by an unrelated inline script on a later load is gone and reported', async () => {
+    const page = await load('data-complykit-reload="none"');
+    await grant(page);
+    await page.evaluate(() => (window as any).ComplyKit.withdraw());
+    await page.waitForFunction(() => (window as any).ComplyKit.diagnostics.withdrawal);
+    await page.context().addInitScript(() => document.addEventListener('DOMContentLoaded', () => (document.cookie = '_fbp=again; Path=/')));
+    await page.reload();
+    const w = await sweep(page);
+    expect(w.cleared).toEqual(['cookie:_fbp']);
+    expect(await hasCookie(page, '_fbp')).toBe(false);
+    await page.context().close();
+  });
+
+  it('no sweep for a visitor who has not chosen, nor after accept-all', async () => {
+    const page = await load('data-complykit-reload="none"');
+    await page.context().addInitScript(() => document.addEventListener('DOMContentLoaded', () => (document.cookie = '_fbp=first; Path=/')));
+    await page.reload();
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(() => (window as any).ComplyKit.diagnostics.withdrawalSweep)).toBeUndefined();
+    expect(await hasCookie(page, '_fbp')).toBe(true);
+    await grant(page);
+    await page.reload();
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(() => (window as any).ComplyKit.diagnostics.withdrawalSweep)).toBeUndefined();
+    expect(await hasCookie(page, '_fbp')).toBe(true);
+    await page.context().close();
+  });
+});
+
 describe('ComplyKit.init() twice (D4 review)', () => {
   it('a second init is refused and returns the running store, so the gate and adapters stay subscribed', async () => {
     const page = await load();

@@ -61,7 +61,7 @@
 //   Domain / Path none of the variants cover (when cookieStore is absent); data a
 //   vendor keeps elsewhere (IndexedDB, its servers).
 
-import type { ConsentToolConfig } from './config.js';
+import { isNecessaryCategory, type ConsentToolConfig } from './config.js';
 import { diagnostics } from './diagnostics.js';
 import { COOKIE_NAME, STORAGE_KEY, type ConsentStore } from './store.js';
 
@@ -207,6 +207,14 @@ export function installWithdrawal(config: ConsentToolConfig, store: ConsentStore
   // Cleanup in flight (bounded, never rejects): a reload waits for it so it cannot race the cookieStore deletions.
   let cleanup: Promise<unknown> = Promise.resolve();
   const reload = () => void cleanup.then(() => setTimeout(() => location.reload()));
+  const run = (cats: string[], key: 'withdrawal' | 'withdrawalSweep') =>
+    clearStores(config, cats).then(
+      (r) => {
+        diagnostics[key] = r;
+        if (r.leftover.length && typeof console !== 'undefined') console.warn(`[complykit] ${key === 'withdrawal' ? 'withdrawal' : 'sweep'} left ${r.leftover.join(', ')}`);
+      },
+      () => {},
+    );
   let last = store.state();
   let revoked: string[] = [];
   store.subscribe((s) => {
@@ -214,16 +222,20 @@ export function installWithdrawal(config: ConsentToolConfig, store: ConsentStore
     last = s;
     if (!revoked.length) return;
     adapters?.()?.sync();
-    cleanup = clearStores(config, revoked).then(
-      (r) => {
-        diagnostics.withdrawal = r;
-        if (r.leftover.length && typeof console !== 'undefined') console.warn(`[complykit] withdrawal left ${r.leftover.join(', ')}`);
-      },
-      () => {},
-    );
+    cleanup = run(revoked, 'withdrawal');
     // Only a visitor's own choice reloads (not a regime / GPC update before one).
     if (policy === 'revoke' && s.status === 'chosen') reload();
   });
+  // Sweep on load: a stored visitor choice keeps its denied categories clean on every page, catching cookies
+  // a past withdrawal could not reach or that a script re-set. Only a stored choice ('chosen'; it is final at
+  // startup — the regime only moves an unset state) and only non-necessary categories.
+  const denied = Object.keys(last.categories).filter((id) => !last.categories[id] && !isNecessaryCategory(id));
+  // Once, when the page has loaded (inline scripts have run), so a cookie they set is caught too.
+  if (last.status === 'chosen' && denied.length) {
+    const sweep = () => void run(denied, 'withdrawalSweep');
+    if (document.readyState === 'complete') sweep();
+    else addEventListener('load', sweep, { once: true });
+  }
   store.on('withdraw', () => {
     if (policy === 'withdraw' && revoked.length) reload();
   });
