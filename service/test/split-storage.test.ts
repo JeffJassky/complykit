@@ -104,6 +104,8 @@ describe('split storage: the host disk is scratch', () => {
     expect(html.headers['content-type']).toMatch(/text\/html/);
     expect(html.text).toContain('Consent report for');
     expect(html.text).toContain('id="ck-service"'); // the workspace config is still injected
+    expect(html.headers['cache-control']).toBe('no-store'); // the injected config changes without the file changing
+    expect(html.headers.etag).toBeUndefined();
     await request(s.app).get(job.result!.consent!.reportUrl.replace('consent-report.html', 'evidence/note.txt')).expect(200);
     await request(s.app).get(`/reports/${id}/nope.html`).expect(404);
 

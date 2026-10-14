@@ -142,9 +142,9 @@ export function serveReports(store: JobStore): RequestHandler {
         return;
       }
       if (config) {
-        // The body may or may not change (only a workbench gets the block), so its length is not known up front;
-        // validators are the stored object's, marked as ours so the injected form and the raw one never share one.
-        sendBytes(req, res, { ...info, etag: `${info.etag}-ck1` }, rel, pipeline(stream, serviceConfigInjector(config), () => undefined), false); // pipeline: destroying the output also closes the source
+        // The injected block carries the live workspace config, which changes without the stored file changing:
+        // never cached, never a 304 (as before this branch). Its length isn't known up front.
+        sendBytes(req, res, info, rel, pipeline(stream, serviceConfigInjector(config), () => undefined), false, true); // pipeline: destroying the output also closes the source
         return;
       }
       sendBytes(req, res, info, rel, stream);
@@ -154,12 +154,16 @@ export function serveReports(store: JobStore): RequestHandler {
   };
 }
 
-function sendBytes(req: Request, res: Response, info: BlobInfo, rel: string, body: Buffer | Readable, knownLength = true): void {
+function sendBytes(req: Request, res: Response, info: BlobInfo, rel: string, body: Buffer | Readable, knownLength = true, noStore = false): void {
   res.type(path.extname(rel) || 'bin');
-  res.set('ETag', `"${info.etag}"`);
-  res.set('Last-Modified', new Date(info.modified).toUTCString());
-  res.set('Cache-Control', 'public, max-age=0');
-  if (req.fresh) {
+  if (noStore) {
+    res.set('Cache-Control', 'no-store');
+  } else {
+    res.set('ETag', `"${info.etag}"`);
+    res.set('Last-Modified', new Date(info.modified).toUTCString());
+    res.set('Cache-Control', 'public, max-age=0');
+  }
+  if (!noStore && req.fresh) {
     if (!Buffer.isBuffer(body)) body.destroy();
     res.status(304).end();
     return;
