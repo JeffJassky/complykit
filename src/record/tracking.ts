@@ -850,6 +850,7 @@ export const CompatibilityChange = z.object({
   host: z.string().optional(),
   target: z.string().optional(),
   names: z.array(z.string()).optional(), // clear-server-cookie: the HttpOnly cookie names
+  cookieOnly: z.boolean().optional(), // clear-server-cookie: the cookies are the whole problem (no data request, no other storage)
   // Why this change is needed, beyond what `note` says — shown with the item
   // in the change list (a rewrite item otherwise shows only its snippets).
   why: z.string().optional(),

@@ -69,6 +69,8 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
     const isActiveStore=(s:NonNullable<typeof store>)=>(s.presentAtEnd&&!s.thirdParty)||s.writePhases.some(phase=>phases.includes(phase));
     // HttpOnly first-party cookies still there after the visitor said no: set by a server, so only the server can expire them.
     const serverCookies=row.kind==='tool'&&facts&&(SAID_NO_SCENARIOS as readonly string[]).includes(col.scenario)?[...new Set(facts.stores.filter(s=>isActiveStore(s)&&s.kind==='cookie'&&s.presentAtEnd&&!s.thirdParty&&s.httpOnly).map(s=>s.name))]:[];
+    // Cookie-only: nothing was sent and the only active items are those server cookies (so the consent tool's own fixes have nothing left to do here).
+    const cookieOnly=!!facts&&requests===0&&serverCookies.length>0&&facts.stores.filter(isActiveStore).every(s=>s.kind==='cookie'&&serverCookies.includes(s.name));
     const hasActivity=row.kind==='tool'?!!facts&&(requests>0||facts.stores.some(isActiveStore)):!!store&&isActiveStore(store);
     const actual=!observed?'Detailed observations unavailable':row.kind==='tool'?`${requests} data request(s) observed during this part of the visit; ${facts?.stores.filter(isActiveStore).length??0} cookie or storage item(s) active`:
       !store?'No writes or saved value recorded at the end of this visit':`${store.writePhases.length?'Written '+store.writePhases.map(phase=>PHASE_LABEL[phase]??phase).join(', ')+'. ':''}${store.presentAtEnd?(store.thirdParty?'Still in the browser at the end of the visit, on the vendor’s own domain — only the vendor can remove it.':store.httpOnly?'Still in the browser at the end of the visit. It is set by a server (HttpOnly), so no script on the page can remove it — only the server can.':'Still saved in the browser at the end of the visit.'):'Not saved in the browser at the end of the visit.'}${store.attribution==='known-name'?' Tool attributed by a known name pattern.':''}`;
@@ -83,7 +85,9 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
     const captureGap=m.notTested.filter(g=>(!g.location||g.location===col.location)&&(!['flow','scenario'].includes(g.scope)||!ScenarioIds.options.includes(g.id as ScenarioId)||g.id===col.scenario)).some(g=>['frame','page','flow','scenario'].includes(g.scope)&&!['server-to-server','vendor-processing','contracts','consent-records','unvisited'].includes(g.id)&&!NOT_A_CAPTURE_GAP.test(g.reason));
     const rg = regimes.get(col.location) ?? { regime: 'unknown' as const, label: 'this location' };
     const comparisonFacts: ComparisonFacts = {scenario:col.scenario,regime:rg.regime,regimeLabel:rg.label,wiretap:isWiretapJurisdiction(m.locations.find(l=>l.id===col.location)?.jurisdictions??[]),unavailable,hasActivity,limitedOnly:row.kind==='tool'&&requests>0&&limited===requests&&!facts?.stores.some(isActiveStore),captureGap};
-    return {columnId:col.id,...compareCookieBehavior(comparisonFacts,{categories:row.categories}),...(col.unavailable?{skip:col.unavailable.kind}:{}),observed:actual,...(serverCookies.length?{serverCookies}:{}),comparisonFacts,evidencePointers:[`/inventory/${i}`, ...(observed?['/behaviorObservations/'+m.behaviorObservations!.indexOf(observed)]:[])]} satisfies BehaviorMatrixCell;
+    const verdict=compareCookieBehavior(comparisonFacts,{categories:row.categories});
+    const isMismatch=verdict.status==='mismatch';
+    return {columnId:col.id,...verdict,...(col.unavailable?{skip:col.unavailable.kind}:{}),observed:actual,...(isMismatch&&serverCookies.length?{serverCookies,...(cookieOnly?{cookieOnly:true}:{})}:{}),comparisonFacts,evidencePointers:[`/inventory/${i}`, ...(observed?['/behaviorObservations/'+m.behaviorObservations!.indexOf(observed)]:[])]} satisfies BehaviorMatrixCell;
     };
     const built=visits.length?visits.map(build):[build(undefined)];
     const activeRuns=built.filter(c=>c.comparisonFacts?.hasActivity).length;
@@ -91,8 +95,11 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
     if(!visits.length)return cell;
     const runs={total:visits.length,active:activeRuns};
     const note=runs.total>1?` ${runLine(runs)}.`:'';
-    const serverCookies=[...new Set(built.flatMap(c=>c.serverCookies??[]))];
-    return {...cell,...(serverCookies.length?{serverCookies}:{}),runs,observed:cell.observed+note,reason:cell.reason+note,evidencePointers:[...new Set(built.flatMap(c=>c.evidencePointers))]};
+    const serverCookies=cell.status==='mismatch'?[...new Set(built.filter(c=>c.status==='mismatch').flatMap(c=>c.serverCookies??[]))]:[];
+    // Cookie-only across the visits that mismatched: a visit that also sent requests keeps the generic fix.
+    const cookieOnly=serverCookies.length>0&&built.filter(c=>c.status==='mismatch').every(c=>c.cookieOnly);
+    const {serverCookies:_sc,cookieOnly:_co,...bare}=cell;
+    return {...bare,...(serverCookies.length?{serverCookies,...(cookieOnly?{cookieOnly:true}:{})}:{}),runs,observed:cell.observed+note,reason:cell.reason+note,evidencePointers:[...new Set(built.flatMap(c=>c.evidencePointers))]};
   })})));
   rows.sort((a,b)=>Number(!a.cells.some(c=>c.status==='mismatch'))-Number(!b.cells.some(c=>c.status==='mismatch'))||Number(a.kind==='tool')-Number(b.kind==='tool'));
   return {version:1,comparison:'Each tool and cookie is compared with the standard behavior for its category under the location’s rules (EU/UK opt-in; US opt-out, and opt-out signals where state law requires). Not a legal verdict. Categories come from the tool library; cookies inherit their tool’s category unless a known cookie name says otherwise. Site-specific use may differ.',columns,rows};

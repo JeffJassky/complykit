@@ -976,7 +976,7 @@ export interface NotTestedItem {
   reason: string;
 }
 export interface BehaviorMatrixCell {
-  columnId:string;status:'match'|'mismatch'|'review'|'unknown'|'not-tested'|'allowed';/** Set when the column was skipped: nothing to test, the scan could not, or the site blocked the visitor. */skip?:'not-applicable'|'untestable'|'blocked';expected:string;observed:string;reason:string;evidencePointers:string[];runs?:{total:number;active:number};/** Tool rows, after a refusal / withdrawal / opt-out: HttpOnly first-party cookies still in the browser (set by a server, removable only by it). */serverCookies?:string[];comparisonFacts?:{scenario:string;unavailable?:{status:'unknown'|'not-tested';reason:string};hasActivity:boolean;limitedOnly:boolean;captureGap:boolean};
+  columnId:string;status:'match'|'mismatch'|'review'|'unknown'|'not-tested'|'allowed';/** Set when the column was skipped: nothing to test, the scan could not, or the site blocked the visitor. */skip?:'not-applicable'|'untestable'|'blocked';expected:string;observed:string;reason:string;evidencePointers:string[];runs?:{total:number;active:number};/** Tool rows, after a refusal / withdrawal / opt-out: HttpOnly first-party cookies still in the browser (set by a server, removable only by it). */serverCookies?:string[];/** With serverCookies: nothing was sent and those cookies are the only active items. */cookieOnly?:boolean;comparisonFacts?:{scenario:string;unavailable?:{status:'unknown'|'not-tested';reason:string};hasActivity:boolean;limitedOnly:boolean;captureGap:boolean};
 }
 export interface BehaviorMatrix {
   version:1;comparison:string;
@@ -1105,6 +1105,8 @@ export interface CompatibilityChange {
   target?: string;
   /** clear-server-cookie: the HttpOnly cookie names only a server can remove. */
   names?: string[];
+  /** clear-server-cookie: the cookies are the whole problem (nothing was sent, no other storage). */
+  cookieOnly?: boolean;
   /** Why the change is needed, shown with the item in the change list. */
   why?: string;
   /** A Google tag destination a GTM container loads from a gtag('config') command in the page (no container tag carries it). */
@@ -1583,6 +1585,8 @@ export interface ChangeItem {
   target?: string;
   /** clear-server-cookie: the HttpOnly cookie names. */
   names?: string[];
+  /** clear-server-cookie: the cookies are the whole problem (nothing was sent, no other storage). */
+  cookieOnly?: boolean;
   category?: string;
   categoryNote?: string;
   before?: string;
@@ -1793,6 +1797,7 @@ export type RemediationVerifySpec =
   | { check: 'consent-default'; method: 'static'; page: string; consentTypes: string[] }
   | { check: 'remove-existing-tool'; method: 'static'; page: string; partyId?: string; hosts: string[]; pathPattern?: string; label: string }
   | { check: 'spot-check'; method: 'browser'; page: string; partyId: string; hosts: string[]; scenario: 'reject-then-accept' }
+  | { check: 'server-cookie'; method: 'browser'; page: string; partyId: string; names: string[] }
   | { check: 'manual'; method: 'manual'; reason: string };
 export type VerifyResult = 'pass' | 'fail' | 'cannot-verify';
 /** What a checker returns. cannot-verify is never folded into pass. */
@@ -1850,6 +1855,14 @@ export interface SpotCheckObservation {
   page: string;
   toolPresent?: boolean;
   phases: Array<{ scenario: 'reject' | 'accept'; choiceMade: boolean; requests: Array<{ url: string }>; stores: Array<{ kind: string; name: string; host?: string }> }>;
+}
+/** What the server-cookie check observed: a fresh visit, a refusal through complykit's tool, a reload, then the browser's whole cookie jar (HttpOnly included). */
+export interface ServerCookieObservation {
+  page: string;
+  toolPresent?: boolean;
+  choiceMade: boolean;
+  before: Array<{ name: string; domain: string }>;
+  after: Array<{ name: string; domain: string; httpOnly?: boolean }>;
 }
 export const REMEDIATION_TASK_KEY_PREFIX: string;
 export const INSTALL_TASK_ID: string;
@@ -1931,6 +1944,8 @@ export interface StaticVerifyInput {
   html?: string;
   containerJs?: string;
   observation?: SpotCheckObservation;
+  /** A server-cookie observation, when the browser check has run one. */
+  cookieObservation?: ServerCookieObservation;
 }
 export function verifyInstall(html: string, expected: InstallExpectation, opts?: VerifyOptions): VerifyOutcome;
 export function verifyRewriteTag(html: string, spec: { page: string; element: ElementSignature; category: string }): VerifyOutcome;
@@ -1940,6 +1955,8 @@ export function verifyConsentDefault(html: string, spec: { page: string; consent
 export function verifyRemoveExistingTool(html: string, spec: RemoveExistingToolExpectation, opts?: VerifyOptions): VerifyOutcome;
 /** Pass only when nothing reached the vendor after the reject AND something did after the accept. */
 export function judgeSpotCheck(spec: SpotCheckSpec, obs: SpotCheckObservation): VerifyOutcome;
+/** Pass only when none of the named cookies is in the jar, on the page's domain, after a refusal and a reload. */
+export function judgeServerCookie(spec: { page: string; names: string[] }, obs: ServerCookieObservation): VerifyOutcome;
 export function runVerify(spec: RemediationVerifySpec, input: StaticVerifyInput, opts?: VerifyOptions): VerifyOutcome;
 /** Does a parsed element carry the signature (line-independent)? */
 export function elementMatches(el: MarkupElement, sig: ElementSignature): boolean;

@@ -87,7 +87,7 @@ export function taskValue(t: Pick<RemediationTask, 'id' | 'aliases' | 'verify' |
   if (own) return readTaskValue(own.value);
   for (const a of t.aliases ?? []) {
     const v = readTaskValue(ws.entries[remediationTaskKey(a)]?.value);
-    if (v) return v.status === 'verified' && t.verify.check !== 'spot-check' ? { ...v, status: 'done-unverified' } : v;
+    if (v) return v.status === 'verified' && t.verify.check !== 'spot-check' && t.verify.check !== 'server-cookie' ? { ...v, status: 'done-unverified' } : v;
   }
   return undefined;
 }

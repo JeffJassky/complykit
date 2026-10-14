@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { Browser, BrowserContextOptions, Page, Request } from 'playwright';
-import type { LocationSpec, SpotCheckObservation } from '../../../record/index.js';
+import type { LocationSpec, SpotCheckObservation, ServerCookieObservation } from '../../../record/index.js';
 import { contextOptionsFor, VISITOR_LAUNCH_ARGS } from './location.js';
 import { fetchContainers } from './containers.js';
 import { CK, readComplykit } from './complykit.js';
@@ -52,6 +52,11 @@ export interface SpotCheckRun extends SpotCheckObservation {
   challenge?: unknown;
 }
 
+export interface CookieCheckRun extends ServerCookieObservation {
+  notes: string[];
+  challenge?: unknown;
+}
+
 export interface SpotCheckOptions {
   /** How long to wait for complykit's banner after the load (default 8000). */
   bannerWaitMs?: number;
@@ -66,6 +71,8 @@ export interface VerifyBrowser {
   fetchHtml(url: string): Promise<FetchedText>;
   fetchContainer(url: string): Promise<FetchedText>;
   spotCheck(url: string, opts?: SpotCheckOptions): Promise<SpotCheckRun>;
+  /** One fresh visit: refuse through complykit's tool, reload, read the whole cookie jar (HttpOnly included). */
+  cookieCheck(url: string, opts?: SpotCheckOptions): Promise<CookieCheckRun>;
   close(): Promise<void>;
 }
 
@@ -225,6 +232,58 @@ export async function openVerifyBrowser(opts: VerifyBrowserOptions = {}): Promis
         }
       }
       return { page: url, toolPresent, phases, notes };
+    },
+
+    async cookieCheck(url, opts = {}) {
+      const bannerWaitMs = opts.bannerWaitMs ?? 8000;
+      const settleMs = opts.settleMs ?? 2500;
+      const notes: string[] = [];
+      const run = (o: Omit<CookieCheckRun, 'notes' | 'page' | 'before' | 'after'> & Partial<Pick<CookieCheckRun, 'before' | 'after'>>): CookieCheckRun => ({ page: url, before: [], after: [], notes, ...o });
+      const context = await browser.newContext({ ...contextOptions(), serviceWorkers: 'block' });
+      try {
+        const page = await context.newPage();
+        let landedRes: Awaited<ReturnType<Page['goto']>> = null;
+        const landed = await page
+          .goto(url, { waitUntil: 'load', timeout: NAV_TIMEOUT_MS })
+          .then((r) => {
+            landedRes = r;
+            return true;
+          })
+          .catch((e: unknown) => {
+            notes.push(`the page did not finish loading (${msg(e)})`);
+            return false;
+          });
+        const lr = landedRes as Awaited<ReturnType<Page['goto']>>;
+        if (opts.challenge && lr) {
+          const headers = await lr.allHeaders().catch(() => ({}) as Record<string, string>);
+          const body = await withTimeout(lr.body().then((b) => b as Buffer | undefined), BODY_TIMEOUT_MS, undefined);
+          const html = body ? body.toString('utf8') : await page.content().catch(() => '');
+          const challenge = opts.challenge(html, headers, lr.status());
+          if (challenge) {
+            notes.push('the landing was a bot challenge');
+            return run({ choiceMade: false, challenge });
+          }
+        }
+        await page.waitForSelector(CK.banner, { state: 'visible', timeout: landed ? bannerWaitMs : 2000 }).catch(() => {});
+        const snap = await readComplykit(page);
+        if (!snap?.present) {
+          notes.push(`complykit’s consent tool is not on ${url} (no ComplyKit global, config element or consent cookie)`);
+          return run({ toolPresent: false, choiceMade: false });
+        }
+        await page.waitForTimeout(settleMs);
+        const jar = async (): Promise<Array<{ name: string; domain: string; httpOnly: boolean }>> => (await context.cookies().catch(() => [])).map((c) => ({ name: c.name, domain: c.domain, httpOnly: c.httpOnly }));
+        const before = (await jar()).map(({ name, domain }) => ({ name, domain }));
+        const choice = await makeChoice(page, 'reject');
+        notes.push(`reject: ${choice.method}${choice.ok ? '' : ' — the choice was not made'}`);
+        if (!choice.ok) return run({ toolPresent: true, choiceMade: false, before });
+        // The server only sees the refusal on the next request: reload, and let that response land.
+        await page.reload({ waitUntil: 'load', timeout: NAV_TIMEOUT_MS }).catch((e: unknown) => notes.push(`the reload did not finish (${msg(e)})`));
+        await page.waitForLoadState('networkidle', { timeout: settleMs + 2000 }).catch(() => {});
+        await page.waitForTimeout(settleMs);
+        return run({ toolPresent: true, choiceMade: true, before, after: await jar() });
+      } finally {
+        await context.close().catch(() => {});
+      }
     },
 
     async close() {
