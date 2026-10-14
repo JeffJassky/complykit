@@ -17,6 +17,8 @@ import type {
   TrackingEvaluation,
 } from '../../record/index.js';
 import { DEFAULT_KB, hostOf, regimeForCodes, lookupEntry, isWiretapJurisdiction, WIRETAP_CATEGORIES, type KnowledgeBase, type KnowledgeEntry, type TagControl } from '../../registry/index.js';
+import { COMPLYKIT_CONSENT_COOKIE } from '../../record/consent-tool.js';
+import { SAID_NO_SCENARIOS } from '../../record/tracking.js';
 import { PHASE_LABEL, WITHDRAW_GRACE_MS, graceCount, type Phase } from './analyze.js';
 import { GOOGLE_TAG_SETTINGS_FOR, googleTagIdOf, googleTagSettingOn } from './implementation.js';
 
@@ -132,6 +134,12 @@ export interface BehaviorCell {
   status: 'mismatch' | 'no-mismatch-observed' | 'not-established';
   reason: string;
   ref?: string;
+  /**
+   * Mismatch cells after a refusal / withdrawal / opt-out only: the HttpOnly first-party cookies still in
+   * the browser at the end of the visit — set by a server, so no script (the consent tool's included) can
+   * remove them. They still make the cell a mismatch; this only says who can fix it.
+   */
+  serverCookies?: string[];
 }
 
 export interface CompatibilityInput {
@@ -226,6 +234,7 @@ const SALE_SHARE_CATEGORIES = new Set(['advertising', 'advertisement', 'identity
 const ANALYTICS_ONLY = new Set(['analytics', 'performance', 'error-monitoring']);
 const CHOICE_SCENARIOS = new Set(['reject', 'accept', 'partial', 'withdraw', 'opt-out-all', 'opt-out-link']);
 const REFUSED = new Set(['reject', 'withdraw', 'return-visit']);
+const SAID_NO = new Set<string>(SAID_NO_SCENARIOS);
 const OPTED_OUT = new Set(['gpc', 'opt-out-all', 'opt-out-link']);
 const SCENARIO_PHASES: Record<string, Phase[]> = {
   reject: ['after-reject'],
@@ -349,8 +358,10 @@ export function behaviorCellsFrom(ev: Pick<TrackingEvaluation, 'locations' | 'in
                 : { ...cell, status: 'no-mismatch-observed', reason: `only restricted-mode requests ${when}, nothing stored` },
             );
           } else {
+            const serverCookies = SAID_NO.has(sc.scenario) ? [...new Set(activeStores.filter((s) => s.kind === 'cookie' && s.presentAtEnd && !s.thirdParty && s.httpOnly).map((s) => s.name))] : [];
             out.push({
               ...cell,
+              ...(serverCookies.length ? { serverCookies } : {}),
               status: 'mismatch',
               reason: `${requests} data request(s)${activeStores.length ? ` and ${activeStores.length} cookie / storage item(s)` : ''} ${when}, ${wiretap && regime !== 'opt-in' && p.categories.some(isWiretapCategory) && !CHOICE_SCENARIOS.has(sc.scenario) && sc.scenario !== 'gpc' ? 'before any choice, in a wiretap-litigation state where it is expected off until the visitor accepts (firing before a choice is what wiretap suits are built on)' : `where ${regime} rules expect it off`}`,
             });
@@ -1057,6 +1068,17 @@ export function compatibilityFor(party: PartyInventoryItem, input: Compatibility
       kind: 'behavior-mismatch',
       note: `observed active where it should be off (${[...new Set(mismatches.map((m) => `${m.location}:${m.scenario}`))].join(', ')}): whatever the implementation says, the current setup does not hold ${party.label} back. Make the changes below, then rescan — behavior is the ground truth.`,
     });
+    const names = [...new Set(mismatches.flatMap((m) => m.serverCookies ?? []))];
+    if (names.length) {
+      const cats = party.categories.filter((c) => CONSENT_CATEGORIES.has(c));
+      const what = cats.length ? cats.join(' / ') : 'this category';
+      const many = names.length > 1;
+      changes.splice(1, 0, {
+        kind: 'clear-server-cookie',
+        names,
+        note: `${names.join(', ')} ${many ? 'are' : 'is'} still in the browser after the visitor refused or withdrew consent, and ${many ? 'are' : 'is'} set by a server (HttpOnly), so no script on the page — complykit's consent tool included — can remove ${many ? 'them' : 'it'}. Whoever sets ${many ? 'them' : 'it'} (your server, a server-side tag container, or ${party.label}'s first-party integration) must stop setting ${many ? 'them' : 'it'} while the visitor has not consented to ${what}, and expire ${many ? 'them' : 'it'} (${names.map((n) => `Set-Cookie: ${n}=; Max-Age=0; Path=/;`).join(' ')} with the same Domain as when set) on responses where the ${COMPLYKIT_CONSENT_COOKIE} cookie records a refusal or withdrawal: its value is URL-encoded JSON, and "categories" holds true / false per category, so read the ${what} entries (a missing cookie means no choice yet).`,
+      });
+    }
   } else if (!checked) {
     const why = [...new Set(cells.map((c) => c.reason))];
     reasons.push({ source: 'behavior', note: `behavior not established${why.length ? ` (${why.slice(0, 3).join('; ')})` : ' (no comparison available)'} — the verdict explains the implementation only` });

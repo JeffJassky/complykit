@@ -91,6 +91,32 @@ describe('consent behavior matrix',()=>{
   // The site's own cookie left behind is still the site's.
   expect(status(m(tl([cookie('_fbp','.shop.example')])),'storage','_fbp','reject').status).toBe('mismatch');
  });
+ it('marks a surviving cookie httpOnly only when every jar entry for it on the site’s domain is HttpOnly; never for a third-party-only cookie',()=>{
+  const inv={...inventory,stores:[...inventory.stores,{name:'fr',kind:'cookie',lifetimeDays:90}]};
+  const cookie=(name:string,domain:string,httpOnly:boolean)=>({name,value:'x',domain,path:'/',expires:-1,httpOnly,secure:true});
+  const tl=(cookies:object[])=>Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'reject',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies,storage:[],frames:[]},events:[{type:'banner',t:0,state:'shown',pageIndex:0},{type:'request',t:50,id:'r1',url:'https://www.facebook.com/tr/?ev=PageView',method:'GET',resourceType:'image',origin:'page',pageUrl:evaluation.site.url,pageIndex:0,initiator:{type:'other',chain:[]}},{type:'choice',t:200,choice:'reject',ok:true,method:'test',pageIndex:0}]});
+  const store=(cookies:object[],name:string)=>summarizeBehavior([tl(cookies)])[0].parties.find(p=>p.partyId==='meta.pixel')!.stores.find(s=>s.name===name)!;
+  expect(store([cookie('_fbp','.shop.example',true)],'_fbp')).toMatchObject({presentAtEnd:true,httpOnly:true});
+  // Readable from script: not server-only.
+  expect(store([cookie('_fbp','.shop.example',false)],'_fbp').httpOnly).toBeUndefined();
+  // One entry readable from script (another path or host): a script could remove it, so not server-only.
+  expect(store([cookie('_fbp','.shop.example',true),cookie('_fbp','www.shop.example',false)],'_fbp').httpOnly).toBeUndefined();
+  // A vendor-domain copy does not decide it: the site-domain entries do.
+  expect(store([cookie('_fbp','.shop.example',true),cookie('_fbp','.facebook.com',false)],'_fbp').httpOnly).toBe(true);
+  // Third-party only: excluded, never marked.
+  expect(store([cookie('fr','.facebook.com',true)],'fr')).toMatchObject({thirdParty:true});
+  expect(store([cookie('fr','.facebook.com',true)],'fr').httpOnly).toBeUndefined();
+  // Not present at the end: not marked.
+  expect(store([],'_fbp')?.httpOnly).toBeUndefined();
+ });
+ it('the matrix says an HttpOnly leftover is set by a server and only the server can remove it, and it still counts',()=>{
+  const cookie={name:'_fbp',value:'x',domain:'.shop.example',path:'/',expires:-1,httpOnly:true,secure:true};
+  const t=Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'reject',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies:[cookie],storage:[],frames:[]},events:[{type:'banner',t:0,state:'shown',pageIndex:0},{type:'request',t:50,id:'r1',url:'https://www.facebook.com/tr/?ev=PageView',method:'GET',resourceType:'image',origin:'page',pageUrl:evaluation.site.url,pageIndex:0,initiator:{type:'other',chain:[]}},{type:'choice',t:200,choice:'reject',ok:true,method:'test',pageIndex:0}]});
+  const mm={...buildConsentReportModel({...evaluation,inventory:[{...inventory,stores:[...inventory.stores]}]} as unknown as typeof evaluation,[]),behaviorObservations:summarizeBehavior([t])};
+  const c=status(mm,'storage','_fbp','reject');
+  expect(c.status).toBe('mismatch');
+  expect(c.observed).toMatch(/set by a server \(HttpOnly\).*only the server can/);
+ });
  it('each cookie sits under one tool: the one its name belongs to, not the tag loader that wrote it (storyfolder.com, 2026-10-08)',()=>{
   const gtag='https://www.googletagmanager.com/gtag/js?id=G-TEST';
   const t=Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'accept',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies:[{name:'GCL_AW_P',value:'x',domain:'.googleadservices.com',path:'/',expires:-1,httpOnly:false,secure:true}],storage:[],frames:[]},events:[

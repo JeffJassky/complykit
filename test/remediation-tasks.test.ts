@@ -402,3 +402,36 @@ describe('decisions in the same list: classify an unrecognized tool (the B2 fixt
     expect(necessary.some((t) => t.waitingOn?.some((id) => open.has(id)))).toBe(false);
   });
 });
+
+describe('buildRemediationTasks: a cookie only a server can clear', () => {
+  const base = compatibilityEvaluation();
+  const srvParty = { ...base.inventory[1], partyId: 'srv.tag', label: 'Server Tag', categories: ['analytics'], implementation: { class: 'server-side-suspected' as const, evidence: [{ class: 'server-side-suspected' as const, kind: 'source' as const, observed: true, note: 'a first-party collect endpoint' }], alsoSeen: [] } };
+  const stores = (httpOnly: boolean) => [{ name: '_srv_id', kind: 'cookie', writePhases: [], presentAtEnd: true, attribution: 'observed' as const, ...(httpOnly ? { httpOnly: true } : {}) }];
+  const evalWith = (httpOnly: boolean): TrackingEvaluation =>
+    ({
+      ...base,
+      inventory: [srvParty],
+      markup: { pages: [], findings: [], unexplained: [] },
+      containers: [],
+      behaviorObservations: [{ location: 'de', scenario: 'reject', run: 1, pages: 3, durationMs: 9000, knownPartyIds: ['srv.tag'], parties: [{ partyId: 'srv.tag', dataRequests: 0, requestPhases: [], dataRequestPhases: {}, limitedRequestsByPhase: {}, stores: stores(httpOnly) }] }],
+    }) as unknown as TrackingEvaluation;
+
+  it('a cookie-only HttpOnly mismatch gets the clear-server-cookie task and no generic "find out why" task', () => {
+    const ev = evalWith(true);
+    const tasks = gen(ev).tasks;
+    const t = byKind(tasks, 'clear-server-cookie');
+    expect(t).toHaveLength(1);
+    expect(t[0].title).toBe('Have your server clear Server Tag’s cookies after a refusal');
+    expect(t[0].summary).toMatch(/_srv_id/);
+    expect(t[0].steps.join(' ')).toMatch(/Set-Cookie: _srv_id=; Max-Age=0; Path=\/;/);
+    expect(t[0].verify.check).toBe('spot-check');
+    expect(RemediationTaskSchema.safeParse(t[0]).success).toBe(true);
+    expect(byKind(tasks, 'behavior-mismatch')).toHaveLength(0);
+  });
+
+  it('the same cookie readable from script keeps the generic task and has no server-cookie task', () => {
+    const tasks = gen(evalWith(false)).tasks;
+    expect(byKind(tasks, 'clear-server-cookie')).toHaveLength(0);
+    expect(tasks.some((t) => t.kind === 'behavior-mismatch' || t.kind === 'accepted-exposure')).toBe(true);
+  });
+});
