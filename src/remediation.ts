@@ -292,11 +292,12 @@ function shape(ev: TrackingEvaluation, it: ChangeItem, pages: string[], config: 
         summary: `${list(names.map((n) => `“${n}”`))} ${names.length === 1 ? 'was' : 'were'} still in the browser after the visitor refused or withdrew consent. A server sets ${these} (HttpOnly), so no script on the page — the complykit tool included — can remove ${these}.`,
         steps: [
           `Find what sets ${list(names)}: your server, a server-side tag container, or ${tools}’s first-party integration (its Set-Cookie header).`,
-          `Stop setting ${these} while the visitor has not consented to the category. The consent cookie ${COMPLYKIT_CONSENT_COOKIE} holds the choice as URL-encoded JSON; its "categories" object is true / false per category.`,
-          `Where that cookie records a refusal or withdrawal, expire ${these} on the response: ${names.map((n) => `Set-Cookie: ${n}=; Max-Age=0; Path=/;`).join(' ')} with the same Domain as when set.`,
-          spotCheckStep(tools, page),
+          `Stop setting ${these} while the visitor has not consented to the category. The consent cookie ${COMPLYKIT_CONSENT_COOKIE} holds the choice as URL-encoded JSON; its "categories" object is true / false per category. Treat a missing or unreadable cookie as not consented: Safari caps script-set cookies at 7 days, so a visitor who refused may arrive without it.`,
+          `Where that cookie records a refusal or withdrawal, expire ${these} on the response: ${names.map((n) => `Set-Cookie: ${n}=; Max-Age=0`).join(' ')}, with the same Path and Domain ${names.length === 1 ? 'it was' : 'each was'} set with.`,
+          `If the visitor opted out through your own opt-out link, or their browser sent the Sec-GPC header, the refusal may not be in ${COMPLYKIT_CONSENT_COOKIE} at all: honor the site’s own opt-out record and that header the same way.`,
+          `Press Verify: it opens ${pageLabel(page)} in a browser, refuses through the complykit tool, reloads, and reads the browser’s cookies (HttpOnly ones included). It passes when ${list(names)} ${names.length === 1 ? 'is' : 'are'} not there.`,
         ],
-        verify: spotCheck(ev, it, page),
+        verify: it.partyIds[0] ? { check: 'server-cookie', method: 'browser', page, partyId: it.partyIds[0], names } : manual(`no tool was recorded for these cookies, so the browser check has nothing to attribute them to; a rescan decides it`),
       };
     }
     case 'accepted-exposure':
@@ -464,16 +465,19 @@ interface Slot {
   line?: number;
   /** The vendor consent API the item names (call-consent-api). */
   api?: string;
+  /** clear-server-cookie: the cookies are the whole problem, so this task also covers the generic behavior-mismatch one. */
+  cookieOnly?: boolean;
   folded?: boolean;
 }
 
 /** Fixers of one party for a folded item: required ones for a required item. A Google-wide consent default does not hold a tool back. */
 function fixersOf(slots: Slot[], partyId: string, kinds: Set<RemediationTask['kind']>, optional: boolean): Slot[] {
-  return slots.filter((s) => !s.folded && kinds.has(s.task.kind) && s.task.partyIds.includes(partyId) && (optional || !s.task.optional) && !(s.task.kind === 'set-consent-default' && s.task.verify.check === 'consent-default'));
+  // A cookie task covers the generic mismatch only when the cookies are all that went wrong: a party that also sent requests keeps its own task.
+  return slots.filter((s) => !s.folded && kinds.has(s.task.kind) && !(s.task.kind === 'clear-server-cookie' && !s.cookieOnly) && s.task.partyIds.includes(partyId) && (optional || !s.task.optional) && !(s.task.kind === 'set-consent-default' && s.task.verify.check === 'consent-default'));
 }
 
 /** A fixing task checks the tool itself: a static check of its markup / container, or a spot check of that very tool. */
-const checksTool = (t: Draft, partyId: string): boolean => t.verify.method === 'static' || (t.verify.check === 'spot-check' && t.verify.partyId === partyId);
+const checksTool = (t: Draft, partyId: string): boolean => t.verify.method === 'static' || ((t.verify.check === 'spot-check' || t.verify.check === 'server-cookie') && t.verify.partyId === partyId);
 
 function addFix(t: Draft, id: string, line: string): void {
   if (!t.aliases.includes(id)) t.aliases.push(id);
@@ -605,6 +609,7 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
       seq: slots.length,
       ...(it.line ? { line: it.line } : {}),
       ...(it.api ? { api: it.api } : {}),
+      ...(it.cookieOnly ? { cookieOnly: true } : {}),
     });
   };
   for (const g of report.groups) for (const it of g.items) add(it, g.id, false);
@@ -635,7 +640,11 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
       s.folded = true;
     }
   }
-  const kept = slots.filter((s) => !s.folded);
+  let kept = slots.filter((s) => !s.folded);
+  // Installing the complykit tool fixes none of a server-set cookie: with nothing else left to fix (only cookie tasks and decisions),
+  // there is no install task, and no old banner to remove for it. To-dos are fixes for observed violations.
+  const onlyServerCookies = kept.some((s) => s.task.kind === 'clear-server-cookie') && !kept.some((s) => !['install', 'remove-existing-tool', 'classify', 'clear-server-cookie', 'accepted-exposure'].includes(s.task.kind)) && !(installSlot?.task.alsoFixes.length);
+  if (onlyServerCookies) kept = kept.filter((s) => s.task.kind !== 'install' && s.task.kind !== 'remove-existing-tool');
   // --- decisions -----------------------------------------------------------------------
   // One per tool to classify; a change whose tools are all unclassified waits on them.
   const subjects = classifySubjects(report, evaluation, kb);

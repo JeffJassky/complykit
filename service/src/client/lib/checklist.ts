@@ -44,7 +44,7 @@ export function checklistFromWorkspace(ws: SiteWorkspace): RemediationTask[] {
       if (!entry) return t;
       const carried = !ws.entries[TASK_CHANGE_PREFIX + t.id];
       const raw = readTaskValue(entry.value);
-      const v = raw && carried && raw.status === 'verified' && t.verify.check !== 'spot-check' ? { ...raw, status: 'done-unverified' as const } : raw;
+      const v = raw && carried && raw.status === 'verified' && t.verify.check !== 'spot-check' && t.verify.check !== 'server-cookie' ? { ...raw, status: 'done-unverified' as const } : raw;
       const { lastVerify: _l, note: _n, ...rest } = t;
       return v ? { ...rest, status: v.status, ...(v.note ? { note: v.note } : {}), ...(v.lastVerify ? { lastVerify: v.lastVerify } : {}) } : { ...rest, status: 'todo' as const };
     })

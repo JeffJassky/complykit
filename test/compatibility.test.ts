@@ -526,6 +526,17 @@ describe('behaviorCellsFrom: the matrix expectation, narrowed', () => {
     const cells = behaviorCellsFrom({ locations: [loc()], inventory: inv, behaviorObservations: o });
     expect(cells[0].status).toBe('mismatch');
     expect(cells[0].serverCookies).toEqual(['_fbp']);
+    // _ga is script-readable and active too: the HttpOnly cookie is not the whole problem.
+    expect(cells[0].cookieOnly).toBeUndefined();
+  });
+
+  it('cookieOnly: nothing sent and the HttpOnly first-party cookie is the only active item', () => {
+    const only = behaviorCellsFrom({ locations: [loc()], inventory: inv, behaviorObservations: obs({}, {}, [{ name: '_fbp', presentAtEnd: true, writePhases: [], httpOnly: true } as never]) });
+    expect(only[0]).toMatchObject({ status: 'mismatch', serverCookies: ['_fbp'], cookieOnly: true });
+    // The same cookie plus data requests: still names the cookie, not cookie-only.
+    const sent = behaviorCellsFrom({ locations: [loc()], inventory: inv, behaviorObservations: obs({ 'after-reject': 2 }, {}, [{ name: '_fbp', presentAtEnd: true, writePhases: [], httpOnly: true } as never]) });
+    expect(sent[0]).toMatchObject({ status: 'mismatch', serverCookies: ['_fbp'] });
+    expect(sent[0].cookieOnly).toBeUndefined();
   });
 
   it('no serverCookies on a mismatch of requests only, or when no cookie is HttpOnly', () => {
@@ -1066,9 +1077,20 @@ describe('clear-server-cookie: an HttpOnly cookie left after a refusal', () => {
     expect(c[0].note).toMatch(/_fbp, _fbc are still in the browser after the visitor refused or withdrew consent/);
     expect(c[0].note).toMatch(/set by a server \(HttpOnly\), so no script on the page — complykit's consent tool included — can remove them/);
     expect(c[0].note).toMatch(/your server, a server-side tag container, or Meta Pixel's first-party integration/);
-    expect(c[0].note).toMatch(/Set-Cookie: _fbp=; Max-Age=0; Path=\/; Set-Cookie: _fbc=; Max-Age=0; Path=\/;/);
+    expect(c[0].note).toMatch(/Set-Cookie: _fbp=; Max-Age=0 Set-Cookie: _fbc=; Max-Age=0, with the same Path and Domain each was set with/);
     expect(c[0].note).toMatch(/complykit_consent/);
+    expect(c[0].note).toMatch(/missing or unreadable cookie as not consented \(Safari caps script-set cookies at 7 days/);
+    expect(c[0].note).toMatch(/opt-out link, or sent the Sec-GPC header/);
+    expect(c[0].note).not.toMatch(/means no choice yet/);
     expect(r.behaviorMismatch).toBe(true);
+  });
+
+  it('cookieOnly on the change only when every mismatch of the party is a cookie-only one', () => {
+    const only = (scenario = 'reject'): BehaviorCell => ({ ...srv(['_fbp'], scenario), cookieOnly: true });
+    const change = (cells: BehaviorCell[]) => compatibilityFor(p(), input(cells)).changes.find((x) => x.kind === 'clear-server-cookie')!;
+    expect(change([only()]).cookieOnly).toBe(true);
+    expect(change([only(), srv(['_fbp'], 'withdraw')]).cookieOnly).toBeUndefined();
+    expect(change([only(), cell('meta.pixel', 'mismatch', 'do-nothing')]).cookieOnly).toBeUndefined();
   });
 
   it('none when the surviving cookie is not HttpOnly, or when expected on (accept)', () => {

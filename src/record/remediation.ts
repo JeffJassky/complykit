@@ -111,6 +111,14 @@ export const RemediationVerifySpec = z.discriminatedUnion('check', [
     hosts: z.array(z.string()),
     scenario: z.literal('reject-then-accept'),
   }),
+  z.object({
+    check: z.literal('server-cookie'),
+    method: z.literal('browser'),
+    page: z.string(),
+    partyId: z.string(),
+    /** The HttpOnly cookie names the server must stop setting / expire after a refusal. */
+    names: z.array(z.string()),
+  }),
   z.object({ check: z.literal('manual'), method: z.literal('manual'), reason: z.string() }),
 ]);
 export type RemediationVerifySpec = z.infer<typeof RemediationVerifySpec>;
@@ -193,6 +201,20 @@ export const SpotCheckObservation = z.object({
   ),
 });
 export type SpotCheckObservation = z.infer<typeof SpotCheckObservation>;
+
+/** What the server-cookie check observed: one fresh visit, a refusal through complykit's tool, a reload, then the browser's whole cookie jar (HttpOnly included). */
+export const ServerCookieObservation = z.object({
+  page: z.string(),
+  /** complykit's tool was present on the page (its global or config element). */
+  toolPresent: z.boolean().optional(),
+  /** The refusal was made (and the tool's stored state shows it). */
+  choiceMade: z.boolean(),
+  /** The jar just before the refusal. */
+  before: z.array(z.object({ name: z.string(), domain: z.string() })).default([]),
+  /** The jar after the refusal and a reload. */
+  after: z.array(z.object({ name: z.string(), domain: z.string(), httpOnly: z.boolean().optional() })).default([]),
+});
+export type ServerCookieObservation = z.infer<typeof ServerCookieObservation>;
 
 // --- ids ---------------------------------------------------------------------------
 
@@ -316,7 +338,7 @@ export function resolveRemediationTaskValue(task: { id: string; aliases?: string
   for (const a of task.aliases ?? []) {
     const v = readRemediationTaskValue(entries[remediationTaskKey(a)]?.value);
     if (!v) continue;
-    return v.status === 'verified' && task.verify.check !== 'spot-check' ? { ...v, status: 'done-unverified' } : v;
+    return v.status === 'verified' && task.verify.check !== 'spot-check' && task.verify.check !== 'server-cookie' ? { ...v, status: 'done-unverified' } : v;
   }
   return undefined;
 }
