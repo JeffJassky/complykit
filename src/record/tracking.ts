@@ -44,6 +44,9 @@ export const ScenarioId = z.enum([
 ]);
 export type ScenarioId = z.infer<typeof ScenarioId>;
 
+/** Scenarios where the visitor said no (refused, withdrew, opted out): a cookie a server set that is still there afterwards is the server's to expire. */
+export const SAID_NO_SCENARIOS: readonly ScenarioId[] = ['reject', 'withdraw', 'return-visit', 'opt-out-all', 'opt-out-link'];
+
 // --- Locations ----------------------------------------------------------------
 
 export const ProxySpec = z.object({
@@ -562,7 +565,7 @@ const BehaviorObservation = z.object({
     // pixel image, …) per phase: a load the consent tool's gate exists to
     // prevent. Absent on records from older builds (then unknown, not zero).
     loadRequestsByPhase: z.record(z.number().int()).optional(),
-    stores: z.array(z.object({name:z.string(),kind:z.string(),writePhase:z.string().optional(),writePhases:z.array(z.string()),presentAtEnd:z.boolean(),thirdParty:z.boolean().optional(),attribution:z.enum(['observed','known-name'])})),
+    stores: z.array(z.object({name:z.string(),kind:z.string(),writePhase:z.string().optional(),writePhases:z.array(z.string()),presentAtEnd:z.boolean(),thirdParty:z.boolean().optional(),httpOnly:z.boolean().optional(),attribution:z.enum(['observed','known-name'])})),
   })),
 });
 // --- Markup inspection (plans/client-consent-design.md §3 #1–#2, §5 item 2) ----------
@@ -825,6 +828,7 @@ export const CompatibilityChangeKind = z.enum([
   'use-platform-api', // the platform's consent API / dashboard setting
   'call-consent-api', // the vendor's own consent call, alongside gating (never instead)
   'change-dns', // a first-party CNAME to the vendor
+  'clear-server-cookie', // HttpOnly first-party cookie(s) left after a refusal / withdrawal: only the server that sets them can stop and expire them
   'accepted-exposure', // nothing on the page controls it; accept in writing or remove the integration
   'needs-a-look', // the loader could not be identified
 ]);
@@ -845,6 +849,7 @@ export const CompatibilityChange = z.object({
   manager: z.string().optional(),
   host: z.string().optional(),
   target: z.string().optional(),
+  names: z.array(z.string()).optional(), // clear-server-cookie: the HttpOnly cookie names
   // Why this change is needed, beyond what `note` says — shown with the item
   // in the change list (a rewrite item otherwise shows only its snippets).
   why: z.string().optional(),

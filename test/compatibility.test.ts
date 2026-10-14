@@ -25,6 +25,7 @@ import {
   type CompatibilityInput,
 } from '../src/rules/tracking/index.js';
 import { DEFAULT_KB } from '../src/registry/index.js';
+import { compatibilityEvaluation } from './fixtures/compatibility-report.js';
 
 // B1: the compatibility verdict per tool (client-consent design §5), with the
 // decision table documented in src/rules/tracking/compatibility.ts. Fixtures
@@ -514,6 +515,25 @@ describe('behaviorCellsFrom: the matrix expectation, narrowed', () => {
   it('a surviving cookie alone is activity', () => {
     const cells = behaviorCellsFrom({ locations: [loc()], inventory: inv, behaviorObservations: obs({}, {}, [{ name: '_fbp', presentAtEnd: true, writePhases: [] }]) });
     expect(cells[0].status).toBe('mismatch');
+  });
+
+  it('an HttpOnly first-party cookie left after a refusal is still a mismatch, and the cell names it as server-only', () => {
+    const o = obs({}, {}, [
+      { name: '_fbp', presentAtEnd: true, writePhases: [], httpOnly: true } as never,
+      { name: '_ga', presentAtEnd: true, writePhases: [] },
+      { name: 'fr', presentAtEnd: true, writePhases: [], httpOnly: true, thirdParty: true } as never,
+    ]);
+    const cells = behaviorCellsFrom({ locations: [loc()], inventory: inv, behaviorObservations: o });
+    expect(cells[0].status).toBe('mismatch');
+    expect(cells[0].serverCookies).toEqual(['_fbp']);
+  });
+
+  it('no serverCookies on a mismatch of requests only, or when no cookie is HttpOnly', () => {
+    const noCookie = behaviorCellsFrom({ locations: [loc()], inventory: inv, behaviorObservations: obs({ 'after-reject': 2 }) });
+    expect(noCookie[0].status).toBe('mismatch');
+    expect(noCookie[0].serverCookies).toBeUndefined();
+    const plain = behaviorCellsFrom({ locations: [loc()], inventory: inv, behaviorObservations: obs({}, {}, [{ name: '_fbp', presentAtEnd: true, writePhases: [] }]) });
+    expect(plain[0].serverCookies).toBeUndefined();
   });
 
   it('nothing after rejection → no mismatch observed (not "clean")', () => {
@@ -1029,5 +1049,45 @@ describe('buildTrackingEvaluation', () => {
     expect(section.parties[0].behaviorChecked).toBe(false);
     expect(section.inputs).toEqual({ markup: false, containers: false, consentApi: false, consentTool: false, behavior: false });
     expect(section.consentTool.status).toBe('not-observed');
+  });
+});
+
+describe('clear-server-cookie: an HttpOnly cookie left after a refusal', () => {
+  const srv = (names: string[] | undefined, scenario = 'reject'): BehaviorCell => ({ ...cell('meta.pixel', 'mismatch', scenario), ...(names ? { serverCookies: names } : {}) });
+  const p = () => party('meta.pixel', 'direct-script', { label: 'Meta Pixel' });
+  const input = (behavior: BehaviorCell[]): CompatibilityInput => ({ markup: markup([finding('meta.pixel', 'gateable')]), behavior });
+
+  it('one change naming the cookies (deduped across visits), right after the behavior mismatch', () => {
+    const r = compatibilityFor(p(), input([srv(['_fbp']), srv(['_fbp', '_fbc'], 'withdraw')]));
+    expect(kinds(r).slice(0, 2)).toEqual(['behavior-mismatch', 'clear-server-cookie']);
+    const c = r.changes.filter((x) => x.kind === 'clear-server-cookie');
+    expect(c).toHaveLength(1);
+    expect(c[0].names).toEqual(['_fbp', '_fbc']);
+    expect(c[0].note).toMatch(/_fbp, _fbc are still in the browser after the visitor refused or withdrew consent/);
+    expect(c[0].note).toMatch(/set by a server \(HttpOnly\), so no script on the page — complykit's consent tool included — can remove them/);
+    expect(c[0].note).toMatch(/your server, a server-side tag container, or Meta Pixel's first-party integration/);
+    expect(c[0].note).toMatch(/Set-Cookie: _fbp=; Max-Age=0; Path=\/; Set-Cookie: _fbc=; Max-Age=0; Path=\/;/);
+    expect(c[0].note).toMatch(/complykit_consent/);
+    expect(r.behaviorMismatch).toBe(true);
+  });
+
+  it('none when the surviving cookie is not HttpOnly, or when expected on (accept)', () => {
+    expect(kinds(compatibilityFor(p(), input([srv(undefined)])))).not.toContain('clear-server-cookie');
+    expect(kinds(compatibilityFor(p(), input([cell('meta.pixel', 'no-mismatch-observed', 'accept')])))).not.toContain('clear-server-cookie');
+  });
+
+  it('the consent-cookie name used in the note is the one the client writes', async () => {
+    const { readFileSync } = await import('node:fs');
+    expect(readFileSync(new URL('../client/src/store.ts', import.meta.url), 'utf8')).toContain("COOKIE_NAME = 'complykit_consent'");
+  });
+});
+
+describe('behavior observation schema: httpOnly is optional', () => {
+  it('a stored record without the store field still parses; with it, it round-trips', () => {
+    const base = compatibilityEvaluation();
+    const store = { name: '_fbp', kind: 'cookie', writePhases: [], presentAtEnd: true, attribution: 'observed' as const };
+    const parse = (st: object) => TrackingEvaluation.parse({ ...base, behaviorObservations: [{ location: 'local', scenario: 'reject', durationMs: 1, knownPartyIds: [], parties: [{ partyId: 'x', dataRequests: 0, requestPhases: [], dataRequestPhases: {}, limitedRequestsByPhase: {}, stores: [st] }] }] }).behaviorObservations![0].parties[0].stores[0];
+    expect(parse(store).httpOnly).toBeUndefined();
+    expect(parse({ ...store, httpOnly: true }).httpOnly).toBe(true);
   });
 });

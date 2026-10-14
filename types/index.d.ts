@@ -976,7 +976,7 @@ export interface NotTestedItem {
   reason: string;
 }
 export interface BehaviorMatrixCell {
-  columnId:string;status:'match'|'mismatch'|'review'|'unknown'|'not-tested'|'allowed';/** Set when the column was skipped: nothing to test, the scan could not, or the site blocked the visitor. */skip?:'not-applicable'|'untestable'|'blocked';expected:string;observed:string;reason:string;evidencePointers:string[];runs?:{total:number;active:number};comparisonFacts?:{scenario:string;unavailable?:{status:'unknown'|'not-tested';reason:string};hasActivity:boolean;limitedOnly:boolean;captureGap:boolean};
+  columnId:string;status:'match'|'mismatch'|'review'|'unknown'|'not-tested'|'allowed';/** Set when the column was skipped: nothing to test, the scan could not, or the site blocked the visitor. */skip?:'not-applicable'|'untestable'|'blocked';expected:string;observed:string;reason:string;evidencePointers:string[];runs?:{total:number;active:number};/** Tool rows, after a refusal / withdrawal / opt-out: HttpOnly first-party cookies still in the browser (set by a server, removable only by it). */serverCookies?:string[];comparisonFacts?:{scenario:string;unavailable?:{status:'unknown'|'not-tested';reason:string};hasActivity:boolean;limitedOnly:boolean;captureGap:boolean};
 }
 export interface BehaviorMatrix {
   version:1;comparison:string;
@@ -989,7 +989,7 @@ export interface BehaviorObservation {
   /** Per phase: pages the journey was on (pageIndex) and the steps it took ('navigate' | 'scroll' | 'search'). */
   journey?: Record<string, { pageIndexes: number[]; steps: string[] }>;
   /** Phase keys include 'withdraw-grace' (requests between the withdraw click and the reload not counted as post-withdraw activity). loadRequestsByPhase = requests that carried no data. */
-  parties: Array<{partyId:string;dataRequests:number;requestPhases:string[];dataRequestPhases:Record<string,number>;limitedRequestsByPhase:Record<string,number>;loadRequestsByPhase?:Record<string,number>;stores:Array<{name:string;kind:string;writePhase?:string;writePhases:string[];presentAtEnd:boolean;thirdParty?:boolean;attribution:'observed'|'known-name'}>}>;
+  parties: Array<{partyId:string;dataRequests:number;requestPhases:string[];dataRequestPhases:Record<string,number>;limitedRequestsByPhase:Record<string,number>;loadRequestsByPhase?:Record<string,number>;stores:Array<{name:string;kind:string;writePhase?:string;writePhases:string[];presentAtEnd:boolean;thirdParty?:boolean;httpOnly?:boolean;attribution:'observed'|'known-name'}>}>;
 }
 // Tag-manager containers (A2). A capture is the collector's fetch result; a
 // TagContainer is the parsed record. An unreadable container has no tags and a
@@ -1085,6 +1085,7 @@ export type CompatibilityChangeKind =
   | 'use-platform-api'
   | 'call-consent-api'
   | 'change-dns'
+  | 'clear-server-cookie'
   | 'accepted-exposure'
   | 'needs-a-look';
 export interface CompatibilityChange {
@@ -1102,6 +1103,8 @@ export interface CompatibilityChange {
   manager?: string;
   host?: string;
   target?: string;
+  /** clear-server-cookie: the HttpOnly cookie names only a server can remove. */
+  names?: string[];
   /** Why the change is needed, shown with the item in the change list. */
   why?: string;
   /** A Google tag destination a GTM container loads from a gtag('config') command in the page (no container tag carries it). */
@@ -1578,6 +1581,8 @@ export interface ChangeItem {
   manager?: string;
   host?: string;
   target?: string;
+  /** clear-server-cookie: the HttpOnly cookie names. */
+  names?: string[];
   category?: string;
   categoryNote?: string;
   before?: string;
@@ -1590,7 +1595,7 @@ export interface ChangeItem {
   guide?: { label: string; href: string };
 }
 export interface ChangeGroup {
-  id: 'mismatch' | 'rewrite' | 'gtm' | 'consent-default' | 'tag-manager' | 'platform' | 'consent-api' | 'leaks' | 'dns' | 'exposures' | 'needs-a-look';
+  id: 'mismatch' | 'rewrite' | 'gtm' | 'consent-default' | 'tag-manager' | 'platform' | 'consent-api' | 'leaks' | 'dns' | 'server-cookies' | 'exposures' | 'needs-a-look';
   title: string;
   intro: string;
   items: ChangeItem[];

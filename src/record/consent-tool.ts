@@ -259,6 +259,14 @@ function decodeShopify(raw: string): Decoded | undefined {
 //    "categories":{"necessary":true,"analytics":false,…}}
 // The client writes it ONLY on a visitor's choice (never for defaults), so a
 // decodable value always means a recorded choice. Another `v` is not guessed at.
+/**
+ * complykit's own consent cookie. The client (client/src/store.ts COOKIE_NAME) defines it; src/ never
+ * imports client code, so the name is repeated here and a test pins the two together. Its value is
+ * urlencoded JSON: {"v":1,...,"categories":{"necessary":true,"analytics":false,...}} (see store.ts),
+ * written only when the visitor chooses — present with a category `false` means refused or withdrawn.
+ */
+export const COMPLYKIT_CONSENT_COOKIE = 'complykit_consent';
+
 function decodeComplykit(raw: string): Decoded | undefined {
   const j = parseJson(raw);
   if (!isObj(j) || j.v !== 1 || !isObj(j.categories)) return undefined;
@@ -306,7 +314,7 @@ export const CONSENT_TOOLS: ConsentToolSpec[] = [
   { vendor: 'Termly', kind: 'localStorage', key: 'TERMLY_API_CACHE', decode: decodeUndocumented },
   { vendor: 'Shopify customer privacy', kind: 'cookie', key: '_tracking_consent', decode: (r) => decodeShopify(r) },
   { vendor: 'Shopify customer privacy', kind: 'cookie', key: '_cmp_a', decode: (r) => decodeShopify(r) },
-  { vendor: 'complykit', kind: 'cookie', key: 'complykit_consent', decode: (r) => decodeComplykit(r) },
+  { vendor: 'complykit', kind: 'cookie', key: COMPLYKIT_CONSENT_COOKIE, decode: (r) => decodeComplykit(r) },
   { vendor: 'CookieConsent (orestbida)', kind: 'cookie', key: 'cc_cookie', decode: (r) => decodeCookieconsentV3(r) },
 ];
 

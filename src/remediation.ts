@@ -13,6 +13,7 @@ import { consentPluginPathPattern, DEFAULT_KB, type KnowledgeBase } from './regi
 import { buildConsentReportModel, DOCS_BASE, GTM_GUIDE, platformGuide, shortPage, type ChangeItem, type CompatibilityReport } from './report/index.js';
 import { reconcileRecord } from './consent-compatibility.js';
 import { toolConsentDefault } from './rules/remediation/verify.js';
+import { COMPLYKIT_CONSENT_COOKIE } from './record/consent-tool.js';
 import { classificationKey, type WorkspaceSnapshot } from './site-workspace.js';
 
 // The guided remediation checklist (plans/remediation-flow.md §3): the
@@ -283,6 +284,21 @@ function shape(ev: TrackingEvaluation, it: ChangeItem, pages: string[], config: 
         steps: ['Remove or repoint the DNS record, or stop using the integration behind it.', 'Mark it done; a rescan shows whether the cookies are gone.'],
         verify: manual('DNS records and the cookies set through them cannot be read from one page fetch; a rescan decides it'),
       };
+    case 'clear-server-cookie': {
+      const names = it.names ?? [];
+      const these = names.length === 1 ? 'it' : 'them';
+      return {
+        title: `Have your server clear ${tools}’s cookies after a refusal`,
+        summary: `${list(names.map((n) => `“${n}”`))} ${names.length === 1 ? 'was' : 'were'} still in the browser after the visitor refused or withdrew consent. A server sets ${these} (HttpOnly), so no script on the page — the complykit tool included — can remove ${these}.`,
+        steps: [
+          `Find what sets ${list(names)}: your server, a server-side tag container, or ${tools}’s first-party integration (its Set-Cookie header).`,
+          `Stop setting ${these} while the visitor has not consented to the category. The consent cookie ${COMPLYKIT_CONSENT_COOKIE} holds the choice as URL-encoded JSON; its "categories" object is true / false per category.`,
+          `Where that cookie records a refusal or withdrawal, expire ${these} on the response: ${names.map((n) => `Set-Cookie: ${n}=; Max-Age=0; Path=/;`).join(' ')} with the same Domain as when set.`,
+          spotCheckStep(tools, page),
+        ],
+        verify: spotCheck(ev, it, page),
+      };
+    }
     case 'accepted-exposure':
       return {
         title: `Remove ${tools}`,
@@ -413,7 +429,7 @@ export function removeExistingToolTasks(ev: TrackingEvaluation, notes: Remediati
 //
 // Order: decisions (classify) → install → remove the old banner → (a mismatch nothing fixes) → tags
 // to hold (by page, in document order) → leaks → GTM / tag manager →
-// platform → consent defaults → vendor calls → DNS → find what loads →
+// platform → consent defaults → vendor calls → DNS → server cookies → find what loads →
 // decisions → confirm in the browser → optional items (same order).
 
 const RANK: Record<RemediationTask['kind'], number> = {
@@ -429,13 +445,14 @@ const RANK: Record<RemediationTask['kind'], number> = {
   'set-consent-default': 7,
   'call-consent-api': 8,
   'change-dns': 9,
+  'clear-server-cookie': 9,
   'needs-a-look': 10,
   'accepted-exposure': 11,
   'confirm-in-browser': 12,
 };
 
 /** Kinds that fix a tool observed running where it should be off. */
-const FIXES_BEHAVIOR = new Set<RemediationTask['kind']>(['rewrite-tag', 'remove-leak', 'gate-gtm-tag', 'configure-tag-manager', 'use-platform-api', 'set-consent-default', 'change-dns', 'needs-a-look']);
+const FIXES_BEHAVIOR = new Set<RemediationTask['kind']>(['rewrite-tag', 'remove-leak', 'gate-gtm-tag', 'configure-tag-manager', 'use-platform-api', 'set-consent-default', 'change-dns', 'clear-server-cookie', 'needs-a-look']);
 /** Kinds that remove an exposure no consent tool can hold. */
 const REMOVES_EXPOSURE = new Set<RemediationTask['kind']>(['remove-leak', 'change-dns']);
 
@@ -549,7 +566,8 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
   // to install the complykit tool for, and nothing to remove the site's own banner for: the
   // decisions (classify) are the whole list. The generated config and snippet still exist for
   // an owner who wants them; they are not a task.
-  const hasChanges = report.groups.some((g) => g.items.length > 0) || report.otherChanges.length > 0;
+  // A server-set cookie is the server's to clear: installing the complykit tool does not touch it.
+  const hasChanges = report.groups.some((g) => g.id !== 'server-cookies' && g.items.length > 0) || report.otherChanges.length > 0;
   if (hasChanges) {
     const { order: _o, ...install } = installTask(config, scriptSrc, page);
     slots.push({ task: draft(install), seq: 0 });
