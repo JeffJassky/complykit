@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import request from 'supertest';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PEER_HEADER, WORKER_SECRET_HEADER } from '../src/server/worker-protocol.js';
 import { createWorkerApp, loadWorkerConfig, type WorkerConfig, type WorkerService } from '../src/server/worker.js';
 import { tempDir } from './helpers.js';
@@ -18,6 +18,7 @@ interface Started { w: WorkerService; config: WorkerConfig; url: string; seen: S
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(cleanups.splice(0).map((f) => f()));
 });
 
@@ -87,7 +88,7 @@ describe('POST /internal/merge', () => {
     const tarB = await collect(b, 'j1-eu', 'de');
 
     // The previous run of the site, as the host's blob store holds it (evaluation + evidence).
-    const prevKey = 'jobs/old/consent/.comply/runs/r0/';
+    const prevKey = 'jobs/old/consent/.comply/runs/2026-10-01T10-00-00.000Z/';
     fs.mkdirSync(path.join(blobDir, prevKey, 'evidence'), { recursive: true });
     fs.writeFileSync(path.join(blobDir, prevKey, 'tracking.json'), '{}');
     fs.writeFileSync(path.join(blobDir, prevKey, 'evidence', 'big.har'), 'x');
@@ -115,11 +116,11 @@ describe('POST /internal/merge', () => {
       '--url', 'https://site.example.com/', '--cwd', dir, '--events', path.join(dir, 'events.ndjson'), '--quiet',
       '--failed', 'uk=worker in lhr failed: no capacity',
       '--workspace', path.join(dir, 'workspace.json'),
-      '--previous', path.join(dir, 'previous', 'r0'),
+      '--previous', path.join(dir, 'previous', '2026-10-01T10-00-00.000Z'),
     ]);
     expect(readJson(path.join(dir, 'workspace.json'))).toEqual(workspace);
-    expect(fs.existsSync(path.join(dir, 'previous', 'r0', 'tracking.json'))).toBe(true);
-    expect(fs.existsSync(path.join(dir, 'previous', 'r0', 'evidence'))).toBe(false); // evidence is not fetched
+    expect(fs.existsSync(path.join(dir, 'previous', '2026-10-01T10-00-00.000Z', 'tracking.json'))).toBe(true);
+    expect(fs.existsSync(path.join(dir, 'previous', '2026-10-01T10-00-00.000Z', 'evidence'))).toBe(false); // evidence is not fetched
     expect(fs.existsSync(path.join(dir, 'gather'))).toBe(false);
 
     // Published: the run, not the raw collections or scratch.
@@ -194,6 +195,47 @@ describe('POST /internal/merge', () => {
     await post(m, '/internal/merge', mergeBody([{ law: 'ca', locationId: 'us-ca', tarUrl: tarA }])).expect(202);
     await settled(m, 'j1-merge');
     await request(m.w.app).get('/internal/jobs/j1-merge/run.tar').set(auth).expect(409);
+  });
+});
+
+describe('merge: peers that cannot be fetched', () => {
+  it('one unreachable peer becomes a --failed law and the merge still finishes; the rest are merged', async () => {
+    const blobDir = tempDir();
+    const a = await startWorker({ blobDir });
+    const gone = await startWorker({ blobDir }); // never collected: its run.tar answers 404
+    const m = await startWorker({ blobDir });
+    const tarA = await collect(a, 'j1-ca', 'us-ca');
+    await post(m, '/internal/merge', mergeBody([
+      { law: 'eu', locationId: 'de', tarUrl: `${gone.url}/internal/jobs/j1-eu/run.tar` },
+      { law: 'ca', locationId: 'us-ca', tarUrl: tarA },
+    ])).expect(202);
+    expect(await settled(m, 'j1-merge')).toEqual({ state: 'done' });
+    const argv = readJson<string[]>(path.join(blobDir, 'jobs', 'j1', 'consent', 'merge-argv.json'));
+    const merged = argv[argv.indexOf('--merge') + 1].split(',');
+    expect(merged).toEqual([path.join(m.config.tmpDir, 'j1-merge', 'gather', 'ca')]);
+    expect(argv).toContain('--failed');
+    expect(argv[argv.indexOf('--failed') + 1]).toMatch(/^de=could not fetch the eu collection: HTTP 404$/);
+  });
+
+  it('a redirect from a peer is never followed (the secret header must not travel)', async () => {
+    const blobDir = tempDir();
+    const hits: string[] = [];
+    const target = express().use((req, res) => (hits.push(req.path), void res.status(200).send('x')));
+    const targetServer = target.listen(0, '127.0.0.1');
+    await new Promise((r) => targetServer.once('listening', r));
+    const hop = express().use((_req, res) => void res.redirect(302, `http://127.0.0.1:${(targetServer.address() as AddressInfo).port}/stolen`));
+    const hopServer = hop.listen(0, '127.0.0.1');
+    await new Promise((r) => hopServer.once('listening', r));
+    cleanups.push(async () => {
+      await new Promise((r) => hopServer.close(() => r(undefined)));
+      await new Promise((r) => targetServer.close(() => r(undefined)));
+    });
+    const m = await startWorker({ blobDir });
+    await post(m, '/internal/merge', mergeBody([{ law: 'ca', locationId: 'us-ca', tarUrl: `http://127.0.0.1:${(hopServer.address() as AddressInfo).port}/internal/jobs/x/run.tar` }])).expect(202);
+    const s = await settled(m, 'j1-merge');
+    expect(s.state).toBe('failed');
+    expect(s.error).toMatch(/could not fetch the ca collection/);
+    expect(hits).toEqual([]);
   });
 });
 
@@ -289,7 +331,7 @@ describe('busy and idle', () => {
   it('a running job answers 409 to every other job-style route; cancel frees the worker', async () => {
     const w = await startWorker();
     await post(w, '/internal/consent', { jobId: 'j5', url: 'https://slow.example.com/', quick: false, runs: 1, publish: { prefix: 'jobs/j5/consent/' } }).expect(202);
-    const src = [{ law: 'ca', locationId: 'us-ca', tarUrl: 'http://127.0.0.1:1/x.tar' }];
+    const src = [{ law: 'ca', locationId: 'us-ca', tarUrl: 'http://127.0.0.1:1/internal/jobs/x/run.tar' }];
     await post(w, '/internal/merge', mergeBody(src)).expect(409);
     await post(w, '/internal/consent', { jobId: 'j6', url: 'https://site.example.com/', quick: false, runs: 1, publish: { prefix: 'jobs/j6/consent/' } }).expect(409);
     await post(w, '/internal/verify', { task: {}, site: 'example.com' }).expect(409);
@@ -307,7 +349,7 @@ describe('busy and idle', () => {
 describe('without a blob store', () => {
   it('merge, consent and accessibility answer 503; collect still works', async () => {
     const w = await startWorker({ noBlobs: true });
-    const src = [{ law: 'ca', locationId: 'us-ca', tarUrl: 'http://127.0.0.1:1/x.tar' }];
+    const src = [{ law: 'ca', locationId: 'us-ca', tarUrl: 'http://127.0.0.1:1/internal/jobs/x/run.tar' }];
     for (const [route, body] of [
       ['/internal/merge', mergeBody(src)],
       ['/internal/consent', { jobId: 'j7', url: 'https://site.example.com/', quick: false, runs: 1, publish: { prefix: 'jobs/j7/consent/' } }],
@@ -368,6 +410,26 @@ describe('kb', () => {
   });
 });
 
+describe('the CLI child\'s environment', () => {
+  it('never sees the worker\'s secrets (Chromium renders arbitrary sites); it keeps what it needs', async () => {
+    vi.stubEnv('SPACES_KEY', 'spaces-key-value');
+    vi.stubEnv('SPACES_SECRET', 'spaces-secret-value');
+    vi.stubEnv('FLY_API_TOKEN', 'fly-token-value');
+    vi.stubEnv('COMPLYKIT_BROWSER_CHANNEL', 'chrome');
+    const blobDir = tempDir();
+    fs.mkdirSync(path.join(blobDir, 'kb'), { recursive: true });
+    fs.writeFileSync(path.join(blobDir, 'kb', 'entries.json'), '{}');
+    const w = await startWorker({ blobDir, over: { secret: 'worker-secret-value' } });
+    const auth2 = { [WORKER_SECRET_HEADER]: 'worker-secret-value' };
+    vi.stubEnv('WORKER_SECRET', 'worker-secret-value');
+    await request(w.w.app).post('/internal/consent').set(auth2).send({ jobId: 'e1', url: 'https://site.example.com/', quick: false, runs: 1, kb: 'kb/', publish: { prefix: 'jobs/e1/consent/' } }).expect(202);
+    for (let i = 0; i < 200 && (await request(w.w.app).get('/internal/jobs/e1').set(auth2)).body.state === 'running'; i++) await new Promise((r) => setTimeout(r, 20));
+    const names = readJson<string[]>(path.join(blobDir, 'jobs', 'e1', 'consent', 'env-seen.json'));
+    for (const secret of ['WORKER_SECRET', 'SPACES_KEY', 'SPACES_SECRET', 'SPACES_ENDPOINT', 'FLY_API_TOKEN', 'ANTHROPIC_API_KEY']) expect(names).not.toContain(secret);
+    for (const keep of ['PATH', 'COMPLYKIT_BROWSER_CHANNEL', 'COMPLYKIT_KB_DIR']) expect(names).toContain(keep);
+  });
+});
+
 describe('validation', () => {
   const tar = 'http://127.0.0.1:1/internal/jobs/x/run.tar';
   const src = { law: 'ca', locationId: 'us-ca', tarUrl: tar };
@@ -389,6 +451,58 @@ describe('validation', () => {
     await post(w, '/internal/merge', mergeBody([src], { publish: [] })).expect(400);
     expect(w.w.isBusy()).toBe(false);
     expect(fs.readdirSync(w.config.tmpDir)).toEqual([]);
+  });
+
+  it('only accepts a peer tar on the private network at exactly /internal/jobs/<id>/run.tar over http', async () => {
+    const w = await startWorker();
+    const bad = [
+      'https://[fdaa:0:1::2]:8080/internal/jobs/j1-ca/run.tar', // https
+      'http://203.0.113.9:8080/internal/jobs/j1-ca/run.tar', // a public address
+      'http://example.com/internal/jobs/j1-ca/run.tar',
+      'http://evil.internal.example.com/internal/jobs/j1-ca/run.tar',
+      'http://127.0.0.1:1/internal/jobs/x/run.tar/extra',
+      'http://127.0.0.1:1/internal/jobs/x/events',
+      'http://127.0.0.1:1/internal/jobs/../x/run.tar',
+      'http://127.0.0.1:1/x.tar',
+      'http://127.0.0.1:1/internal/jobs/x/run.tar?next=http://evil',
+      'http://u:p@127.0.0.1:1/internal/jobs/x/run.tar',
+      'http://127.0.0.1:1/internal/jobs/x/run.tar#a',
+    ];
+    for (const tarUrl of bad) await post(w, '/internal/merge', mergeBody([{ ...src, tarUrl }])).expect(400);
+    // The accepted shapes get as far as the job (202); the fetch itself then fails, and that is a failed job, not a bad request.
+    for (const [i, tarUrl] of ['http://[fdaa:0:1::2]:8080/internal/jobs/j1-ca/run.tar', 'http://abcd.vm.complykit-workers.internal:8080/internal/jobs/j1-ca/run.tar'].entries()) {
+      await post(w, '/internal/merge', mergeBody([{ ...src, tarUrl }], { jobId: `m${i}-merge`, publish: { prefix: `jobs/m${i}/consent/` } })).expect(202);
+      await request(w.w.app).post(`/internal/jobs/m${i}-merge/cancel`).set(auth).expect(200);
+    }
+    // Loopback is for tests and local development only.
+    vi.stubEnv('NODE_ENV', 'production');
+    await post(w, '/internal/merge', mergeBody([src], { jobId: 'p1-merge', publish: { prefix: 'jobs/p1/consent/' } })).expect(400);
+  });
+
+  it('publish.prefix must be this job\'s own jobs/<id>/consent/ (accessibility: .../accessibility/); previous must be a run directory', async () => {
+    const w = await startWorker();
+    const run = '2026-10-01T10-00-00.000Z';
+    const wrong: Array<[string, Record<string, unknown>]> = [
+      ['/internal/merge', mergeBody([src], { publish: { prefix: 'jobs/other/consent/' } })],
+      ['/internal/merge', mergeBody([src], { publish: { prefix: 'jobs/j1/accessibility/' } })],
+      ['/internal/merge', mergeBody([src], { publish: { prefix: 'jobs/j1/consent/.comply/' } })],
+      ['/internal/merge', mergeBody([src], { publish: { prefix: 'jobs/j1/' } })],
+      ['/internal/consent', consent({ publish: { prefix: 'jobs/j9/consent/' } })],
+      ['/internal/consent', consent({ publish: { prefix: 'jobs/j8/accessibility/' } })],
+      ['/internal/accessibility', a11y({ publish: { prefix: 'jobs/j8/consent/' } })],
+      ['/internal/accessibility', a11y({ publish: { prefix: 'jobs/j9/accessibility/' } })],
+      ['/internal/consent', consent({ previous: 'jobs/old/consent/.comply/runs/r0/' })],
+      ['/internal/consent', consent({ previous: `jobs/old/accessibility/.comply/runs/${run}/` })],
+      ['/internal/consent', consent({ previous: `jobs/old/consent/.comply/runs/${run}/evidence/` })],
+      ['/internal/consent', consent({ previous: `jobs/old/consent/.comply/${run}/` })],
+      ['/internal/merge', mergeBody([src], { previous: 'jobs/old/consent/' })],
+    ];
+    for (const [route, b] of wrong) await post(w, route, b).expect(400);
+    // The host's own shapes pass: the worker job id carries -merge / -consent / -accessibility.
+    await post(w, '/internal/consent', consent({ jobId: 'j8-consent', previous: `jobs/old/consent/.comply/runs/${run}/` })).expect(202);
+    await request(w.w.app).post('/internal/jobs/j8-consent/cancel').set(auth).expect(200);
+    await post(w, '/internal/accessibility', a11y({ jobId: 'j8-accessibility' })).expect(202);
+    await request(w.w.app).post('/internal/jobs/j8-accessibility/cancel').set(auth).expect(200);
   });
 
   it('rejects bad merge bodies', async () => {

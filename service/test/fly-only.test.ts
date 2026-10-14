@@ -82,6 +82,8 @@ function recordingFleet(map: Record<string, string>): { fleet: Fleet; regions: s
         return inner.acquire(r);
       },
       release: (h) => inner.release(h),
+      halt: (h) => inner.halt(h),
+      stopAll: () => inner.stopAll(),
     },
   };
 }

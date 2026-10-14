@@ -3,13 +3,39 @@ import path from 'node:path';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ConsentProgress, NdjsonTail } from '../src/server/events.js';
-import { idleReason, sweepRetention } from '../src/server/lifecycle.js';
+import { failStaleJobs, idleReason, sweepRetention } from '../src/server/lifecycle.js';
 import { JobStore } from '../src/server/store.js';
 import { loadConfig } from '../src/server/config.js';
 import type { CreateBatchResponse, JobDetail, JobsResponse } from '../src/shared/api.js';
 import { startService, stopAll, tempDir, waitFor, waitForStatus } from './helpers.js';
 
 afterEach(stopAll);
+
+describe('failStaleJobs (the late recovery pass)', () => {
+  it('fails running/queued jobs from before the boot that this process does not own; leaves everything else', () => {
+    const store = new JobStore(tempDir());
+    const mk = (url: string) => store.create({ batchId: 'b', url, checks: ['consent'], quick: false });
+    const [old, queuedOld, owned, newer, finished] = ['a', 'b', 'c', 'd', 'e'].map((h) => mk(`https://${h}.example.com/`));
+    const bootAt = Date.now();
+    const before = new Date(bootAt - 60_000).toISOString();
+    const after = new Date(bootAt + 60_000).toISOString();
+    const fresh: JobDetail[] = [
+      { ...old, status: 'running', startedAt: before },
+      { ...queuedOld, status: 'queued', createdAt: before },
+      { ...owned, status: 'running', startedAt: before },
+      { ...newer, status: 'running', startedAt: after },
+      { ...finished, status: 'done', startedAt: before },
+      { ...old, id: 'gone0000', status: 'running', startedAt: before }, // not in the store (deleted meanwhile)
+    ];
+    const failed = failStaleJobs(store, fresh, { bootAt, owns: (id) => id === owned.id });
+    expect(failed.sort()).toEqual([old.id, queuedOld.id].sort());
+    expect(store.get(old.id)).toMatchObject({ status: 'failed', error: 'interrupted by a restart' });
+    expect(store.get(queuedOld.id)!.status).toBe('failed');
+    expect(store.get(owned.id)!.status).toBe('queued');
+    expect(store.get(newer.id)!.status).toBe('queued');
+    expect(store.get(finished.id)!.status).toBe('queued');
+  });
+});
 
 describe('restart recovery', () => {
   it('reloads jobs from disk: running → failed, queued → re-run, done stays done', async () => {

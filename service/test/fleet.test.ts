@@ -91,11 +91,14 @@ describe('flyFleet', () => {
     expect(h.machineId).toBe('m1');
     expect(s.bodies[0]).toMatchObject({
       name: 'worker-fra', region: 'fra',
-      config: { image: 'img:2', env: { WORKER: '1', WORKER_SECRET: SECRET, IDLE_SHUTDOWN_MINUTES: '3' },
+      config: { image: 'img:2', env: { WORKER: '1', IDLE_SHUTDOWN_MINUTES: '3' },
         guest: { cpu_kind: 'performance', cpus: 2, memory_mb: 4096 }, services: SERVICES, restart: { policy: 'no' }, metadata: { complykit_role: 'worker' } },
     });
     // Secrets (Spaces keys) come from Fly app secrets, never the Machine's config.
     expect(JSON.stringify(s.bodies[0])).not.toMatch(/SPACES/);
+    // The worker secret is a Fly app secret: Machine config is readable with the Fly token.
+    expect(JSON.stringify(s.bodies[0])).not.toContain(SECRET);
+    expect(s.bodies[0].config.env).not.toHaveProperty('WORKER_SECRET');
   });
 
   it('gives an existing worker without the public service one, then starts it', async () => {
@@ -119,7 +122,8 @@ describe('flyFleet', () => {
     expect(s.calls.indexOf('POST /w1')).toBeLessThan(s.calls.indexOf('POST /w1/start'));
     const m = s.machines.get('w1')!;
     expect(m.config.image).toBe('img:2');
-    expect(m.config.env).toMatchObject({ KEEP: 'x', WORKER: '1', WORKER_SECRET: SECRET });
+    expect(m.config.env).toMatchObject({ KEEP: 'x', WORKER: '1' });
+    expect(m.config.env).not.toHaveProperty('WORKER_SECRET');
     expect(m.config.metadata.complykit_role).toBe('worker');
     expect(m.state).toBe('started');
   });
@@ -181,6 +185,46 @@ describe('flyFleet', () => {
     await expect(s.fleet.release({ ...h, machineId: 'gone' })).resolves.toBeUndefined();
     const boom = flyFleet({ app: 'a', token: TOKEN, image: 'i', secret: 's', fetch: (async () => { throw new Error('net'); }) as typeof fetch });
     await expect(boom.release(h)).resolves.toBeUndefined();
+  });
+});
+
+describe('flyFleet: secrets and sweeps', () => {
+  it('drops a WORKER_SECRET an older Machine still carries in its env, even when nothing else differs', async () => {
+    const s = sim([worker({ config: { image: 'img:2', env: { WORKER: '1', WORKER_SECRET: 'old-secret' }, guest: { cpu_kind: 'performance', cpus: 2, memory_mb: 4096 }, services: SERVICES, metadata: { complykit_role: 'worker' } } })]);
+    await s.fleet.acquire('fra');
+    expect(s.calls).toContain('POST /w1');
+    expect(s.machines.get('w1')!.config.env).toEqual({ WORKER: '1', IDLE_SHUTDOWN_MINUTES: '3' });
+  });
+
+  it('stopAll stops every worker Machine that is up, and only those', async () => {
+    const mk = (id: string, state: string, role = 'worker') => worker({ id, state, config: { image: 'img:2', metadata: { complykit_role: role } } });
+    const s = sim([mk('a', 'started'), mk('b', 'starting'), mk('c', 'stopped'), mk('d', 'started', 'other')]);
+    await s.fleet.stopAll();
+    expect(s.machines.get('a')!.state).toBe('stopped');
+    expect(s.machines.get('b')!.state).toBe('stopped');
+    expect(s.machines.get('d')!.state).toBe('started');
+    expect(s.calls.filter((c) => c.endsWith('/stop')).sort()).toEqual(['POST /a/stop', 'POST /b/stop']);
+  });
+
+  it('stopAll swallows errors and gives up after its time limit', async () => {
+    const boom = flyFleet({ app: 'a', token: TOKEN, image: 'i', secret: 's', fetch: (async () => { throw new Error('net'); }) as typeof fetch });
+    await expect(boom.stopAll()).resolves.toBeUndefined();
+    const hang = flyFleet({ app: 'a', token: TOKEN, image: 'i', secret: 's', fetch: (() => new Promise(() => {})) as typeof fetch });
+    const t0 = Date.now();
+    await expect(hang.stopAll(150)).resolves.toBeUndefined();
+    expect(Date.now() - t0).toBeLessThan(2_000);
+  });
+
+  it('halt fires the stop without waiting for it to land, and gives up on a hung API', async () => {
+    const s = sim([worker({ state: 'started' })]);
+    const h = await s.fleet.acquire('fra');
+    s.calls.length = 0;
+    await s.fleet.halt(h);
+    expect(s.calls).toEqual(['POST /w1/stop']); // no wait?state=stopped
+    const hang = flyFleet({ app: 'a', token: TOKEN, image: 'i', secret: 's', fetch: ((_u: unknown, init: any) => new Promise((_r, rej) => init?.signal?.addEventListener('abort', () => rej(new Error('aborted'))))) as typeof fetch });
+    const t0 = Date.now();
+    await expect(hang.halt(h, 100)).resolves.toBeUndefined();
+    expect(Date.now() - t0).toBeLessThan(2_000);
   });
 });
 

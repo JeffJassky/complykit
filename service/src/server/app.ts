@@ -100,7 +100,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
       }
     },
     workspaces,
-    { ...runnerOptions, ingestRun: runnerOptions.ingestRun ?? ((dir) => kb.ingestRun(dir)) },
+    { ...runnerOptions, ingestRun: runnerOptions.ingestRun ?? ((dir) => kb.ingestRun(dir)), reloadJobs: runnerOptions.reloadJobs ?? (() => storage.jobs.loadAll()) },
   );
   const kb = new KnowledgeBase(config, () => {
     hub.notifyKb();
@@ -118,6 +118,8 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
   await sweepRetention(store, config.retentionDays);
   const sweep = setInterval(() => void sweepRetention(store, config.retentionDays), RETENTION_SWEEP_MS);
   sweep.unref();
+  // Workers an earlier host left busy are stopped first, so this host's first POST doesn't meet a 409.
+  await runner.afterBoot();
   for (const id of requeue) runner.enqueue(id);
 
   const app = express();

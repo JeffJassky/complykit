@@ -28,6 +28,34 @@ export function recoverJobs(store: JobStore, jobs: JobDetail[]): string[] {
   return requeue.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map((j) => j.id);
 }
 
+/**
+ * The late recovery pass (~10 min after boot). `fresh` is every job record as the database holds
+ * it now. A job that is still `running`/`queued` there, that this process doesn't own, and that
+ * began (queued: was created) before this process booted belongs to an earlier host that died
+ * or never finished: fail it. A job the old host did finish (`done`, ...) is left alone.
+ * Returns the ids failed.
+ */
+export function failStaleJobs(store: JobStore, fresh: JobDetail[], opts: { bootAt: number; owns: (id: string) => boolean }): string[] {
+  const failed: string[] = [];
+  for (const rec of fresh) {
+    if (rec.status !== 'running' && rec.status !== 'queued') continue;
+    if (opts.owns(rec.id)) continue;
+    const began = Date.parse((rec.status === 'running' ? rec.startedAt : undefined) ?? rec.createdAt);
+    if (!(began < opts.bootAt)) continue;
+    const job = store.get(rec.id);
+    if (!job) continue; // deleted meanwhile
+    Object.assign(job, rec, { log: rec.log ?? job.log });
+    job.status = 'failed';
+    job.error = 'interrupted by a restart';
+    job.finishedAt = new Date().toISOString();
+    job.progress.current = undefined;
+    job.result = { ...job.result, downloadUrl: `/api/jobs/${job.id}/download` };
+    store.update(job);
+    failed.push(job.id);
+  }
+  return failed;
+}
+
 /** Delete finished jobs created more than `retentionDays` ago. Also removes
  *  orphan dirs (no readable job.json) by mtime. Returns how many went.
  *  `retentionDays` 0 (the default) keeps everything and sweeps nothing.

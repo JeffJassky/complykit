@@ -25,6 +25,10 @@ export interface Fleet {
   acquire(region: string): Promise<WorkerHandle>;
   /** Stop it (best effort, never throws). */
   release(h: WorkerHandle): Promise<void>;
+  /** Fire the stop without waiting for it to land (host shutdown: bounded by `timeoutMs`, default 5 s). Best effort, never throws. */
+  halt(h: WorkerHandle, timeoutMs?: number): Promise<void>;
+  /** Stop every worker Machine that is up (host boot: nothing legitimately runs for a host that just started). Best effort, never throws, gives up after `timeoutMs` (default 30 s). */
+  stopAll(timeoutMs?: number): Promise<void>;
 }
 
 export interface FlyFleetConfig {
@@ -105,11 +109,13 @@ export function flyFleet(cfg: FlyFleetConfig): Fleet {
   const api = (cfg.apiBase ?? 'https://api.machines.dev/v1').replace(/\/$/, '');
   const healthTimeout = cfg.healthTimeoutMs ?? HEALTH_TIMEOUT_MS;
   const base = `${api}/apps/${encodeURIComponent(cfg.app)}/machines`;
-  const workerEnv = { WORKER: '1', WORKER_SECRET: cfg.secret, IDLE_SHUTDOWN_MINUTES: '3' };
+  // WORKER_SECRET is deliberately not here: Machine config is readable with the Fly token. It is an app secret on the workers' app, which reaches API-created Machines.
+  const workerEnv = { WORKER: '1', IDLE_SHUTDOWN_MINUTES: '3' };
 
-  async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
+  async function call<T>(method: string, url: string, body?: unknown, timeoutMs?: number): Promise<T> {
     const res = await doFetch(url, {
       method,
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       headers: { authorization: authHeader(cfg.token), ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
@@ -158,10 +164,12 @@ export function flyFleet(cfg: FlyFleetConfig): Fleet {
 
   /** Bring an existing worker to this image and size, then start it. */
   async function prepare(m: Machine): Promise<Machine> {
-    if (m.config?.image !== cfg.image || !sameGuest(m.config?.guest) || !sameServices(m.config?.services)) {
+    if (m.config?.image !== cfg.image || !sameGuest(m.config?.guest) || !sameServices(m.config?.services) || m.config?.env?.WORKER_SECRET !== undefined) {
+      // An older Machine may still carry the secret in its env: the update drops it.
+      const { WORKER_SECRET: _drop, ...keep } = m.config?.env ?? {};
       const updated = await call<Machine | undefined>('POST', `${base}/${m.id}`, {
         region: m.region,
-        config: { ...m.config, image: cfg.image, env: { ...m.config?.env, ...workerEnv }, guest: WORKER_GUEST, services: WORKER_SERVICES },
+        config: { ...m.config, image: cfg.image, env: { ...keep, ...workerEnv }, guest: WORKER_GUEST, services: WORKER_SERVICES },
       });
       m = { ...m, ...(updated ?? {}), config: updated?.config ?? { ...m.config, image: cfg.image } };
       // Fly leaves a stopped Machine stopped after an update, but its reply shows a
@@ -244,7 +252,26 @@ export function flyFleet(cfg: FlyFleetConfig): Fleet {
     }
   }
 
-  return { acquire, release };
+  async function halt(h: WorkerHandle, timeoutMs = 5_000): Promise<void> {
+    try {
+      await call('POST', `${base}/${h.machineId}/stop`, undefined, timeoutMs);
+    } catch {
+      /* best effort */
+    }
+  }
+
+  async function stopAll(timeoutMs = 30_000): Promise<void> {
+    const work = (async () => {
+      const all = (await call<Machine[]>('GET', base, undefined, 10_000)) ?? [];
+      const up = all.filter((m) => m.config?.metadata?.complykit_role === 'worker' && (m.state === 'started' || m.state === 'starting'));
+      await Promise.all(up.map((m) => halt({ region: m.region, machineId: m.id, baseUrl: '', headers: {}, privateUrl: '' }, 10_000)));
+    })().catch(() => undefined);
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([work, new Promise<void>((r) => (timer = setTimeout(r, timeoutMs)))]);
+    clearTimeout(timer);
+  }
+
+  return { acquire, release, halt, stopAll };
 }
 
 /** For tests: region → base URL of an already-running (fake) worker. */
@@ -256,5 +283,7 @@ export function fakeFleet(map: Record<string, string>): Fleet {
       return { region, machineId: `fake-${region}`, baseUrl, headers: {}, privateUrl: baseUrl };
     },
     async release() {},
+    async halt() {},
+    async stopAll() {},
   };
 }

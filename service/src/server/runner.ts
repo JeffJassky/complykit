@@ -13,6 +13,8 @@ import { RegionLocks } from './region-lock.js';
 import { DEFAULT_WORKER_REGION, WORKER_SECRET_HEADER, type AccessibilityRequest, type CollectRequest, type ConsentRequest, type MergeRequest } from './worker-protocol.js';
 import { consentRunsFor, jobTimeoutFor, type ServiceConfig } from './config.js';
 import { ConsentProgress, NdjsonTail, fraction } from './events.js';
+import { RUN_ID_RE } from './job-files.js';
+import { failStaleJobs } from './lifecycle.js';
 import type { JobStore } from './store.js';
 import type { WorkspaceStore } from './workspace.js';
 import type { SiteWorkspace } from '../shared/api.js';
@@ -29,6 +31,8 @@ interface Active {
   reason?: StopReason;
   /** Resolves when the job's run loop has fully finished. */
   finished: Promise<void>;
+  /** Starts the job's time limit (idempotent). With a fleet the clock starts once the job holds its region locks, not while it queues for them. */
+  startClock: () => void;
 }
 
 /** How many trailing stderr lines go into a failure message. */
@@ -46,6 +50,16 @@ export interface RunnerOptions {
   remoteTimeoutMs?: number;
   /** Ingests a run directory (its tracking.json) into the host's knowledge base; saving it is the callee's business. Default: none. */
   ingestRun?: (dir: string) => Promise<void>;
+  /** While a collected worker waits for the merge, the host pings it this often so its idle shutdown doesn't fire (60 s). */
+  keepAliveMs?: number;
+  /** Cap on waiting for one region's worker (45 min). */
+  lockWaitMs?: number;
+  /** Total time a shutdown may take before it gives up on the rest (12 s). */
+  shutdownBoundMs?: number;
+  /** Re-reads every stored job record, for the late recovery pass (after a rolling deploy two hosts briefly share one database). */
+  reloadJobs?: () => Promise<JobDetail[]>;
+  /** When the late recovery pass runs after boot (10 min). */
+  lateRecoveryMs?: number;
 }
 
 const REMOTE_STAGGER_MS = 3_000;
@@ -53,6 +67,14 @@ const REMOTE_POLL_MS = 2_000;
 const REMOTE_TIMEOUT_MS = 30 * 60_000;
 /** Consecutive failed polls before a worker is given up on. */
 const REMOTE_MAX_POLL_FAILURES = 8;
+/** Workers self-stop after 3 idle minutes; a kept worker is pinged well inside that. */
+const KEEP_ALIVE_MS = 60_000;
+const LOCK_WAIT_MS = 45 * 60_000;
+const SHUTDOWN_BOUND_MS = 12_000;
+const LATE_RECOVERY_MS = 10 * 60_000;
+
+/** The host lost the worker (8 failed polls). The worker may have finished all the same. */
+class LostContact extends Error {}
 
 interface Gathered {
   law: Law;
@@ -84,6 +106,11 @@ export class Runner {
   }
 
   private readonly fleet?: Fleet;
+  private readonly bootAt = Date.now();
+  private shuttingDown = false;
+  private lateTimer?: NodeJS.Timeout;
+  /** Machines this process holds right now, and the worker jobs it posted to each: what a shutdown must stop. */
+  private readonly held = new Map<WorkerHandle, Set<string>>();
   /** Per-region lock: a worker runs one job at a time, and this process may run several jobs (and Verify). */
   readonly regionLocks = new RegionLocks();
 
@@ -145,14 +172,80 @@ export class Runner {
     return true;
   }
 
-  /** Stop accepting, kill every running job ("server stopped"), wait for them.
-   *  Queued jobs stay queued on disk and are picked up again after a restart. */
+  /**
+   * After boot, once the queue is recovered and before it is re-enqueued: nothing
+   * legitimately runs on a worker for a host that just started, but an earlier host's
+   * jobs may still be running there (the next POST would answer 409 busy). Stop every
+   * worker Machine, best effort; then schedule the late recovery pass.
+   */
+  async afterBoot(): Promise<void> {
+    if (this.fleet) {
+      try {
+        await this.fleet.stopAll(30_000);
+        console.log('[boot] stopped any worker Machines an earlier host left running');
+      } catch (err) {
+        console.warn(`[boot] could not stop leftover workers: ${(err as Error).message}`);
+      }
+    }
+    const reload = this.options.reloadJobs;
+    if (reload) {
+      this.lateTimer = setTimeout(() => void this.lateRecovery(reload), this.options.lateRecoveryMs ?? LATE_RECOVERY_MS);
+      this.lateTimer.unref();
+    }
+  }
+
+  /**
+   * A rolling deploy briefly runs two hosts on one database: this one failed the old host's
+   * running jobs at boot, the old host's later writes flipped them back, and an old host that
+   * was then killed leaves them `running` for good. Jobs this process doesn't own, that began
+   * before it booted and are still running or queued, are failed.
+   */
+  async lateRecovery(reload: () => Promise<JobDetail[]> = this.options.reloadJobs!): Promise<string[]> {
+    try {
+      const failed = failStaleJobs(this.store, await reload(), { bootAt: this.bootAt, owns: (id) => this.active.has(id) || this.queue.includes(id) });
+      if (failed.length) console.log(`[recovery] failed ${failed.length} job(s) left running by an earlier host: ${failed.join(', ')}`);
+      return failed;
+    } catch (err) {
+      console.warn(`[recovery] late pass failed: ${(err as Error).message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Stop accepting and stop every running job ("server stopped"). Bounded: a platform
+   * signal gives seconds, and a SIGKILL must leave jobs failed and Machines stopping,
+   * not running. So, in order: persist each running job as failed; kill local children;
+   * POST /stop to every held Machine (no waiting for it to land); best-effort cancel and
+   * delete the worker jobs. Queued jobs stay queued on disk and are picked up after a restart.
+   */
   async shutdown(killGraceMs = this.config.killGraceMs): Promise<void> {
     this.accepting = false;
+    this.shuttingDown = true;
+    clearTimeout(this.lateTimer);
     this.queue.length = 0;
     const all = [...this.active.values()];
-    for (const a of all) this.stop(a, 'stopped', killGraceMs);
-    await Promise.all(all.map((a) => a.finished));
+    const work = (async () => {
+      for (const a of all) {
+        a.reason ??= 'stopped';
+        const job = a.job;
+        if (a.reason === 'stopped' && job.status === 'running') {
+          job.status = 'failed';
+          job.error = 'server stopped';
+          job.finishedAt = new Date().toISOString();
+          job.progress.current = undefined;
+          this.store.update(job);
+        }
+      }
+      await this.store.flush().catch(() => undefined);
+      for (const a of all) this.stop(a, 'stopped', killGraceMs);
+      const held = [...this.held];
+      await Promise.all(held.map(([h]) => this.fleet!.halt(h, 5_000).catch(() => undefined)));
+      await Promise.all(held.flatMap(([h, jobs]) => [...jobs].map((j) => this.endWorkerJob(h, j, true, 2_000))));
+      await Promise.all(all.map((a) => a.finished));
+    })();
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([work, new Promise<void>((r) => (timer = setTimeout(r, this.options.shutdownBoundMs ?? SHUTDOWN_BOUND_MS)))]);
+    clearTimeout(timer);
   }
 
   private pump(): void {
@@ -160,7 +253,7 @@ export class Runner {
       const id = this.queue.shift()!;
       const job = this.store.get(id);
       if (!job || job.status !== 'queued') continue;
-      const a: Active = { job, children: new Set(), abort: new AbortController(), finished: Promise.resolve() };
+      const a: Active = { job, children: new Set(), abort: new AbortController(), finished: Promise.resolve(), startClock: () => {} };
       this.active.set(id, a);
       a.finished = this.run(a).finally(() => {
         this.active.delete(id);
@@ -190,7 +283,12 @@ export class Runner {
 
     // One pass gets the base cap; each slowed repeat adds SLOW_REPEAT_TIMEOUT_FACTOR times it.
     const timeoutMs = jobTimeoutFor(this.config, consent ? consentRunsFor(job, this.config) : 1);
-    const timeout = setTimeout(() => this.stop(a, 'timeout'), timeoutMs);
+    let timeout: NodeJS.Timeout | undefined;
+    a.startClock = () => {
+      timeout ??= setTimeout(() => this.stop(a, 'timeout'), timeoutMs);
+    };
+    // With a fleet the clock starts when the job holds its region locks: waiting behind another scan is not the job's time.
+    if (!this.fleet) a.startClock();
     try {
       if (consent) await this.runConsent(a, a11y ? 1 : 0);
       if (a11y) await this.runAccessibility(a);
@@ -344,14 +442,26 @@ export class Runner {
     const appendLine = (line: string) => fs.appendFileSync(eventsFile, line.endsWith('\n') ? line : line + '\n');
     // Worker jobs and Machines to clean up however this ends.
     const cleanups: Cleanup[] = [];
+    // Region locks, all taken up front.
+    const unlocks = new Map<string, () => void>();
     const mergeOn: { handle?: WorkerHandle; jobId?: string; interrupted: { interrupted: boolean } } = { interrupted: { interrupted: false } };
     tail.start();
     try {
       this.store.appendLog(job, [`[consent] scanning under ${laws.map((l) => l.label).join(', ')} (authorized ${job.authorizedAt ?? 'at submission'})`]);
       const onWorker = (l: Law) => !!fleet || !l.local;
       const remote = laws.filter(onWorker);
+      // Every region this job needs, in catalog order (`laws` is), before any collection starts: two jobs that took
+      // regions law by law could each hold one the other waits for, and both would wait for ever.
+      if (fleet) {
+        for (const law of remote) {
+          if (unlocks.has(law.flyRegion)) continue;
+          unlocks.set(law.flyRegion, await this.regionLocks.lock(law.flyRegion, a.abort.signal, () => this.store.appendLog(job, [`[collect:${law.id}] waiting for the ${law.flyRegion} worker (another scan is using it)`]), this.options.lockWaitMs ?? LOCK_WAIT_MS));
+        }
+        if (a.reason) throw new Error(a.reason);
+      }
+      a.startClock();
       const gathered = await Promise.all(
-        laws.map((law) => (onWorker(law) ? this.collectRemote(a, law, appendLine, remote.indexOf(law) * (this.options.staggerMs ?? REMOTE_STAGGER_MS), setLaw, live, cleanups) : this.collectLocal(a, law, gatherRoot, quiet, appendLine, setLaw, live))),
+        laws.map((law) => (onWorker(law) ? this.collectRemote(a, law, appendLine, remote.indexOf(law) * (this.options.staggerMs ?? REMOTE_STAGGER_MS), setLaw, live, cleanups, unlocks.get(law.flyRegion)) : this.collectLocal(a, law, gatherRoot, quiet, appendLine, setLaw, live))),
       );
       if (a.reason) throw new Error(a.reason);
 
@@ -366,7 +476,15 @@ export class Runner {
       merging = true;
       let res: StepResult | undefined;
       if (fleet) {
-        await this.mergeOnWorker(a, ok, failed, site, appendLine, mergeOn);
+        try {
+          await this.mergeOnWorker(a, ok, failed, site, appendLine, mergeOn);
+        } catch (err) {
+          // The worker may have finished and published before the host lost it: look before failing the job.
+          if (!(err instanceof LostContact) || a.reason) throw err;
+          await tail.stop();
+          if (!(await this.adoptPublishedRun(a, mapper))) throw err;
+          this.store.appendLog(job, ['[merge] lost contact with the merge worker, but it had published the finished run; finishing from the published files']);
+        }
         await tail.stop();
       } else {
         const failedArgs = failed.flatMap((g) => ['--failed', `${g.law.locationId}=${g.error}`]);
@@ -391,6 +509,44 @@ export class Runner {
       // The merge job first (on its worker), then every collection, Machine and region lock.
       if (mergeOn.handle && mergeOn.jobId) await this.endWorkerJob(mergeOn.handle, mergeOn.jobId, mergeOn.interrupted.interrupted || a.abort.signal.aborted);
       await Promise.all(cleanups.map((c) => c()));
+      // Locks of laws that never started a worker (an abort while taking them); idempotent for the rest.
+      for (const u of unlocks.values()) u();
+    }
+  }
+
+  /**
+   * The merge worker was lost after publishing? Looks in blobs for this job's run (`jobs/<id>/consent/.comply/runs/<run>/tracking.json`).
+   * When the relayed events carry no `done` (the last pull failed), one is made from the published report so the job can finish as done.
+   */
+  private async adoptPublishedRun(a: Active, mapper: ConsentProgress): Promise<boolean> {
+    const { job } = a;
+    const blobs = this.store.files.blobs;
+    const base = `jobs/${job.id}/consent/.comply/runs/`;
+    try {
+      let runId = mapper.done?.runId;
+      if (runId) {
+        if (!(await blobs.head(`${base}${runId}/tracking.json`))) return false;
+      } else {
+        for await (const info of blobs.list(base)) {
+          const m = /^([^/]+)\/tracking\.json$/.exec(info.key.slice(base.length));
+          if (m && RUN_ID_RE.test(m[1])) runId = m[1];
+        }
+        if (!runId) return false;
+      }
+      if (!mapper.done) {
+        let totals: NonNullable<ConsentProgress['done']>['totals'] = { violation: 0, 'needs-review': 0, exposure: 0, practice: 0 } as NonNullable<ConsentProgress['done']>['totals'];
+        try {
+          const report = JSON.parse((await blobs.get(`${base}${runId}/consent-report.json`))?.toString('utf8') ?? '') as { totals?: typeof totals };
+          if (report.totals && typeof report.totals === 'object') totals = { ...totals, ...report.totals };
+        } catch {
+          /* the run is there; its counts are not */
+        }
+        const findings = Object.values(totals).reduce((n: number, v) => n + (typeof v === 'number' ? v : 0), 0);
+        mapper.apply({ type: 'done', at: new Date().toISOString(), runId, runDir: '', report: '', findings, totals, parties: 0, unrecognized: 0 });
+      }
+      return !!mapper.done;
+    } catch {
+      return false;
     }
   }
 
@@ -420,13 +576,15 @@ export class Runner {
     this.store.appendLog(job, [`[merge] merging ${ok.length} collection(s) on the ${first.handle.region} worker`]);
     try {
       await this.postJob(a, first.handle, 'merge', body);
+      this.held.get(first.handle)?.add(workerJob);
       mergeOn.handle = first.handle;
       mergeOn.jobId = workerJob;
       await this.followJob(a, first.handle, workerJob, { ok: 'done', appendLine, ctl: mergeOn.interrupted });
     } catch (err) {
       mergeOn.interrupted.interrupted ||= a.abort.signal.aborted;
       if (a.abort.signal.aborted) throw new Error(a.reason ?? 'cancelled');
-      throw new Error(`merge on the ${first.handle.region} worker failed: ${(err as Error).message}`);
+      const message = `merge on the ${first.handle.region} worker failed: ${(err as Error).message}`;
+      throw err instanceof LostContact ? new LostContact(message) : new Error(message);
     }
   }
 
@@ -473,7 +631,7 @@ export class Runner {
    * cleanup is pushed to `cleanups` and the caller runs it after the merge.
    * On failure everything is cleaned up here.
    */
-  private async collectRemote(a: Active, law: Law, appendLine: (l: string) => void, delayMs: number, setLaw: SetLaw, live: LiveFiles, cleanups: Cleanup[]): Promise<Gathered> {
+  private async collectRemote(a: Active, law: Law, appendLine: (l: string) => void, delayMs: number, setLaw: SetLaw, live: LiveFiles, cleanups: Cleanup[], unlock: (() => void) | undefined): Promise<Gathered> {
     const { job } = a;
     const signal = a.abort.signal;
     const workerJob = `${job.id}-${law.id}`;
@@ -481,7 +639,6 @@ export class Runner {
     let posted = false;
     let kept = false;
     const ctl = { interrupted: false };
-    let unlock: (() => void) | undefined;
     const check = () => {
       if (signal.aborted) throw new Error(a.reason ?? 'cancelled');
     };
@@ -489,15 +646,15 @@ export class Runner {
       if (!this.fleet) throw new Error('multi-region scanning is not configured on this server');
       await sleepAbortable(delayMs, signal);
       check();
-      unlock = await this.regionLocks.lock(law.flyRegion, signal, () => this.store.appendLog(job, [`[collect:${law.id}] waiting for the ${law.flyRegion} worker (another scan is using it)`]));
-      check();
       this.store.appendLog(job, [`[collect:${law.id}] starting the worker in ${law.flyRegion}`]);
       setLaw(law, { state: 'starting' });
       handle = await this.fleet.acquire(law.flyRegion);
+      this.held.set(handle, new Set());
       check();
       const body: CollectRequest = { jobId: workerJob, url: job.url, locationId: law.locationId, quick: job.quick, runs: consentRunsFor(job, this.config) };
       await this.postJob(a, handle, 'collect', body);
       posted = true;
+      this.held.get(handle)?.add(workerJob);
       this.store.appendLog(job, [`[collect:${law.id}] collecting from ${law.flyRegion}`]);
 
       // The worker's owner report, fetched on each `live` event: one fetch in flight; a live event meanwhile asks for one more after it. Errors (404 included) are ignored.
@@ -532,8 +689,8 @@ export class Runner {
         ctl,
       });
       kept = true;
-      // The run stays on the worker for the merge; nothing is fetched here.
-      cleanups.push(this.closer(handle, workerJob, unlock));
+      // The run stays on the worker for the merge; nothing is fetched here. Until the merge is over the worker is pinged, or its idle shutdown would take the run with it.
+      cleanups.push(this.closer(handle, workerJob, unlock, this.keepAlive(handle, workerJob)));
       return { law, worker: { handle, jobId: workerJob } };
     } catch (err) {
       ctl.interrupted ||= signal.aborted;
@@ -597,7 +754,7 @@ export class Runner {
         failures = 0;
       } catch (err) {
         if (signal.aborted) throw new Error(a.reason ?? 'cancelled');
-        if (++failures >= REMOTE_MAX_POLL_FAILURES) throw new Error(`lost contact with the worker: ${(err as Error).message}`);
+        if (++failures >= REMOTE_MAX_POLL_FAILURES) throw new LostContact(`lost contact with the worker: ${(err as Error).message}`);
       }
       if (st && st.state !== 'running') {
         if (st.state === o.ok) return;
@@ -612,12 +769,12 @@ export class Runner {
   }
 
   /** Cancel (when asked) and delete a job on its worker. Best effort. */
-  private async endWorkerJob(handle: WorkerHandle, workerJob: string, cancel: boolean): Promise<void> {
+  private async endWorkerJob(handle: WorkerHandle, workerJob: string, cancel: boolean, timeoutMs = 10_000): Promise<void> {
     try {
       const headers = this.workerHeaders(handle);
       const base = `${handle.baseUrl}/internal/jobs/${workerJob}`;
-      if (cancel) await fetch(`${base}/cancel`, { method: 'POST', headers, signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
-      await fetch(base, { method: 'DELETE', headers, signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
+      if (cancel) await fetch(`${base}/cancel`, { method: 'POST', headers, signal: AbortSignal.timeout(timeoutMs) }).catch(() => undefined);
+      await fetch(base, { method: 'DELETE', headers, signal: AbortSignal.timeout(timeoutMs) }).catch(() => undefined);
     } catch {
       /* best effort */
     }
@@ -626,17 +783,35 @@ export class Runner {
   /** Delete the worker's job (if one was posted), release the Machine, unlock the region. Never throws. */
   private async endWorker(handle: WorkerHandle | undefined, workerJob: string | undefined, cancel: boolean, unlock: (() => void) | undefined): Promise<void> {
     try {
-      if (handle && workerJob) await this.endWorkerJob(handle, workerJob, cancel);
-      if (handle) await this.fleet!.release(handle).catch(() => undefined);
+      // A shutdown has already stopped every held Machine and has no time to wait for more.
+      if (!this.shuttingDown) {
+        if (handle && workerJob) await this.endWorkerJob(handle, workerJob, cancel);
+        if (handle) await this.fleet!.release(handle).catch(() => undefined);
+      }
     } finally {
+      if (handle) this.held.delete(handle);
       unlock?.();
     }
   }
 
   /** A once-only cleanup for a worker that finished its collection and waits for the merge. */
-  private closer(handle: WorkerHandle, workerJob: string, unlock: (() => void) | undefined): Cleanup {
+  private closer(handle: WorkerHandle, workerJob: string, unlock: (() => void) | undefined, stopPing: () => void): Cleanup {
     let p: Promise<void> | undefined;
-    return () => (p ??= this.endWorker(handle, workerJob, false, unlock));
+    return () => {
+      stopPing();
+      return (p ??= this.endWorker(handle, workerJob, false, unlock));
+    };
+  }
+
+  /** Pings a kept worker until released: any request counts as activity, so its idle shutdown (3 min) cannot take the run before the merge pulls it. */
+  private keepAlive(handle: WorkerHandle, workerJob: string): () => void {
+    const timer = setInterval(() => {
+      fetch(`${handle.baseUrl}/internal/jobs/${workerJob}`, { headers: this.workerHeaders(handle), signal: AbortSignal.timeout(10_000) })
+        .then((r) => r.body?.cancel())
+        .catch(() => undefined);
+    }, this.options.keepAliveMs ?? KEEP_ALIVE_MS);
+    timer.unref();
+    return () => clearInterval(timer);
   }
 
   /** Acquire a region's worker, run one job on it to `done` (events relayed when `appendLine` is given), then delete the job and release the Machine. */
@@ -653,13 +828,16 @@ export class Runner {
     try {
       if (!this.fleet) throw new Error('no worker fleet is configured on this server');
       this.secret();
-      unlock = await this.regionLocks.lock(spec.region, signal, () => this.store.appendLog(job, [`[${spec.tag}] waiting for the ${spec.region} worker (another scan is using it)`]));
+      unlock = await this.regionLocks.lock(spec.region, signal, () => this.store.appendLog(job, [`[${spec.tag}] waiting for the ${spec.region} worker (another scan is using it)`]), this.options.lockWaitMs ?? LOCK_WAIT_MS);
       if (signal.aborted) throw new Error(a.reason ?? 'cancelled');
+      a.startClock();
       this.store.appendLog(job, [`[${spec.tag}] starting the worker in ${spec.region}`]);
       handle = await this.fleet.acquire(spec.region);
+      this.held.set(handle, new Set());
       if (signal.aborted) throw new Error(a.reason ?? 'cancelled');
       await this.postJob(a, handle, spec.route, spec.body);
       posted = true;
+      this.held.get(handle)?.add(spec.workerJob);
       this.store.appendLog(job, [`[${spec.tag}] running on the ${spec.region} worker`]);
       await this.followJob(a, handle, spec.workerJob, { ok: 'done', appendLine: spec.appendLine, ctl });
     } catch (err) {

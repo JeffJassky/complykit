@@ -12,6 +12,8 @@ import { createWorkerApp, loadWorkerConfig } from './worker.js';
 const IDLE_CHECK_MS = 30_000;
 /** On a signal the platform gives us seconds, not the full 10s kill grace. */
 const SIGNAL_KILL_GRACE_MS = 3_000;
+/** The whole host shutdown (jobs failed, Machines halted, records flushed) gets this long; then the process exits whatever is left. */
+const SHUTDOWN_BOUND_MS = 15_000;
 
 /** WORKER=1: serve only /internal/* for the primary's multi-region scans. */
 async function mainWorker(): Promise<void> {
@@ -72,6 +74,11 @@ async function main(): Promise<void> {
     if (stopping) return;
     stopping = true;
     console.log(`[shutdown] ${why}`);
+    // A stuck step (a Machines API call, a database write) must not outlast the platform's patience: jobs are already persisted as failed by then.
+    setTimeout(() => {
+      console.error(`[shutdown] still not done after ${SHUTDOWN_BOUND_MS / 1000} s; exiting`);
+      process.exit(0);
+    }, SHUTDOWN_BOUND_MS).unref();
     await closeGracefully(server, service, killGraceMs);
     await storage.close().catch(() => undefined);
     console.log('[shutdown] done');

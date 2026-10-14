@@ -21,6 +21,7 @@ import { FsBlobs } from './storage/fs-blobs.js';
 import { SpacesBlobs } from './storage/spaces-blobs.js';
 import { assertKey, type Blobs } from './storage/types.js';
 import { PEER_HEADER, WORKER_SECRET_HEADER, type AccessibilityRequest, type CollectRequest, type ConsentRequest, type MergeRequest, type VerifyRequest } from './worker-protocol.js';
+import { RUN_ID_RE } from './job-files.js';
 import { walk } from './zip.js';
 
 export { WORKER_SECRET_HEADER };
@@ -85,6 +86,19 @@ function blobsFromEnv(env: NodeJS.ProcessEnv): Blobs | undefined {
   if (have.length === 0) return undefined;
   if (have.length < keys.length) throw new Error(`incomplete Spaces settings: ${keys.filter((k) => !env[k]).join(', ')} missing`);
   return new SpacesBlobs({ endpoint: env.SPACES_ENDPOINT!, bucket: env.SPACES_BUCKET!, accessKeyId: env.SPACES_KEY!, secretAccessKey: env.SPACES_SECRET!, region: env.SPACES_REGION || 'us-east-1' });
+}
+
+/**
+ * What a CLI child (and the Chromium it drives, which renders arbitrary sites) may see
+ * of the worker's environment. Never the worker's own secrets (WORKER_SECRET, SPACES_*,
+ * the Fly token): an allow-list, not a deny-list. COMPLYKIT_* carries the CLI's own knobs
+ * (COMPLYKIT_DEBUG, COMPLYKIT_BROWSER_*, COMPLYKIT_KB_DIR).
+ */
+const CHILD_ENV_ALLOW = /^(PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|TMP|TEMP|TZ|LANG|LANGUAGE|LC_[A-Z_]+|NODE_[A-Z_]+|PLAYWRIGHT_[A-Z_]+|COMPLYKIT_[A-Z_]+|XDG_[A-Z_]+|FONTCONFIG_[A-Z_]+|DISPLAY|LD_LIBRARY_PATH|SSL_CERT_FILE|SSL_CERT_DIR)$/;
+export function childEnv(extra: Record<string, string> = {}, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(source)) if (v !== undefined && CHILD_ENV_ALLOW.test(k)) env[k] = v;
+  return { ...env, ...extra };
 }
 
 const JOB_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -174,10 +188,36 @@ function parsePrefix(v: unknown, field: string): string {
   return v;
 }
 
-function parsePublish(o: Record<string, unknown>): { prefix: string } {
+/** The host's job id behind a worker-side job id: `<id>-merge`, `<id>-consent`, `<id>-accessibility` (or `-a11y`) lose their suffix. */
+function hostJobId(workerJob: string): string {
+  return workerJob.replace(/-(merge|consent|accessibility|a11y)$/, '');
+}
+
+/** A worker writes only to its own job's `jobs/<id>/<kind>/`, never to another job's files or the KB. */
+function parsePublish(o: Record<string, unknown>, jobId: string, kind: 'consent' | 'accessibility'): { prefix: string } {
   const p = o.publish;
   if (!p || typeof p !== 'object' || Array.isArray(p)) throw new BadRequest('publish must be an object with a prefix');
-  return { prefix: parsePrefix((p as Record<string, unknown>).prefix, 'publish.prefix') };
+  const prefix = parsePrefix((p as Record<string, unknown>).prefix, 'publish.prefix');
+  if (prefix !== `jobs/${hostJobId(jobId)}/${kind}/`) throw new BadRequest(`publish.prefix must be jobs/<this job's id>/${kind}/`);
+  return { prefix };
+}
+
+/** The tar a merge pulls from a peer: plain http over Fly's private network (6PN address or *.internal), exactly the peer's run.tar route. */
+function parseTarUrl(v: unknown, field: string): string {
+  let url: URL | undefined;
+  try {
+    url = typeof v === 'string' ? new URL(v) : undefined;
+  } catch {
+    /* falls through */
+  }
+  if (!url || url.protocol !== 'http:') throw new BadRequest(`${field} must be an http URL`);
+  const host = url.hostname.toLowerCase();
+  const devHost = process.env.NODE_ENV !== 'production' && (host === '127.0.0.1' || host === 'localhost');
+  const privateHost = /^\[fdaa:[0-9a-f:]*\]$/.test(host) || host.endsWith('.internal');
+  if (!privateHost && !devHost) throw new BadRequest(`${field} must point at a worker on the private network`);
+  if (url.username || url.password || url.search || url.hash) throw new BadRequest(`${field} must be a plain URL`);
+  if (!/^\/internal\/jobs\/[A-Za-z0-9_-]{1,64}\/run\.tar$/.test(url.pathname)) throw new BadRequest(`${field} must be /internal/jobs/<jobId>/run.tar`);
+  return url.href;
 }
 
 /** The knowledge base prefix: only ever 'kb/'. */
@@ -187,13 +227,20 @@ function parseKb(v: unknown): string | undefined {
   return v;
 }
 
+const PREVIOUS_RE = new RegExp(`^jobs/[A-Za-z0-9_-]{1,64}/consent/\\.comply/runs/${RUN_ID_RE.source.slice(1, -1)}/$`);
+
 function parseSiteInputs(o: Record<string, unknown>): { workspace?: SiteWorkspace; previous?: string; kb?: string } {
   let workspace: SiteWorkspace | undefined;
   if (o.workspace !== undefined) {
     if (!o.workspace || typeof o.workspace !== 'object' || Array.isArray(o.workspace)) throw new BadRequest('workspace must be an object');
     workspace = o.workspace as SiteWorkspace;
   }
-  return { workspace, previous: o.previous === undefined ? undefined : parsePrefix(o.previous, 'previous'), kb: parseKb(o.kb) };
+  let previous: string | undefined;
+  if (o.previous !== undefined) {
+    previous = parsePrefix(o.previous, 'previous');
+    if (!PREVIOUS_RE.test(previous)) throw new BadRequest('previous must be jobs/<jobId>/consent/.comply/runs/<runId>/');
+  }
+  return { workspace, previous, kb: parseKb(o.kb) };
 }
 
 function parseMerge(b: unknown): MergeRequest {
@@ -208,7 +255,7 @@ function parseMerge(b: unknown): MergeRequest {
     if (seen.has(x.law)) throw new BadRequest(`sources[${i}].law repeats ${x.law}`);
     seen.add(x.law);
     if (typeof x.locationId !== 'string' || !LOCATION_ID.test(x.locationId)) throw new BadRequest(`sources[${i}].locationId is not a location id`);
-    return { law: x.law as MergeRequest['sources'][number]['law'], locationId: x.locationId, tarUrl: parseHttpUrl(x.tarUrl, `sources[${i}].tarUrl`) };
+    return { law: x.law as MergeRequest['sources'][number]['law'], locationId: x.locationId, tarUrl: parseTarUrl(x.tarUrl, `sources[${i}].tarUrl`) };
   });
   const rawFailed = o.failed ?? [];
   if (!Array.isArray(rawFailed) || rawFailed.length > MAX_FAILED) throw new BadRequest(`failed must be an array of at most ${MAX_FAILED} entries`);
@@ -218,18 +265,20 @@ function parseMerge(b: unknown): MergeRequest {
     if (typeof x.error !== 'string' || x.error.length > 1000) throw new BadRequest(`failed[${i}].error must be a string of at most 1000 characters`);
     return { locationId: x.locationId, error: x.error };
   });
-  return { jobId, url, sources, failed, ...parseSiteInputs(o), publish: parsePublish(o) };
+  return { jobId, url, sources, failed, ...parseSiteInputs(o), publish: parsePublish(o, jobId, 'consent') };
 }
 
 function parseConsent(b: unknown): ConsentRequest {
   const o = asObject(b);
   if (o.quick !== undefined && typeof o.quick !== 'boolean') throw new BadRequest('quick must be a boolean');
-  return { jobId: parseJobId(o), url: parseHttpUrl(o.url, 'url'), quick: o.quick === true, runs: parseRuns(o.runs), ...parseSiteInputs(o), publish: parsePublish(o) };
+  const jobId = parseJobId(o);
+  return { jobId, url: parseHttpUrl(o.url, 'url'), quick: o.quick === true, runs: parseRuns(o.runs), ...parseSiteInputs(o), publish: parsePublish(o, jobId, 'consent') };
 }
 
 function parseAccessibility(b: unknown): AccessibilityRequest {
   const o = asObject(b);
-  return { jobId: parseJobId(o), url: parseHttpUrl(o.url, 'url'), publish: parsePublish(o) };
+  const jobId = parseJobId(o);
+  return { jobId, url: parseHttpUrl(o.url, 'url'), publish: parsePublish(o, jobId, 'accessibility') };
 }
 
 function parseVerify(b: unknown): VerifyRequest {
@@ -287,7 +336,7 @@ export function createWorkerApp(config: WorkerConfig): WorkerService {
   }
 
   /** One CLI invocation as the job's child (own process group); stderr feeds the job's tail. */
-  function runCli(job: WorkerJob, args: string[], cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  function runCli(job: WorkerJob, args: string[], cwd: string, env: NodeJS.ProcessEnv = childEnv()): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
     checkpoint(job);
     return new Promise((resolve, reject) => {
       if (!fs.existsSync(config.cliPath)) {
@@ -380,14 +429,14 @@ export function createWorkerApp(config: WorkerConfig): WorkerService {
 
   /** The knowledge base, downloaded into the job's directory; the CLI env that points at it. */
   async function kbEnv(job: WorkerJob, kb: string | undefined): Promise<NodeJS.ProcessEnv> {
-    if (!kb || !config.blobs) return process.env;
+    if (!kb || !config.blobs) return childEnv();
     const dir = path.join(job.dir, 'kb');
     await fsp.mkdir(dir, { recursive: true });
     await config.blobs.download(kb, dir);
-    return { ...process.env, COMPLYKIT_KB_DIR: dir };
+    return childEnv({ COMPLYKIT_KB_DIR: dir });
   }
 
-  async function runConsentCli(job: WorkerJob, args: string[], what: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  async function runConsentCli(job: WorkerJob, args: string[], what: string, env: NodeJS.ProcessEnv = childEnv()): Promise<void> {
     const res = await runCli(job, args, job.dir, env);
     checkpoint(job);
     if (res.code !== 0) throw new Error(withTail(job, `${what} exited with ${exitText(res.code, res.signal)}`));
@@ -410,30 +459,38 @@ export function createWorkerApp(config: WorkerConfig): WorkerService {
       const gather = path.join(job.dir, 'gather');
       try {
         await fsp.mkdir(gather, { recursive: true });
-        const dirs = await Promise.all(
+        // A peer whose run can't be fetched (it was stopped, or restarted) is a failed law, not a failed merge; only no source at all fails it.
+        const fetchFailed: Array<{ locationId: string; error: string }> = [];
+        const fetched = await Promise.all(
           b.sources.map(async (src) => {
             const dest = path.join(gather, src.law);
             await fsp.mkdir(dest, { recursive: true });
             const tarFile = path.join(gather, `${src.law}.tar`);
             try {
-              const res = await fetch(src.tarUrl, { headers: { [WORKER_SECRET_HEADER]: config.secret, [PEER_HEADER]: 'merge' }, signal: job.abort.signal });
+              // No redirects: the secret header must not follow a 3xx anywhere.
+              const res = await fetch(src.tarUrl, { headers: { [WORKER_SECRET_HEADER]: config.secret, [PEER_HEADER]: 'merge' }, signal: job.abort.signal, redirect: 'error' });
               if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
               await pipeline(Readable.fromWeb(res.body as unknown as import('node:stream/web').ReadableStream), fs.createWriteStream(tarFile));
               await untar(tarFile, dest);
               if (!fs.existsSync(path.join(dest, 'collection.json'))) throw new Error('the run had no collection.json');
+              return dest;
             } catch (err) {
               if (job.reason) throw err;
-              throw new Error(`could not fetch the ${src.law} collection: ${(err as Error).message}`);
+              const error = `could not fetch the ${src.law} collection: ${(err as Error).message}`;
+              fetchFailed.push({ locationId: src.locationId, error });
+              await fsp.rm(dest, { recursive: true, force: true });
+              return { error };
             } finally {
               await fsp.rm(tarFile, { force: true });
             }
-            return dest;
           }),
         );
         checkpoint(job);
+        const dirs = fetched.filter((x): x is string => typeof x === 'string');
+        if (!dirs.length) throw new Error(fetchFailed.map((f) => f.error).join('; '));
         const site = await siteArgs(job, b);
         const env = await kbEnv(job, b.kb);
-        const failedArgs = b.failed.flatMap((f) => ['--failed', `${f.locationId}=${f.error}`]);
+        const failedArgs = [...b.failed, ...fetchFailed].flatMap((f) => ['--failed', `${f.locationId}=${f.error}`]);
         const args = ['consent', '--merge', dirs.join(','), '--url', b.url, '--cwd', job.dir, '--events', eventsFile(job), ...quiet(), ...failedArgs, ...site];
         await runConsentCli(job, args, 'consent merge', env);
       } finally {
@@ -475,7 +532,7 @@ export function createWorkerApp(config: WorkerConfig): WorkerService {
     try {
       const file = path.join(dir, 'task.json');
       await fsp.writeFile(file, JSON.stringify(b.task));
-      const child = spawn(process.execPath, [config.cliPath, 'verify-change', '--task', file, '--site', b.site, '--json'], { cwd: dir, env: process.env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+      const child = spawn(process.execPath, [config.cliPath, 'verify-change', '--task', file, '--site', b.site, '--json'], { cwd: dir, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'], detached: true });
       verifyChildren.add(child);
       child.once('close', () => verifyChildren.delete(child));
       const out: Buffer[] = [];

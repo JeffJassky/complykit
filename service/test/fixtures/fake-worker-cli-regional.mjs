@@ -33,6 +33,8 @@ for (let i = 0; i < rest.length; i++) {
   else opts[rest[i].slice(2)] = rest[++i];
 }
 if (opts.cwd) fs.writeFileSync(path.join(opts.cwd, 'argv.json'), JSON.stringify([cmd, ...rest]));
+// The names (never the values) of the environment variables the worker gave this child.
+if (opts.cwd) fs.writeFileSync(path.join(opts.cwd, 'env-seen.json'), JSON.stringify(Object.keys(process.env).sort()));
 const host = opts.url ? new URL(opts.url).hostname : '';
 const emit = (ev) => fs.appendFileSync(opts.events, JSON.stringify({ at: new Date().toISOString(), ...ev }) + '\n');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
