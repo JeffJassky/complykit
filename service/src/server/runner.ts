@@ -6,13 +6,11 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import type { JobDetail, LawScanState } from '../shared/api.js';
 import { LAWS, type Law } from '../shared/laws.js';
 import { flyFleet, type Fleet, type WorkerHandle } from './fleet.js';
-import { WORKER_SECRET_HEADER } from './worker.js';
+import { RegionLocks } from './region-lock.js';
+import { DEFAULT_WORKER_REGION, WORKER_SECRET_HEADER, type AccessibilityRequest, type CollectRequest, type ConsentRequest, type MergeRequest } from './worker-protocol.js';
 import { consentRunsFor, jobTimeoutFor, type ServiceConfig } from './config.js';
 import { ConsentProgress, NdjsonTail, fraction } from './events.js';
 import type { JobStore } from './store.js';
@@ -56,10 +54,15 @@ const REMOTE_MAX_POLL_FAILURES = 8;
 
 interface Gathered {
   law: Law;
-  /** The run dir holding collection.json. */
+  /** Local collection: the run dir holding collection.json. */
   dir?: string;
+  /** Fleet collection: the worker still holding the run (for the merge to pull), until `done()`. */
+  worker?: { handle: WorkerHandle; jobId: string };
   error?: string;
 }
+
+/** Runs once: deletes the worker's job, releases the Machine, unlocks its region. Never throws. */
+type Cleanup = () => Promise<void>;
 
 export class Runner {
   private readonly queue: string[] = [];
@@ -79,45 +82,23 @@ export class Runner {
   }
 
   private readonly fleet?: Fleet;
-  /** Per-region lock: a worker runs one collection at a time, and this process may run several jobs. */
-  private readonly regionTails = new Map<string, Promise<void>>();
-  private readonly regionHolders = new Map<string, number>();
+  /** Per-region lock: a worker runs one job at a time, and this process may run several jobs (and Verify). */
+  readonly regionLocks = new RegionLocks();
 
-  /** Waits for the region's worker to be free (or the signal to abort); returns the unlock function. */
-  private async lockRegion(region: string, signal: AbortSignal, onWait: () => void): Promise<() => void> {
-    const prev = this.regionTails.get(region) ?? Promise.resolve();
-    const contended = (this.regionHolders.get(region) ?? 0) > 0;
-    this.regionHolders.set(region, (this.regionHolders.get(region) ?? 0) + 1);
-    let open!: () => void;
-    const gate = new Promise<void>((r) => (open = r));
-    // The next waiter queues behind this one even if this one gives up early.
-    this.regionTails.set(region, prev.then(() => gate));
-    let unlocked = false;
-    const unlock = () => {
-      if (unlocked) return;
-      unlocked = true;
-      open();
-      const n = (this.regionHolders.get(region) ?? 1) - 1;
-      if (n <= 0) {
-        this.regionHolders.delete(region);
-        this.regionTails.delete(region);
-      } else this.regionHolders.set(region, n);
-    };
-    if (contended) onWait();
-    await new Promise<void>((resolve) => {
-      if (signal.aborted) return resolve();
-      const done = () => {
-        signal.removeEventListener('abort', done);
-        resolve();
-      };
-      signal.addEventListener('abort', done, { once: true });
-      void prev.then(done);
-    });
-    if (signal.aborted) {
-      unlock();
-      throw new Error('cancelled');
-    }
-    return unlock;
+  /** The worker fleet, when one is configured: then every scan runs on it and the host runs none. */
+  get workerFleet(): Fleet | undefined {
+    return this.fleet;
+  }
+
+  /** The shared secret for host → worker calls. A fleet without one is a configuration error. */
+  private secret(): string {
+    if (!this.config.workerSecret) throw new Error('a worker fleet is configured but WORKER_SECRET is not set; the host cannot call its workers');
+    return this.config.workerSecret;
+  }
+
+  /** What every host → worker call carries: the route to the Machine and the secret. */
+  private workerHeaders(h: WorkerHandle): Record<string, string> {
+    return { ...h.headers, [WORKER_SECRET_HEADER]: this.secret() };
   }
 
   get running(): number {
@@ -238,6 +219,7 @@ export class Runner {
   private async runConsent(a: Active, extraUnits: number): Promise<void> {
     const { job } = a;
     if (job.laws?.length) return this.runConsentLaws(a, extraUnits);
+    if (this.fleet) return this.runConsentOnWorker(a, extraUnits);
     const dir = path.join(this.store.jobDir(job.id), 'consent');
     await fsp.mkdir(dir, { recursive: true });
     const eventsFile = path.join(dir, 'events.ndjson');
@@ -268,19 +250,69 @@ export class Runner {
     if (site.domain) await this.recordRun(job, site.domain, mapper.done);
   }
 
+  /** A consent job without laws, with a fleet: one worker in the default region scans, publishes the finished run to blobs, and the host relays its events. */
+  private async runConsentOnWorker(a: Active, extraUnits: number): Promise<void> {
+    const { job } = a;
+    const dir = path.join(this.store.jobDir(job.id), 'consent');
+    await fsp.mkdir(dir, { recursive: true });
+    const eventsFile = path.join(dir, 'events.ndjson');
+    await fsp.rm(eventsFile, { force: true });
+    const mapper = new ConsentProgress(job, extraUnits);
+    const tail = new NdjsonTail(
+      eventsFile,
+      (ev) => {
+        if (mapper.apply(ev)) this.store.update(job);
+      },
+      this.config.pollMs,
+    );
+    const appendLine = (line: string) => fs.appendFileSync(eventsFile, line.endsWith('\n') ? line : line + '\n');
+    const site = await this.siteArgs(job, dir, true);
+    const workerJob = `${job.id}-consent`;
+    const kb = this.kbPrefix();
+    const body: ConsentRequest = {
+      jobId: workerJob,
+      url: job.url,
+      quick: job.quick,
+      runs: consentRunsFor(job, this.config),
+      ...(site.workspace ? { workspace: site.workspace } : {}),
+      ...(site.previous ? { previous: site.previous } : {}),
+      ...(kb ? { kb } : {}),
+      publish: { prefix: `jobs/${job.id}/consent/` },
+    };
+    tail.start();
+    try {
+      await this.runOnWorker(a, { region: DEFAULT_WORKER_REGION, route: 'consent', workerJob, tag: 'consent', body, appendLine });
+    } finally {
+      await tail.stop();
+    }
+    if (a.reason) throw new Error(a.reason);
+    if (mapper.error) throw new Error(`consent check failed: ${mapper.error}`);
+    if (!mapper.done) throw new Error('consent check ended without a result');
+    if (site.domain) await this.recordRun(job, site.domain, mapper.done);
+  }
 
   /**
-   * A consent job with laws: one collection per law (the local law in a child
-   * process, the others on regional workers), all in parallel, then one merge
-   * on this machine that runs the rules over everything and writes the report.
+   * A consent job with laws: one collection per law, all in parallel, then one
+   * merge that runs the rules over everything and writes the report.
+   *
+   * Without a fleet (local development) the `local` law collects in a child
+   * process, the others fail ("not configured"), and the merge is a child too.
+   * With a fleet the host runs none of it: every law collects on a worker in its
+   * region, the first law that collected also merges (pulling the others' runs
+   * over the private network) and publishes the finished run to blobs. The
+   * workers are held until the merge is over, then every job is deleted and
+   * every Machine released.
    */
   private async runConsentLaws(a: Active, extraUnits: number): Promise<void> {
     const { job } = a;
     const laws = LAWS.filter((l) => job.laws!.includes(l.id));
+    const fleet = this.fleet;
     const dir = path.join(this.store.jobDir(job.id), 'consent');
     const gatherRoot = path.join(dir, 'gather');
     await fsp.rm(gatherRoot, { recursive: true, force: true });
-    await fsp.mkdir(gatherRoot, { recursive: true });
+    // Raw collections exist on this machine only without a fleet.
+    if (!fleet) await fsp.mkdir(gatherRoot, { recursive: true });
+    await fsp.mkdir(dir, { recursive: true });
     const eventsFile = path.join(dir, 'events.ndjson');
     await fsp.rm(eventsFile, { force: true });
 
@@ -304,35 +336,45 @@ export class Runner {
       },
       this.config.pollMs,
     );
-    const site = await this.siteArgs(job, dir);
+    const site = await this.siteArgs(job, dir, !!fleet);
     const quiet = process.env.COMPLYKIT_DEBUG ? [] : ['--quiet'];
     const appendLine = (line: string) => fs.appendFileSync(eventsFile, line.endsWith('\n') ? line : line + '\n');
+    // Worker jobs and Machines to clean up however this ends.
+    const cleanups: Cleanup[] = [];
+    const mergeOn: { handle?: WorkerHandle; jobId?: string; interrupted: { interrupted: boolean } } = { interrupted: { interrupted: false } };
     tail.start();
     try {
       this.store.appendLog(job, [`[consent] scanning under ${laws.map((l) => l.label).join(', ')} (authorized ${job.authorizedAt ?? 'at submission'})`]);
-      const remote = laws.filter((l) => !l.local);
+      const onWorker = (l: Law) => !!fleet || !l.local;
+      const remote = laws.filter(onWorker);
       const gathered = await Promise.all(
-        laws.map((law) => (law.local ? this.collectLocal(a, law, gatherRoot, quiet, appendLine, setLaw, live) : this.collectRemote(a, law, gatherRoot, appendLine, remote.indexOf(law) * (this.options.staggerMs ?? REMOTE_STAGGER_MS), setLaw, live))),
+        laws.map((law) => (onWorker(law) ? this.collectRemote(a, law, appendLine, remote.indexOf(law) * (this.options.staggerMs ?? REMOTE_STAGGER_MS), setLaw, live, cleanups) : this.collectLocal(a, law, gatherRoot, quiet, appendLine, setLaw, live))),
       );
       if (a.reason) throw new Error(a.reason);
 
-      const failed = gathered.filter((g) => !g.dir);
+      const failed = gathered.filter((g) => !g.dir && !g.worker);
       for (const g of failed) this.store.appendLog(job, [`[consent] ${g.law.label} (${g.law.locationId}) could not be scanned: ${g.error}`]);
-      const ok = gathered.filter((g) => g.dir);
+      const ok = gathered.filter((g) => g.dir || g.worker);
       if (!ok.length) throw new Error(`no law could be scanned: ${failed.map((g) => `${g.law.label}: ${g.error}`).join('; ')}`);
 
       job.progress.phase = 'analyzing';
       job.progress.current = 'combining the regions';
       this.store.update(job);
       merging = true;
-      const failedArgs = failed.flatMap((g) => ['--failed', `${g.law.locationId}=${g.error}`]);
-      const args = ['consent', '--merge', ok.map((g) => g.dir).join(','), '--url', job.url, '--cwd', dir, '--events', eventsFile, ...quiet, ...failedArgs, ...site.args];
-      const res = await this.step(a, 'consent', args, dir);
-      await tail.stop();
+      let res: StepResult | undefined;
+      if (fleet) {
+        await this.mergeOnWorker(a, ok, failed, site, appendLine, mergeOn);
+        await tail.stop();
+      } else {
+        const failedArgs = failed.flatMap((g) => ['--failed', `${g.law.locationId}=${g.error}`]);
+        const args = ['consent', '--merge', ok.map((g) => g.dir).join(','), '--url', job.url, '--cwd', dir, '--events', eventsFile, ...quiet, ...failedArgs, ...site.args];
+        res = await this.step(a, 'consent', args, dir);
+        await tail.stop();
+      }
       if (a.reason) throw new Error(a.reason);
-      if (mapper.error) throw new Error(withTail(`consent check failed: ${mapper.error}`, res.stderr));
-      if (res.code !== 0) throw new Error(withTail(`consent merge exited with ${exitText(res)}`, res.stderr));
-      if (!mapper.done) throw new Error(withTail('consent merge exited without a result', res.stderr));
+      if (mapper.error) throw new Error(withTail(`consent check failed: ${mapper.error}`, res?.stderr ?? []));
+      if (res && res.code !== 0) throw new Error(withTail(`consent merge exited with ${exitText(res)}`, res.stderr));
+      if (!mapper.done) throw new Error(withTail('consent merge exited without a result', res?.stderr ?? []));
       merged = true;
       if (site.domain) await this.recordRun(job, site.domain, mapper.done);
     } finally {
@@ -342,6 +384,45 @@ export class Runner {
       await fsp.rm(gatherRoot, { recursive: true, force: true });
       // The live reports are superseded by the merged report; after a failed or cancelled job they stay (the page shows what was collected).
       if (merged) await fsp.rm(liveRoot, { recursive: true, force: true });
+      // The merge job first (on its worker), then every collection, Machine and region lock.
+      if (mergeOn.handle && mergeOn.jobId) await this.endWorkerJob(mergeOn.handle, mergeOn.jobId, mergeOn.interrupted.interrupted || a.abort.signal.aborted);
+      await Promise.all(cleanups.map((c) => c()));
+    }
+  }
+
+  /** `POST /internal/merge` on the first collected law's worker; relays its events; returns when it is done (throws when it is not). */
+  private async mergeOnWorker(
+    a: Active,
+    ok: Gathered[],
+    failed: Gathered[],
+    site: SiteInputs,
+    appendLine: (l: string) => void,
+    mergeOn: { handle?: WorkerHandle; jobId?: string; interrupted: { interrupted: boolean } },
+  ): Promise<void> {
+    const { job } = a;
+    const first = ok[0].worker!;
+    const workerJob = `${job.id}-merge`;
+    const kb = this.kbPrefix();
+    const body: MergeRequest = {
+      jobId: workerJob,
+      url: job.url,
+      sources: ok.map((g) => ({ law: g.law.id, locationId: g.law.locationId, tarUrl: `${g.worker!.handle.privateUrl}/internal/jobs/${g.worker!.jobId}/run.tar` })),
+      failed: failed.map((g) => ({ locationId: g.law.locationId, error: oneLine(g.error ?? 'failed').slice(0, 1000) })),
+      ...(site.workspace ? { workspace: site.workspace } : {}),
+      ...(site.previous ? { previous: site.previous } : {}),
+      ...(kb ? { kb } : {}),
+      publish: { prefix: `jobs/${job.id}/consent/` },
+    };
+    this.store.appendLog(job, [`[merge] merging ${ok.length} collection(s) on the ${first.handle.region} worker`]);
+    try {
+      await this.postJob(a, first.handle, 'merge', body);
+      mergeOn.handle = first.handle;
+      mergeOn.jobId = workerJob;
+      await this.followJob(a, first.handle, workerJob, { ok: 'done', appendLine, ctl: mergeOn.interrupted });
+    } catch (err) {
+      mergeOn.interrupted.interrupted ||= a.abort.signal.aborted;
+      if (a.abort.signal.aborted) throw new Error(a.reason ?? 'cancelled');
+      throw new Error(`merge on the ${first.handle.region} worker failed: ${(err as Error).message}`);
     }
   }
 
@@ -382,17 +463,21 @@ export class Runner {
     }
   }
 
-  /** A law collected on its region's worker: acquire, collect, follow its events, fetch the run, clean up. */
-  private async collectRemote(a: Active, law: Law, gatherRoot: string, appendLine: (l: string) => void, delayMs: number, setLaw: SetLaw, live: LiveFiles): Promise<Gathered> {
+  /**
+   * A law collected on its region's worker: acquire, collect, follow its events.
+   * On success the worker is KEPT (its run.tar is what the merge pulls); its
+   * cleanup is pushed to `cleanups` and the caller runs it after the merge.
+   * On failure everything is cleaned up here.
+   */
+  private async collectRemote(a: Active, law: Law, appendLine: (l: string) => void, delayMs: number, setLaw: SetLaw, live: LiveFiles, cleanups: Cleanup[]): Promise<Gathered> {
     const { job } = a;
     const signal = a.abort.signal;
     const workerJob = `${job.id}-${law.id}`;
-    const headers = { [WORKER_SECRET_HEADER]: this.config.workerSecret ?? '' };
     let handle: WorkerHandle | undefined;
     let posted = false;
-    let interrupted = false;
+    let kept = false;
+    const ctl = { interrupted: false };
     let unlock: (() => void) | undefined;
-    const url = (p: string) => `${handle!.baseUrl}/internal/jobs/${workerJob}${p}`;
     const check = () => {
       if (signal.aborted) throw new Error(a.reason ?? 'cancelled');
     };
@@ -400,27 +485,19 @@ export class Runner {
       if (!this.fleet) throw new Error('multi-region scanning is not configured on this server');
       await sleepAbortable(delayMs, signal);
       check();
-      unlock = await this.lockRegion(law.flyRegion, signal, () => this.store.appendLog(job, [`[collect:${law.id}] waiting for the ${law.flyRegion} worker (another scan is using it)`]));
+      unlock = await this.regionLocks.lock(law.flyRegion, signal, () => this.store.appendLog(job, [`[collect:${law.id}] waiting for the ${law.flyRegion} worker (another scan is using it)`]));
       check();
       this.store.appendLog(job, [`[collect:${law.id}] starting the worker in ${law.flyRegion}`]);
       setLaw(law, { state: 'starting' });
       handle = await this.fleet.acquire(law.flyRegion);
       check();
-      const post = await fetch(`${handle.baseUrl}/internal/collect`, {
-        method: 'POST',
-        headers: { ...headers, 'content-type': 'application/json' },
-        body: JSON.stringify({ jobId: workerJob, url: job.url, locationId: law.locationId, quick: job.quick, runs: consentRunsFor(job, this.config) }),
-        signal,
-      });
-      if (!post.ok) throw new Error(`worker refused the collection: HTTP ${post.status} ${(await post.text().catch(() => '')).slice(0, 200)}`.trim());
+      const body: CollectRequest = { jobId: workerJob, url: job.url, locationId: law.locationId, quick: job.quick, runs: consentRunsFor(job, this.config) };
+      await this.postJob(a, handle, 'collect', body);
       posted = true;
       this.store.appendLog(job, [`[collect:${law.id}] collecting from ${law.flyRegion}`]);
 
-      // Follow the worker's events into the job's, until it settles.
-      const pollMs = this.options.remotePollMs ?? REMOTE_POLL_MS;
-      const deadline = Date.now() + (this.options.remoteTimeoutMs ?? REMOTE_TIMEOUT_MS);
-      let seen = 0;
       // The worker's owner report, fetched on each `live` event: one fetch in flight; a live event meanwhile asks for one more after it. Errors (404 included) are ignored.
+      const h = handle;
       let fetching = false;
       let again = false;
       const liveReport = () => {
@@ -433,7 +510,7 @@ export class Runner {
           do {
             again = false;
             try {
-              const r = await fetch(url('/report'), { headers, signal });
+              const r = await fetch(`${h.baseUrl}/internal/jobs/${workerJob}/report`, { headers: this.workerHeaders(h), signal });
               if (r.ok) await live.put(law.id, Buffer.from(await r.arrayBuffer()));
             } catch {
               /* the next live event retries */
@@ -442,68 +519,159 @@ export class Runner {
         })().finally(() => (fetching = false));
         live.track(p);
       };
-      const pull = async () => {
-        const res = await fetch(url(`/events?from=${seen}`), { headers, signal });
-        if (!res.ok) throw new Error(`events: HTTP ${res.status}`);
-        const lines = (await res.text()).split('\n').filter((l) => l.trim());
-        for (const l of lines) {
-          appendLine(l);
+      await this.followJob(a, handle, workerJob, {
+        ok: 'collected',
+        appendLine,
+        onLine: (l) => {
           if (isLiveLine(l)) liveReport();
-        }
-        seen += lines.length;
-      };
-      let failures = 0;
-      for (;;) {
-        check();
-        let st: { state: string; error?: string } | undefined;
-        try {
-          await pull();
-          const res = await fetch(url(''), { headers, signal });
-          if (!res.ok) throw new Error(`state: HTTP ${res.status}`);
-          st = (await res.json()) as { state: string; error?: string };
-          if (st.state !== 'running') await pull();
-          failures = 0;
-        } catch (err) {
-          check();
-          if (++failures >= REMOTE_MAX_POLL_FAILURES) throw new Error(`lost contact with the worker: ${(err as Error).message}`);
-        }
-        if (st && st.state !== 'running') {
-          if (st.state === 'collected') break;
-          throw new Error(oneLine(st.error ?? `worker ended ${st.state}`));
-        }
-        if (Date.now() > deadline) {
-          interrupted = true;
-          throw new Error(`timed out after ${Math.round((this.options.remoteTimeoutMs ?? REMOTE_TIMEOUT_MS) / 60_000)} minutes`);
-        }
-        await sleepAbortable(pollMs, signal);
-      }
-
-      // Fetch the run and unpack it where the merge will read it.
-      const dest = path.join(gatherRoot, law.id);
-      await fsp.mkdir(dest, { recursive: true });
-      const tarFile = path.join(gatherRoot, `${law.id}.tar`);
-      const res = await fetch(url('/run.tar'), { headers, signal });
-      if (!res.ok || !res.body) throw new Error(`run.tar: HTTP ${res.status}`);
-      await pipeline(Readable.fromWeb(res.body as unknown as WebReadableStream), fs.createWriteStream(tarFile));
-      await untar(tarFile, dest);
-      await fsp.rm(tarFile, { force: true });
-      if (!fs.existsSync(path.join(dest, 'collection.json'))) throw new Error('the worker\'s run had no collection.json');
-      return { law, dir: dest };
+        },
+        ctl,
+      });
+      kept = true;
+      // The run stays on the worker for the merge; nothing is fetched here.
+      cleanups.push(this.closer(handle, workerJob, unlock));
+      return { law, worker: { handle, jobId: workerJob } };
     } catch (err) {
-      interrupted ||= signal.aborted;
+      ctl.interrupted ||= signal.aborted;
       const message = signal.aborted ? (a.reason ?? 'cancelled') : (err as Error).message;
-      const error = law.local ? message : `worker in ${law.flyRegion} failed: ${message}`;
+      const error = `worker in ${law.flyRegion} failed: ${message}`;
       if (!a.reason) setLaw(law, { state: 'failed', error });
       return { law, error };
     } finally {
-      if (handle && posted) {
-        const quick = { headers, signal: AbortSignal.timeout(10_000) };
-        if (interrupted) await fetch(url('/cancel'), { method: 'POST', ...quick }).catch(() => undefined);
-        await fetch(url(''), { method: 'DELETE', headers, signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
+      if (!kept) await this.endWorker(handle, posted ? workerJob : undefined, ctl.interrupted, unlock);
+    }
+  }
+
+  // --- worker plumbing (shared by collections, merge, single-location consent, accessibility) -----------
+
+  /** POST a job-style request to a worker. */
+  private async postJob(a: Active, handle: WorkerHandle, route: 'collect' | 'merge' | 'consent' | 'accessibility', body: CollectRequest | MergeRequest | ConsentRequest | AccessibilityRequest): Promise<void> {
+    const post = await fetch(`${handle.baseUrl}/internal/${route}`, {
+      method: 'POST',
+      headers: { ...this.workerHeaders(handle), 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: a.abort.signal,
+    });
+    if (!post.ok) throw new Error(`worker refused the ${route}: HTTP ${post.status} ${(await post.text().catch(() => '')).slice(0, 200)}`.trim());
+  }
+
+  /**
+   * Follow a worker's job into this one's: its events are appended (and handed to
+   * `onLine`) and its state polled until it settles. Resolves when the state is
+   * `ok`; throws for any other end, a lost worker, the timeout (`ctl.interrupted`
+   * is then set so the caller cancels it) or an abort.
+   */
+  private async followJob(a: Active, handle: WorkerHandle, workerJob: string, o: { ok: 'collected' | 'done'; appendLine?: (l: string) => void; onLine?: (l: string) => void; ctl: { interrupted: boolean } }): Promise<void> {
+    const signal = a.abort.signal;
+    const headers = this.workerHeaders(handle);
+    const url = (p: string) => `${handle.baseUrl}/internal/jobs/${workerJob}${p}`;
+    const pollMs = this.options.remotePollMs ?? REMOTE_POLL_MS;
+    const timeoutMs = this.options.remoteTimeoutMs ?? REMOTE_TIMEOUT_MS;
+    const deadline = Date.now() + timeoutMs;
+    let seen = 0;
+    const pull = async () => {
+      if (!o.appendLine) return;
+      const res = await fetch(url(`/events?from=${seen}`), { headers, signal });
+      if (!res.ok) throw new Error(`events: HTTP ${res.status}`);
+      const lines = (await res.text()).split('\n').filter((l) => l.trim());
+      for (const l of lines) {
+        o.appendLine(l);
+        o.onLine?.(l);
       }
+      seen += lines.length;
+    };
+    let failures = 0;
+    for (;;) {
+      if (signal.aborted) throw new Error(a.reason ?? 'cancelled');
+      let st: { state: string; error?: string } | undefined;
+      try {
+        await pull();
+        const res = await fetch(url(''), { headers, signal });
+        if (!res.ok) throw new Error(`state: HTTP ${res.status}`);
+        st = (await res.json()) as { state: string; error?: string };
+        if (st.state !== 'running') await pull();
+        failures = 0;
+      } catch (err) {
+        if (signal.aborted) throw new Error(a.reason ?? 'cancelled');
+        if (++failures >= REMOTE_MAX_POLL_FAILURES) throw new Error(`lost contact with the worker: ${(err as Error).message}`);
+      }
+      if (st && st.state !== 'running') {
+        if (st.state === o.ok) return;
+        throw new Error(oneLine(st.error ?? `worker ended ${st.state}`));
+      }
+      if (Date.now() > deadline) {
+        o.ctl.interrupted = true;
+        throw new Error(`timed out after ${Math.round(timeoutMs / 60_000)} minutes`);
+      }
+      await sleepAbortable(pollMs, signal);
+    }
+  }
+
+  /** Cancel (when asked) and delete a job on its worker. Best effort. */
+  private async endWorkerJob(handle: WorkerHandle, workerJob: string, cancel: boolean): Promise<void> {
+    try {
+      const headers = this.workerHeaders(handle);
+      const base = `${handle.baseUrl}/internal/jobs/${workerJob}`;
+      if (cancel) await fetch(`${base}/cancel`, { method: 'POST', headers, signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
+      await fetch(base, { method: 'DELETE', headers, signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
+    } catch {
+      /* best effort */
+    }
+  }
+
+  /** Delete the worker's job (if one was posted), release the Machine, unlock the region. Never throws. */
+  private async endWorker(handle: WorkerHandle | undefined, workerJob: string | undefined, cancel: boolean, unlock: (() => void) | undefined): Promise<void> {
+    try {
+      if (handle && workerJob) await this.endWorkerJob(handle, workerJob, cancel);
       if (handle) await this.fleet!.release(handle).catch(() => undefined);
+    } finally {
       unlock?.();
     }
+  }
+
+  /** A once-only cleanup for a worker that finished its collection and waits for the merge. */
+  private closer(handle: WorkerHandle, workerJob: string, unlock: (() => void) | undefined): Cleanup {
+    let p: Promise<void> | undefined;
+    return () => (p ??= this.endWorker(handle, workerJob, false, unlock));
+  }
+
+  /** Acquire a region's worker, run one job on it to `done` (events relayed when `appendLine` is given), then delete the job and release the Machine. */
+  private async runOnWorker(
+    a: Active,
+    spec: { region: string; route: 'consent' | 'accessibility'; workerJob: string; tag: string; body: ConsentRequest | AccessibilityRequest; appendLine?: (l: string) => void },
+  ): Promise<void> {
+    const { job } = a;
+    const signal = a.abort.signal;
+    let handle: WorkerHandle | undefined;
+    let posted = false;
+    let unlock: (() => void) | undefined;
+    const ctl = { interrupted: false };
+    try {
+      if (!this.fleet) throw new Error('no worker fleet is configured on this server');
+      this.secret();
+      unlock = await this.regionLocks.lock(spec.region, signal, () => this.store.appendLog(job, [`[${spec.tag}] waiting for the ${spec.region} worker (another scan is using it)`]));
+      if (signal.aborted) throw new Error(a.reason ?? 'cancelled');
+      this.store.appendLog(job, [`[${spec.tag}] starting the worker in ${spec.region}`]);
+      handle = await this.fleet.acquire(spec.region);
+      if (signal.aborted) throw new Error(a.reason ?? 'cancelled');
+      await this.postJob(a, handle, spec.route, spec.body);
+      posted = true;
+      this.store.appendLog(job, [`[${spec.tag}] running on the ${spec.region} worker`]);
+      await this.followJob(a, handle, spec.workerJob, { ok: 'done', appendLine: spec.appendLine, ctl });
+    } catch (err) {
+      ctl.interrupted ||= signal.aborted;
+      if (signal.aborted) throw new Error(a.reason ?? 'cancelled');
+      throw new Error(`worker in ${spec.region} failed: ${(err as Error).message}`);
+    } finally {
+      await this.endWorker(handle, posted ? spec.workerJob : undefined, ctl.interrupted, unlock);
+    }
+  }
+
+  /** The blob prefix of the knowledge base the workers read, when the host's KB is in blobs. */
+  private kbPrefix(): string | undefined {
+    if (!this.store.files.local) return 'kb/'; // cloud: KbSync mirrors config.kbDir to kb/
+    // fs: blobs are rooted at DATA_DIR, where the KB lives by default.
+    return path.resolve(this.config.kbDir) === path.join(path.resolve(this.config.dataDir), 'kb') ? 'kb/' : undefined;
   }
 
   /**
@@ -513,7 +681,7 @@ export class Runner {
    * stop the scan (a scan never needs it to judge the site); the log says so and
    * the report then asks again what the team had classified.
    */
-  private async siteArgs(job: JobDetail, dir: string): Promise<{ domain?: string; args: string[] }> {
+  private async siteArgs(job: JobDetail, dir: string, remote = false): Promise<SiteInputs> {
     if (!this.workspaces) return { args: [] };
     let domain: string | undefined;
     let ws: SiteWorkspace;
@@ -524,22 +692,44 @@ export class Runner {
       this.store.appendLog(job, [`[consent] site workspace not applied: ${(err as Error).message}`]);
       return { domain, args: [] };
     }
-    const file = path.join(dir, 'workspace.json');
-    await fsp.writeFile(file, JSON.stringify(ws, null, 2) + '\n');
-    const args = ['--workspace', file];
-    // Newest first: the latest earlier run whose evaluation is still on disk.
-    for (const r of [...ws.runs].reverse()) {
-      if (!r.jobId || r.jobId === job.id) continue;
-      // With the cloud backend this downloads that run's evaluation into this job's scratch (removed when the job is published).
-      const runDir = await this.store.files.previousRunDir(job.id, r.jobId, r.id);
-      if (runDir) {
-        args.push('--previous', runDir);
-        break;
+    const out: SiteInputs = { domain, args: [] };
+    if (remote) {
+      // A worker runs the CLI: it gets the workspace in the request and the previous run as a blob prefix.
+      out.workspace = ws;
+      out.previous = await this.previousPrefix(job, ws);
+    } else {
+      const file = path.join(dir, 'workspace.json');
+      await fsp.writeFile(file, JSON.stringify(ws, null, 2) + '\n');
+      out.args.push('--workspace', file);
+      // Newest first: the latest earlier run whose evaluation is still on disk.
+      for (const r of [...ws.runs].reverse()) {
+        if (!r.jobId || r.jobId === job.id) continue;
+        // With the cloud backend this downloads that run's evaluation into this job's scratch (removed when the job is published).
+        const runDir = await this.store.files.previousRunDir(job.id, r.jobId, r.id);
+        if (runDir) {
+          out.args.push('--previous', runDir);
+          break;
+        }
       }
     }
     const classified = Object.keys(ws.entries).filter((k) => k.startsWith('class:') && ws.entries[k].value !== null).length;
-    this.store.appendLog(job, [`[consent] site workspace ${domain}: ${classified} classification(s), ${ws.runs.length} earlier run(s)${args.includes('--previous') ? '' : '; no earlier run on disk to compare with'}`]);
-    return { domain, args };
+    const hasPrevious = remote ? !!out.previous : out.args.includes('--previous');
+    this.store.appendLog(job, [`[consent] site workspace ${domain}: ${classified} classification(s), ${ws.runs.length} earlier run(s)${hasPrevious ? '' : '; no earlier run on disk to compare with'}`]);
+    return out;
+  }
+
+  /** The blob prefix of the site's latest earlier run whose evaluation (tracking.json) is stored, for a worker's `--previous`. */
+  private async previousPrefix(job: JobDetail, ws: SiteWorkspace): Promise<string | undefined> {
+    for (const r of [...ws.runs].reverse()) {
+      if (!r.jobId || r.jobId === job.id) continue;
+      const prefix = `jobs/${r.jobId}/consent/.comply/runs/${r.id}/`;
+      try {
+        if (await this.store.files.blobs.head(`${prefix}tracking.json`)) return prefix;
+      } catch {
+        /* not a usable key: that run has no evaluation to compare with */
+      }
+    }
+    return undefined;
   }
 
   /** A finished consent job appends itself to its site's runs. */
@@ -558,29 +748,36 @@ export class Runner {
     const p = job.progress;
     // Its own cwd: `report` renders the newest run in that cwd.
     const dir = path.join(this.store.jobDir(job.id), 'accessibility');
-    await fsp.mkdir(dir, { recursive: true });
     p.phase = 'accessibility';
     p.current = 'accessibility scan';
     p.total = Math.max(p.total, p.done + 1);
     p.fraction = fraction(p.done, p.total);
     this.store.update(job);
 
-    const scan = await this.step(a, 'accessibility', ['scan', '--url', job.url, '--cwd', dir, '--quiet', '--max-pages', '15'], dir);
-    if (a.reason) throw new Error(a.reason);
-    if (scan.code !== 0) throw new Error(withTail(`accessibility scan exited with ${exitText(scan)}`, scan.stderr));
+    if (this.fleet) {
+      // A worker scans and publishes the report to blobs; nothing is written here.
+      const body: AccessibilityRequest = { jobId: `${job.id}-accessibility`, url: job.url, publish: { prefix: `jobs/${job.id}/accessibility/` } };
+      await this.runOnWorker(a, { region: DEFAULT_WORKER_REGION, route: 'accessibility', workerJob: body.jobId, tag: 'accessibility', body });
+    } else {
+      await fsp.mkdir(dir, { recursive: true });
+      const scan = await this.step(a, 'accessibility', ['scan', '--url', job.url, '--cwd', dir, '--quiet', '--max-pages', '15'], dir);
+      if (a.reason) throw new Error(a.reason);
+      if (scan.code !== 0) throw new Error(withTail(`accessibility scan exited with ${exitText(scan)}`, scan.stderr));
 
-    p.current = 'accessibility report';
-    this.store.update(job);
-    const out = path.join(dir, 'report.html');
-    const rep = await this.step(a, 'accessibility', ['report', '--format', 'html', '--out', out, '--cwd', dir], dir);
-    if (a.reason) throw new Error(a.reason);
-    if (rep.code !== 0) throw new Error(withTail(`accessibility report exited with ${exitText(rep)}`, rep.stderr));
+      p.current = 'accessibility report';
+      this.store.update(job);
+      const out = path.join(dir, 'report.html');
+      const rep = await this.step(a, 'accessibility', ['report', '--format', 'html', '--out', out, '--cwd', dir], dir);
+      if (a.reason) throw new Error(a.reason);
+      if (rep.code !== 0) throw new Error(withTail(`accessibility report exited with ${exitText(rep)}`, rep.stderr));
+    }
 
-    // `report --format html` also writes report.json; take the run id and defect count from it.
+    // `report --format html` also writes report.json; take the run id and defect count from it (from blobs when a worker made it).
     let runId: string | undefined;
     let findings: number | undefined;
     try {
-      const doc = JSON.parse(await fsp.readFile(path.join(dir, 'report.json'), 'utf8')) as { run?: { id?: string }; counts?: { defects?: number } };
+      const text = this.fleet ? (await this.store.files.blobs.get(`jobs/${job.id}/accessibility/report.json`))?.toString('utf8') : await fsp.readFile(path.join(dir, 'report.json'), 'utf8');
+      const doc = JSON.parse(text ?? '') as { run?: { id?: string }; counts?: { defects?: number } };
       runId = doc.run?.id;
       findings = doc.counts?.defects;
     } catch {
@@ -681,6 +878,15 @@ function withTail(message: string, stderr: string[]): string {
   return tail ? `${message}\n${tail}` : message;
 }
 
+/** What a consent job takes from its site's workspace: CLI arguments (local) or request fields (a worker). */
+interface SiteInputs {
+  domain?: string;
+  args: string[];
+  workspace?: SiteWorkspace;
+  /** Blob prefix of the previous run's directory. */
+  previous?: string;
+}
+
 type SetLaw = (law: Law, patch: { state?: LawScanState; error?: string }) => void;
 
 function isLiveLine(line: string): boolean {
@@ -740,17 +946,6 @@ function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
       resolve();
     }
     signal.addEventListener('abort', done, { once: true });
-  });
-}
-
-/** `tar -xf file -C dest` (system tar). */
-function untar(file: string, dest: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('tar', ['-xf', file, '-C', dest], { stdio: ['ignore', 'ignore', 'pipe'] });
-    let err = '';
-    child.stderr!.on('data', (c: Buffer) => (err += c.toString()));
-    child.on('error', reject);
-    child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`could not unpack the worker's run: tar exited with code ${code} ${oneLine(err)}`.trim()))));
   });
 }
 

@@ -255,7 +255,7 @@ describe('POST /internal/verify', () => {
   it('answers 200 with the CLI outcome; the task file is gone afterwards', async () => {
     const w = await startWorker();
     const res = await post(w, '/internal/verify', { task, site: 'example.com' }).expect(200);
-    expect(res.body).toMatchObject({ result: 'verified', message: 'ok', evidence: [], check: 'install', site: 'example.com' });
+    expect(res.body).toMatchObject({ result: 'pass', message: 'ok', evidence: [], check: 'install', site: 'example.com' });
     expect(typeof res.body.at).toBe('string');
     expect(fs.existsSync(res.body.taskFile)).toBe(false);
     expect(w.w.isBusy()).toBe(false);
@@ -317,6 +317,54 @@ describe('without a blob store', () => {
       expect(res.body.error).toMatch(/no blob store configured/);
     }
     await collect(w, 'c1', 'de');
+  });
+});
+
+describe('kb', () => {
+  const tar = 'http://127.0.0.1:1/internal/jobs/x/run.tar';
+  const src = { law: 'ca', locationId: 'us-ca', tarUrl: tar };
+
+  function seedKb(blobDir: string): void {
+    fs.mkdirSync(path.join(blobDir, 'kb', 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(blobDir, 'kb', 'entries.json'), '{}');
+    fs.writeFileSync(path.join(blobDir, 'kb', 'sub', 'queue.json'), '[]');
+  }
+
+  it('merge downloads kb/ into the job and points COMPLYKIT_KB_DIR at it; the KB is not published', async () => {
+    const blobDir = tempDir();
+    seedKb(blobDir);
+    const a = await startWorker({ blobDir });
+    const m = await startWorker({ blobDir });
+    const tarA = await collect(a, 'k1-ca', 'us-ca');
+    await post(m, '/internal/merge', mergeBody([{ law: 'ca', locationId: 'us-ca', tarUrl: tarA }], { jobId: 'k1-merge', kb: 'kb/', publish: { prefix: 'jobs/k1/consent/' } })).expect(202);
+    expect(await settled(m, 'k1-merge')).toEqual({ state: 'done' });
+    const published = path.join(blobDir, 'jobs', 'k1', 'consent');
+    const seen = readJson<{ dir: string; files: string[] }>(path.join(published, 'kb-seen.json'));
+    expect(seen.dir).toBe(path.join(m.config.tmpDir, 'k1-merge', 'kb'));
+    expect(seen.files).toEqual(['entries.json', 'sub', 'sub/queue.json']);
+    expect(keysUnder(published).some((k) => k.startsWith('kb/'))).toBe(false);
+  });
+
+  it('consent does the same; without kb the env is left alone', async () => {
+    const blobDir = tempDir();
+    seedKb(blobDir);
+    const w = await startWorker({ blobDir });
+    const body = { jobId: 'k2', url: 'https://site.example.com/', quick: false, runs: 1, publish: { prefix: 'jobs/k2/consent/' } };
+    await post(w, '/internal/consent', { ...body, kb: 'kb/' }).expect(202);
+    expect(await settled(w, 'k2')).toEqual({ state: 'done' });
+    expect(readJson<{ files: string[] }>(path.join(blobDir, 'jobs', 'k2', 'consent', 'kb-seen.json')).files).toEqual(['entries.json', 'sub', 'sub/queue.json']);
+    await post(w, '/internal/consent', { ...body, jobId: 'k3', publish: { prefix: 'jobs/k3/consent/' } }).expect(202);
+    expect(await settled(w, 'k3')).toEqual({ state: 'done' });
+    expect(fs.existsSync(path.join(blobDir, 'jobs', 'k3', 'consent', 'kb-seen.json'))).toBe(false);
+  });
+
+  it('only the prefix kb/ is accepted', async () => {
+    const w = await startWorker();
+    for (const kb of ['kb', 'kb/x/', 'jobs/x/', '../kb/', '', 7, null]) {
+      await post(w, '/internal/merge', mergeBody([src], { kb })).expect(400);
+      await post(w, '/internal/consent', { jobId: 'k4', url: 'https://site.example.com/', quick: false, runs: 1, publish: { prefix: 'jobs/k4/consent/' }, kb }).expect(400);
+    }
+    expect(fs.readdirSync(w.config.tmpDir)).toEqual([]);
   });
 });
 

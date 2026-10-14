@@ -180,13 +180,20 @@ function parsePublish(o: Record<string, unknown>): { prefix: string } {
   return { prefix: parsePrefix((p as Record<string, unknown>).prefix, 'publish.prefix') };
 }
 
-function parseSiteInputs(o: Record<string, unknown>): { workspace?: SiteWorkspace; previous?: string } {
+/** The knowledge base prefix: only ever 'kb/'. */
+function parseKb(v: unknown): string | undefined {
+  if (v === undefined) return undefined;
+  if (v !== 'kb/') throw new BadRequest("kb must be 'kb/'");
+  return v;
+}
+
+function parseSiteInputs(o: Record<string, unknown>): { workspace?: SiteWorkspace; previous?: string; kb?: string } {
   let workspace: SiteWorkspace | undefined;
   if (o.workspace !== undefined) {
     if (!o.workspace || typeof o.workspace !== 'object' || Array.isArray(o.workspace)) throw new BadRequest('workspace must be an object');
     workspace = o.workspace as SiteWorkspace;
   }
-  return { workspace, previous: o.previous === undefined ? undefined : parsePrefix(o.previous, 'previous') };
+  return { workspace, previous: o.previous === undefined ? undefined : parsePrefix(o.previous, 'previous'), kb: parseKb(o.kb) };
 }
 
 function parseMerge(b: unknown): MergeRequest {
@@ -235,7 +242,7 @@ function parseVerify(b: unknown): VerifyRequest {
 /** What a finished or published job leaves out of the blob store. */
 function excludedFromPublish(rel: string): boolean {
   const top = rel.split('/')[0];
-  return top === 'gather' || top === 'live' || top === 'previous' || rel === 'events.ndjson' || rel === 'workspace.json';
+  return top === 'gather' || top === 'live' || top === 'previous' || rel === 'events.ndjson' || top === 'kb' || rel === 'workspace.json';
 }
 
 export function createWorkerApp(config: WorkerConfig): WorkerService {
@@ -280,7 +287,7 @@ export function createWorkerApp(config: WorkerConfig): WorkerService {
   }
 
   /** One CLI invocation as the job's child (own process group); stderr feeds the job's tail. */
-  function runCli(job: WorkerJob, args: string[], cwd: string): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  function runCli(job: WorkerJob, args: string[], cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
     checkpoint(job);
     return new Promise((resolve, reject) => {
       if (!fs.existsSync(config.cliPath)) {
@@ -288,7 +295,7 @@ export function createWorkerApp(config: WorkerConfig): WorkerService {
         return;
       }
       // detached → its own process group, so a kill reaches Chromium too.
-      const child = spawn(process.execPath, [config.cliPath, ...args], { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+      const child = spawn(process.execPath, [config.cliPath, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
       job.child = child;
       child.stdout!.resume();
       child.stderr!.setEncoding('utf8');
@@ -371,8 +378,17 @@ export function createWorkerApp(config: WorkerConfig): WorkerService {
     await config.blobs!.upload(job.dir, prefix, (rel) => !excludedFromPublish(rel));
   }
 
-  async function runConsentCli(job: WorkerJob, args: string[], what: string): Promise<void> {
-    const res = await runCli(job, args, job.dir);
+  /** The knowledge base, downloaded into the job's directory; the CLI env that points at it. */
+  async function kbEnv(job: WorkerJob, kb: string | undefined): Promise<NodeJS.ProcessEnv> {
+    if (!kb || !config.blobs) return process.env;
+    const dir = path.join(job.dir, 'kb');
+    await fsp.mkdir(dir, { recursive: true });
+    await config.blobs.download(kb, dir);
+    return { ...process.env, COMPLYKIT_KB_DIR: dir };
+  }
+
+  async function runConsentCli(job: WorkerJob, args: string[], what: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+    const res = await runCli(job, args, job.dir, env);
     checkpoint(job);
     if (res.code !== 0) throw new Error(withTail(job, `${what} exited with ${exitText(res.code, res.signal)}`));
     if (!(await hasDoneEvent(job))) throw new Error(withTail(job, `${what} exited without a result`));
@@ -416,9 +432,10 @@ export function createWorkerApp(config: WorkerConfig): WorkerService {
         );
         checkpoint(job);
         const site = await siteArgs(job, b);
+        const env = await kbEnv(job, b.kb);
         const failedArgs = b.failed.flatMap((f) => ['--failed', `${f.locationId}=${f.error}`]);
         const args = ['consent', '--merge', dirs.join(','), '--url', b.url, '--cwd', job.dir, '--events', eventsFile(job), ...quiet(), ...failedArgs, ...site];
-        await runConsentCli(job, args, 'consent merge');
+        await runConsentCli(job, args, 'consent merge', env);
       } finally {
         // Raw collections carry unredacted request bodies and cookie values: never kept, whatever happened.
         await fsp.rm(gather, { recursive: true, force: true });
@@ -430,8 +447,9 @@ export function createWorkerApp(config: WorkerConfig): WorkerService {
   function consentJob(b: ConsentRequest): Promise<WorkerJob> {
     return startJob('consent', b.jobId, 'done', async (job) => {
       const site = await siteArgs(job, b);
+      const env = await kbEnv(job, b.kb);
       const args = ['consent', '--url', b.url, '--cwd', job.dir, '--events', eventsFile(job), ...quiet(), '--runs', String(b.runs), ...(b.quick ? ['--quick'] : []), ...site];
-      await runConsentCli(job, args, 'consent');
+      await runConsentCli(job, args, 'consent', env);
       await publish(job, b.publish.prefix);
     });
   }

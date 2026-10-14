@@ -466,7 +466,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
   );
 
   // The guided remediation checklist (R4): the stored tasks with their status, and Verify.
-  const verifier = new RemediationVerifier({ config, workspaces });
+  const verifier = new RemediationVerifier({ config, workspaces, fleet: runner.workerFleet, locks: runner.regionLocks });
   app.get(
     '/api/sites/:domain/remediation',
     siteRoute(async (req, res) => {

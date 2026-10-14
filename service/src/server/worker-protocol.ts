@@ -67,6 +67,8 @@ export interface MergeRequest {
   workspace?: SiteWorkspace;
   /** Blob prefix of the site's previous run (`jobs/<id>/consent/.comply/runs/<runId>/`), passed as `--previous` after download (its evaluation files only, not evidence/). */
   previous?: string;
+  /** Blob prefix of the knowledge base, always 'kb/'. Downloaded before the CLI runs; the CLI reads it through COMPLYKIT_KB_DIR. */
+  kb?: string;
   publish: Publish;
 }
 
@@ -78,6 +80,8 @@ export interface ConsentRequest {
   runs: number;
   workspace?: SiteWorkspace;
   previous?: string;
+  /** As in MergeRequest. */
+  kb?: string;
   publish: Publish;
 }
 

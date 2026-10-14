@@ -30,8 +30,9 @@ afterEach(async () => {
   await Promise.all(workers.splice(0).map(async (x) => (await x.w.stop(200), x.close())));
 });
 
-async function startWorker(): Promise<{ url: string; w: WorkerService }> {
-  const w = createWorkerApp({ ...loadWorkerConfig({ WORKER_SECRET: SECRET }), tmpDir: tempDir(), cliPath: REGIONAL_CLI, killGraceMs: 500 });
+/** `blobDir`: where the worker publishes a merge (the host's DATA_DIR, the fs backend's blob root). */
+async function startWorker(blobDir = tempDir()): Promise<{ url: string; w: WorkerService }> {
+  const w = createWorkerApp({ ...loadWorkerConfig({ WORKER_SECRET: SECRET, WORKER_BLOB_DIR: blobDir }), tmpDir: tempDir(), cliPath: REGIONAL_CLI, killGraceMs: 500 });
   const outer = express();
   outer.use(w.app);
   const server = outer.listen(0, '127.0.0.1');
@@ -61,8 +62,10 @@ const liveDir = (s: S, id: string) => path.join(s.store.jobDir(id), 'consent', '
 
 describe('per-law live state on the report endpoint', () => {
   it('each law carries its state and its own live report while the job runs; a failed law says why', async () => {
-    const eu = await startWorker();
-    const s = await withFleet({ fra: eu.url }); // no worker for lhr
+    const dataDir = tempDir();
+    const eu = await startWorker(dataDir);
+    const ca = await startWorker(dataDir);
+    const s = await startService({ workerSecret: SECRET, dataDir }, { ...fast, fleet: fakeFleet({ fra: eu.url, lax: ca.url }) }); // no worker for lhr
     const id = await scan(s, { laws: ['eu', 'uk', 'ca'], authorized: true });
 
     const mid = await poll(
@@ -80,7 +83,7 @@ describe('per-law live state on the report endpoint', () => {
     expect(e.progress).toMatchObject({ id: 'eu', locationId: 'de', region: 'fra', local: false });
     expect(['scanning', 'collected']).toContain(e.progress.state);
     expect(e.report!.locations?.map((l) => l.id)).toEqual(['de']);
-    expect(c.progress).toMatchObject({ id: 'ca', locationId: 'us-ca', local: true });
+    expect(c.progress).toMatchObject({ id: 'ca', locationId: 'us-ca', region: 'lax', local: true });
     expect(c.report!.locations?.map((l) => l.id)).toEqual(['us-ca']);
     expect(u.progress).toMatchObject({ state: 'failed', error: 'worker in lhr failed: no fake worker for region lhr' });
     expect(u.report).toBeNull();

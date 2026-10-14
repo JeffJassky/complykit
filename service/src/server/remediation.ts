@@ -31,6 +31,9 @@ import type {
   VerifyTaskResponse,
 } from '../shared/api.js';
 import type { ServiceConfig } from './config.js';
+import type { Fleet, WorkerHandle } from './fleet.js';
+import type { RegionLocks } from './region-lock.js';
+import { DEFAULT_WORKER_REGION, WORKER_SECRET_HEADER, type VerifyRequest } from './worker-protocol.js';
 import { WorkspaceError, type WorkspaceStore } from './workspace.js';
 
 export const REMEDIATION_TASK_KEY_PREFIX = 'task:change:';
@@ -126,13 +129,25 @@ export function remediationView(ws: SiteWorkspace): RemediationResponse {
 export interface VerifyDeps {
   config: ServiceConfig;
   workspaces: WorkspaceStore;
+  /** With a fleet, Verify runs on a worker in the default region (and takes its region lock, shared with the scans). */
+  fleet?: Fleet;
+  locks?: RegionLocks;
 }
+
+/** How long Verify waits for the worker's region to be free of a scan. */
+const REGION_WAIT_MS = 5 * 60_000;
+/** The worker caps one verify at 5 minutes; this is the host's call, with the response on top. */
+const REMOTE_VERIFY_TIMEOUT_MS = 6 * 60_000;
 
 /** Runs verifies one site at a time. */
 export class RemediationVerifier {
   private readonly busy = new Set<string>();
 
   constructor(private readonly deps: VerifyDeps) {}
+
+  private runOnWorker(task: unknown, site: string): Promise<string> {
+    return verifyOnWorker(this.deps, task, site);
+  }
 
   running(domain: string): boolean {
     return this.busy.has(domain);
@@ -153,9 +168,13 @@ export class RemediationVerifier {
       const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'complykit-verify-'));
       let printed: unknown;
       try {
-        const file = path.join(dir, 'task.json');
-        await fsp.writeFile(file, JSON.stringify(task));
-        const stdout = await runCli(this.deps.config, ['verify-change', '--task', file, '--site', domain, '--json']);
+        let stdout: string;
+        if (this.deps.fleet) stdout = await this.runOnWorker(task, domain);
+        else {
+          const file = path.join(dir, 'task.json');
+          await fsp.writeFile(file, JSON.stringify(task));
+          stdout = await runCli(this.deps.config, ['verify-change', '--task', file, '--site', domain, '--json']);
+        }
         try {
           printed = JSON.parse(stdout);
         } catch {
@@ -179,6 +198,55 @@ export class RemediationVerifier {
     } finally {
       this.busy.delete(domain);
     }
+  }
+}
+
+/** `POST /internal/verify` on a worker → the CLI's stdout (JSON text). 400 = a bad request, anything else that isn't 200 = ours (500), like the local exit codes. */
+async function verifyOnWorker(deps: VerifyDeps, task: unknown, site: string): Promise<string> {
+  const { config, fleet } = deps;
+  if (!config.workerSecret) throw new WorkspaceError(500, 'a worker fleet is configured but WORKER_SECRET is not set; the host cannot call its workers');
+  const abort = new AbortController();
+  const waitTimer = setTimeout(() => abort.abort(), REGION_WAIT_MS);
+  let unlock: (() => void) | undefined;
+  let handle: WorkerHandle | undefined;
+  try {
+    try {
+      unlock = deps.locks ? await deps.locks.lock(DEFAULT_WORKER_REGION, abort.signal) : undefined;
+    } catch {
+      throw new WorkspaceError(409, 'the check worker is busy with a scan; try again when it finishes');
+    } finally {
+      clearTimeout(waitTimer);
+    }
+    try {
+      handle = await fleet!.acquire(DEFAULT_WORKER_REGION);
+    } catch (err) {
+      throw new WorkspaceError(500, `could not start a worker: ${(err as Error).message}`);
+    }
+    const body: VerifyRequest = { task, site };
+    let res: Response;
+    try {
+      res = await fetch(`${handle.baseUrl}/internal/verify`, {
+        method: 'POST',
+        headers: { ...handle.headers, [WORKER_SECRET_HEADER]: config.workerSecret, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REMOTE_VERIFY_TIMEOUT_MS),
+      });
+    } catch (err) {
+      throw new WorkspaceError(500, `complykit verify-change: ${(err as Error).message}`);
+    }
+    const text = await res.text().catch(() => '');
+    if (res.status === 200) return text;
+    let message = '';
+    try {
+      message = String((JSON.parse(text) as { error?: unknown }).error ?? '');
+    } catch {
+      /* not JSON */
+    }
+    if (res.status === 400) throw new WorkspaceError(400, message || 'complykit verify-change: invalid task');
+    throw new WorkspaceError(500, message || `complykit verify-change: worker answered HTTP ${res.status}`);
+  } finally {
+    if (handle) await fleet!.release(handle).catch(() => undefined);
+    unlock?.();
   }
 }
 

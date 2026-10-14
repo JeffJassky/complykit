@@ -80,7 +80,7 @@ if (cmd === 'verify-change') {
     process.exit(1);
   }
   if (String(opts.site).startsWith('slow.')) await sleep(60_000);
-  console.log(JSON.stringify({ result: 'verified', message: 'ok', evidence: [], at: new Date().toISOString(), check: task.verify?.check ?? 'install', taskFile: opts.task, site: opts.site }));
+  console.log(JSON.stringify({ result: 'pass', message: 'ok', evidence: [], at: new Date().toISOString(), check: task.verify?.check ?? 'install', taskFile: opts.task, site: opts.site }));
   process.exit(0);
 }
 
@@ -107,6 +107,11 @@ if (cmd === 'consent' && !opts['collect-only']) {
   const failed = [].concat(opts.failed ?? []);
   const locs = merging ? String(opts.merge).split(',').filter(Boolean).map((d) => JSON.parse(fs.readFileSync(path.join(d, 'collection.json'), 'utf8')).location) : ['local'];
   fs.writeFileSync(path.join(opts.cwd, merging ? 'merge-argv.json' : 'consent-argv.json'), JSON.stringify(process.argv.slice(2)));
+  if (process.env.COMPLYKIT_KB_DIR) {
+    const kbDir = process.env.COMPLYKIT_KB_DIR;
+    const files = fs.existsSync(kbDir) ? fs.readdirSync(kbDir, { recursive: true }).map(String).sort() : [];
+    fs.writeFileSync(path.join(opts.cwd, 'kb-seen.json'), JSON.stringify({ dir: kbDir, files }));
+  }
   const runId = new Date().toISOString().replace(/:/g, '-');
   emit(merging ? { type: 'start', runId, url: opts.url, locations: locs } : { type: 'start', runId, url: opts.url, locations: locs });
   if (host.startsWith('fail.')) {
