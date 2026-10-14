@@ -16,11 +16,12 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { ConsentConfigRequest, ConsentConfigResponse, ConsentConfigValue, JobDetail } from '../shared/api.js';
 import type { ServiceConfig } from './config.js';
+import { walkLocal } from './storage/fs-blobs.js';
+import { RUN_ID_RE, type JobFiles } from './job-files.js';
 import { WorkspaceError, type WorkspaceStore } from './workspace.js';
 
 const CLI_TIMEOUT_MS = 120_000;
 const MAX_STDOUT = 4 * 1024 * 1024;
-const RUN_ID_RE = /^[0-9TZ:.-]{10,40}$/;
 
 function text(v: unknown, field: string, max: number): string | undefined {
   if (v === undefined || v === null || v === '') return undefined;
@@ -31,17 +32,41 @@ function text(v: unknown, field: string, max: number): string | undefined {
 export interface ConsentConfigDeps {
   config: ServiceConfig;
   workspaces: WorkspaceStore;
-  jobDir: string;
+  /** The job's files: the CLI runs in its scratch; the generated files are put into blobs after. */
+  files: JobFiles;
   /** This service's own origin, for `recordEndpoint: true`. */
   origin: string;
 }
 
-/** Generate and store. Throws WorkspaceError with the HTTP status for anything the caller asked wrong. */
+/**
+ * Generate and store. Throws WorkspaceError with the HTTP status for anything the caller asked wrong.
+ * Runs in the job's scratch: with the cloud backend the run's evaluation is downloaded first and the scratch deleted after.
+ */
 export async function generateConsentConfigForJob(job: JobDetail, body: ConsentConfigRequest, deps: ConsentConfigDeps): Promise<ConsentConfigResponse> {
+  const runId = checkRun(job);
+  await deps.files.wait(job.id);
+  if (!(await deps.files.head(job, `consent/.comply/runs/${runId}/tracking.json`))) throw new WorkspaceError(409, 'the consent run’s evaluation is no longer on disk');
+  return deps.files.exclusive(async () => {
+    try {
+      await deps.files.stage(job);
+      return await generateStagedConsentConfig(job, body, deps);
+    } finally {
+      await deps.files.clean(job.id);
+    }
+  });
+}
+
+function checkRun(job: JobDetail): string {
   const runId = job.result?.consent?.runId;
   if (job.status !== 'done' || !runId) throw new WorkspaceError(409, 'the job has no finished consent run');
   if (!RUN_ID_RE.test(runId)) throw new WorkspaceError(409, 'the job’s run id is not usable');
-  const consentDir = path.join(deps.jobDir, 'consent');
+  return runId;
+}
+
+/** The generation itself, with the run's evaluation already in the job's scratch (rerender stages once and calls this). */
+export async function generateStagedConsentConfig(job: JobDetail, body: ConsentConfigRequest, deps: ConsentConfigDeps): Promise<ConsentConfigResponse> {
+  const runId = checkRun(job);
+  const consentDir = path.join(deps.files.scratchDir(job.id), 'consent');
   const runDir = path.join(consentDir, '.comply', 'runs', runId);
   if (!fs.existsSync(path.join(runDir, 'tracking.json'))) throw new WorkspaceError(409, 'the consent run’s evaluation is no longer on disk');
 
@@ -70,6 +95,7 @@ export async function generateConsentConfigForJob(job: JobDetail, body: ConsentC
   }
   const value: ConsentConfigValue = { config: printed.config, snippet: printed.snippet, changeList: printed.changeList, notes: printed.notes, ...(printed.scriptSrc ? { scriptSrc: printed.scriptSrc } : {}), ...(Array.isArray(printed.tasks) ? { tasks: printed.tasks } : {}) };
   const res = await deps.workspaces.patch(domain, { ...(by ? { by } : {}), config: { value, runId } });
+  await deps.files.commit(job.id, (await walkLocal(outDir)).map((f) => `consent/consent-config/${f}`));
   const rel = (f: string) => `/reports/${job.id}/consent/consent-config/${f}`;
   return {
     domain,

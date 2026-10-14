@@ -12,6 +12,7 @@
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { RUN_ID_RE, isFinal, type JobFiles } from './job-files.js';
 import { firstScan, newerScan, siteHistory } from './history.js';
 import { scoreReport } from '../shared/score.js';
 import type { JobDetail, JobReportResponse, OwnerReport, SiteWorkspace } from '../shared/api.js';
@@ -21,51 +22,81 @@ import { rerenderJob, rerenderRunning, type RerenderDeps } from './rerender.js';
 import type { WorkspaceStore } from './workspace.js';
 
 export const OWNER_REPORT_FILE = 'owner-report.json';
-const RUN_ID_RE = /^[0-9TZ:.-]{10,40}$/;
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** consent-report.json beside the finished job's HTML report (older jobs have it too). */
-async function jsonReportExists(job: JobDetail, jobDir: string): Promise<boolean> {
+async function jsonReportExists(job: JobDetail, files: JobFiles): Promise<boolean> {
   const runId = job.result?.consent?.runId;
   if (!runId || !RUN_ID_RE.test(runId) || !job.result?.consent?.reportUrl.endsWith('.html')) return false;
-  return fsp
-    .access(path.join(jobDir, 'consent', '.comply', 'runs', runId, 'consent-report.json'))
-    .then(() => true, () => false);
+  return (await files.head(job, `consent/.comply/runs/${runId}/consent-report.json`)) !== null;
 }
 
-/** Where the job's owner report is: beside its consent report once done; while running, in its (only) run directory. */
-export async function ownerReportFile(job: JobDetail, jobDir: string): Promise<string | undefined> {
-  const runs = path.join(jobDir, 'consent', '.comply', 'runs');
+/**
+ * Where the job's owner report is (a path relative to the job): beside its consent report once done; while
+ * running, in its (only) run directory, the most recently written one.
+ */
+export async function ownerReportRel(job: JobDetail, files: JobFiles): Promise<string | undefined> {
   const runId = job.result?.consent?.runId;
-  if (runId) return RUN_ID_RE.test(runId) ? path.join(runs, runId, OWNER_REPORT_FILE) : undefined;
-  let dirs: string[];
+  if (runId) return RUN_ID_RE.test(runId) ? `consent/.comply/runs/${runId}/${OWNER_REPORT_FILE}` : undefined;
+  const runs = path.join(files.scratchDir(job.id), 'consent', '.comply', 'runs');
+  let best: { rel: string; at: number } | undefined;
   try {
-    dirs = await fsp.readdir(runs);
-  } catch {
-    return undefined;
-  }
-  let best: { file: string; mtime: number } | undefined;
-  for (const d of dirs) {
-    if (!RUN_ID_RE.test(d)) continue;
-    const file = path.join(runs, d, OWNER_REPORT_FILE);
-    try {
-      const { mtimeMs } = await fsp.stat(file);
-      if (!best || mtimeMs > best.mtime) best = { file, mtime: mtimeMs };
-    } catch {
-      /* not written yet */
+    for (const d of await fsp.readdir(runs)) {
+      if (!RUN_ID_RE.test(d)) continue;
+      try {
+        const { mtimeMs } = await fsp.stat(path.join(runs, d, OWNER_REPORT_FILE));
+        if (!best || mtimeMs > best.at) best = { rel: `consent/.comply/runs/${d}/${OWNER_REPORT_FILE}`, at: mtimeMs };
+      } catch {
+        /* not written yet */
+      }
     }
+  } catch {
+    /* no scratch run directory (a finished job's files are in blobs) */
   }
-  return best?.file;
+  if (best || files.local || !isFinal(job)) return best?.rel;
+  // A finished job without a run id (failed after writing a live report): published, so look in blobs.
+  const prefix = `jobs/${job.id}/consent/.comply/runs/`;
+  for await (const b of files.blobs.list(prefix)) {
+    if (!b.key.endsWith(`/${OWNER_REPORT_FILE}`)) continue;
+    const at = Date.parse(b.modified);
+    if (!RUN_ID_RE.test(b.key.slice(prefix.length).split('/')[0])) continue;
+    if (!best || at > best.at) best = { rel: b.key.slice(`jobs/${job.id}/`.length), at };
+  }
+  return best?.rel;
 }
+
+function toOwnerReport(raw: unknown): OwnerReport | null {
+  if (!isObj(raw) || raw.version !== 1 || !isObj(raw.matrix) || !Array.isArray(raw.matrix.columns) || !Array.isArray(raw.matrix.tools) || !isObj(raw.scan) || !isObj(raw.banner)) return null;
+  return { ...(raw as unknown as OwnerReport), decisions: Array.isArray(raw.decisions) ? (raw.decisions as OwnerReport['decisions']) : [] };
+}
+
+/** Parsed owner reports of finished jobs, by blob etag (a 2-second poll must not refetch and reparse 9 MB). Newest use last. */
+const parsed = new Map<string, { etag: string; report: OwnerReport | null }>();
+const PARSED_MAX = 6;
 
 /** The owner report, when it is there and has the shape the page reads (else null: the page waits for the next one). */
-export async function readOwnerReport(file: string | undefined): Promise<OwnerReport | null> {
-  if (!file) return null;
+export async function readOwnerReport(job: JobDetail, files: JobFiles, rel: string | undefined): Promise<OwnerReport | null> {
+  if (!rel) return null;
   try {
-    const raw = JSON.parse(await fsp.readFile(file, 'utf8')) as unknown;
-    if (!isObj(raw) || raw.version !== 1 || !isObj(raw.matrix) || !Array.isArray(raw.matrix.columns) || !Array.isArray(raw.matrix.tools) || !isObj(raw.scan) || !isObj(raw.banner)) return null;
-    return { ...(raw as unknown as OwnerReport), decisions: Array.isArray(raw.decisions) ? (raw.decisions as OwnerReport['decisions']) : [] };
+    const stable = isFinal(job);
+    const info = stable ? await files.head(job, rel) : null;
+    if (stable && !info) return null;
+    const cacheKey = `${job.id}/${rel}`;
+    const hit = info && parsed.get(cacheKey);
+    if (info && hit && hit.etag === info.etag) {
+      parsed.delete(cacheKey);
+      parsed.set(cacheKey, hit);
+      return hit.report;
+    }
+    const buf = await files.get(job, rel);
+    if (!buf) return null;
+    const report = toOwnerReport(JSON.parse(buf.toString('utf8')));
+    if (info) {
+      parsed.set(cacheKey, { etag: info.etag, report });
+      while (parsed.size > PARSED_MAX) parsed.delete(parsed.keys().next().value as string);
+    }
+    return report;
   } catch {
     return null; // not written yet, or a reader caught a writer (the CLI renames into place, so rarely)
   }
@@ -123,29 +154,25 @@ export class ChecklistMaker {
   }
 }
 
-/** First-scan scores by job id, kept while the owner report file is unchanged (a re-render with new classifications rewrites it). */
-const baselineCache = new Map<string, { mtimeMs: number; score: number | undefined }>();
+/** First-scan scores by job id, kept while the owner report is unchanged (a re-render with new classifications rewrites it). */
+const baselineCache = new Map<string, { etag: string; score: number | undefined }>();
 
-async function baselineScore(job: JobDetail, jobDir: string): Promise<number | undefined> {
-  const file = await ownerReportFile(job, jobDir);
-  if (!file) return undefined;
-  let mtimeMs: number;
-  try {
-    ({ mtimeMs } = await fsp.stat(file));
-  } catch {
-    return undefined;
-  }
+async function baselineScore(job: JobDetail, files: JobFiles): Promise<number | undefined> {
+  const rel = await ownerReportRel(job, files);
+  if (!rel) return undefined;
+  const info = await files.head(job, rel);
+  if (!info) return undefined;
   const hit = baselineCache.get(job.id);
-  if (hit && hit.mtimeMs === mtimeMs) return hit.score;
-  const score = scoreReport(await readOwnerReport(file)).score;
-  baselineCache.set(job.id, { mtimeMs, score });
+  if (hit && hit.etag === info.etag) return hit.score;
+  const score = scoreReport(await readOwnerReport(job, files, rel)).score;
+  baselineCache.set(job.id, { etag: info.etag, score });
   return score;
 }
 
-export async function jobReport(job: JobDetail, deps: { jobDir: string; workspaces: WorkspaceStore; maker?: ChecklistMaker; jobs?: JobDetail[]; jobDirOf?: (id: string) => string }): Promise<JobReportResponse> {
+export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspaces: WorkspaceStore; maker?: ChecklistMaker; jobs?: JobDetail[] }): Promise<JobReportResponse> {
   const consent = job.checks.includes('consent');
   const domain = deps.workspaces.domain(new URL(job.url).hostname);
-  const report = consent ? await readOwnerReport(await ownerReportFile(job, deps.jobDir)) : null;
+  const report = consent ? await readOwnerReport(job, deps.files, await ownerReportRel(job, deps.files)) : null;
   // Per-law live reports (collectors'), only while the job is not done: a finished job's live files are gone and its final report covers every location.
   const laws =
     job.metrics.laws?.length
@@ -153,7 +180,7 @@ export async function jobReport(job: JobDetail, deps: { jobDir: string; workspac
           job.metrics.laws.map(async (progress) => ({
             id: progress.id,
             progress,
-            report: job.status === 'done' ? null : await readOwnerReport(path.join(deps.jobDir, 'consent', 'live', `${progress.id}.json`)),
+            report: job.status === 'done' ? null : await readOwnerReport(job, deps.files, `consent/live/${progress.id}.json`),
           })),
         )
       : undefined;
@@ -176,7 +203,7 @@ export async function jobReport(job: JobDetail, deps: { jobDir: string; workspac
   const domainOf = (host: string) => deps.workspaces.domain(host);
   const newer = newerScan(job, jobs, domainOf);
   const first = consent ? firstScan(job, jobs, domainOf) : undefined;
-  const firstScore = first && first.id !== job.id && deps.jobDirOf ? await baselineScore(first, deps.jobDirOf(first.id)) : undefined;
+  const firstScore = first && first.id !== job.id ? await baselineScore(first, deps.files) : undefined;
   const progress = ready ? checklistProgress(ws) : undefined;
   return {
     job: toSummary(job),
@@ -194,7 +221,7 @@ export async function jobReport(job: JobDetail, deps: { jobDir: string; workspac
     updating: rerenderRunning(job.id),
     ...(job.result?.consent?.reportUrl ? { technicalReportUrl: job.result.consent.reportUrl } : {}),
     ...(job.result?.accessibility?.reportUrl ? { accessibilityReportUrl: job.result.accessibility.reportUrl } : {}),
-    ...((await jsonReportExists(job, deps.jobDir)) && job.result?.consent ? { jsonReportUrl: job.result.consent.reportUrl.replace(/\.html$/, '.json') } : {}),
+    ...((await jsonReportExists(job, deps.files)) && job.result?.consent ? { jsonReportUrl: job.result.consent.reportUrl.replace(/\.html$/, '.json') } : {}),
     ...(job.result?.downloadUrl ? { downloadUrl: job.result.downloadUrl } : {}),
     ...(ready ? { installZipUrl: `/api/sites/${encodeURIComponent(domain)}/install.zip` } : {}),
     history: siteHistory(domain, jobs, ws, domainOf, job.id),

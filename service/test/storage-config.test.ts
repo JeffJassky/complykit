@@ -22,6 +22,13 @@ describe('storage config', () => {
     expect(c.cloud?.spaces.region).toBe('nyc3');
   });
 
+  it('passes the Mongo CA (PEM text) through when MONGO_CA is set', () => {
+    expect(loadConfig(cloudEnv).cloud?.mongoCa).toBeUndefined();
+    expect(loadConfig({ ...cloudEnv, MONGO_CA: '' }).cloud).not.toHaveProperty('mongoCa');
+    const pem = '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n';
+    expect(loadConfig({ ...cloudEnv, MONGO_CA: pem }).cloud?.mongoCa).toBe(pem);
+  });
+
   it('names the missing cloud settings', () => {
     expect(() => loadConfig({ DATA_BACKEND: 'cloud' })).toThrow(/MONGO_URL, SPACES_ENDPOINT, SPACES_BUCKET, SPACES_KEY, SPACES_SECRET/);
     expect(() => loadConfig({ ...cloudEnv, SPACES_SECRET: '' })).toThrow(/SPACES_SECRET/);

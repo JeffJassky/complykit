@@ -15,7 +15,7 @@ export interface ServiceConfig {
   dataDir: string;
   /** DATA_BACKEND: 'fs' (default; files and records under dataDir) or 'cloud' (Spaces + MongoDB, see cloud). */
   dataBackend: 'fs' | 'cloud';
-  /** MONGO_URL, MONGO_DB, SPACES_*: set when dataBackend is 'cloud'. */
+  /** MONGO_URL, MONGO_CA, MONGO_DB, SPACES_*: set when dataBackend is 'cloud'. */
   cloud?: CloudStorageConfig;
   /** complykit's knowledge-base store (queue, proposals, confirmed entries).
    *  Consent checks read and feed it; the KB routes manage it. */
@@ -119,6 +119,7 @@ function cloudConfig(env: NodeJS.ProcessEnv): CloudStorageConfig {
   if (missing.length) throw new Error(`DATA_BACKEND=cloud needs ${missing.join(', ')}`);
   return {
     mongoUrl: env.MONGO_URL!,
+    ...(env.MONGO_CA ? { mongoCa: env.MONGO_CA } : {}),
     mongoDb: env.MONGO_DB || 'complykit',
     spaces: {
       endpoint: env.SPACES_ENDPOINT!,

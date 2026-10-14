@@ -118,6 +118,8 @@ export interface Storage {
 /** DATA_BACKEND=cloud settings (config.ts reads them from the environment). */
 export interface CloudStorageConfig {
   mongoUrl: string;
+  /** PEM text of the CA that signed the Mongo server certificate (DigitalOcean's managed Mongo uses its own CA). Unset = the system roots. */
+  mongoCa?: string;
   /** Default 'complykit'. */
   mongoDb: string;
   spaces: {

@@ -1,3 +1,4 @@
+import { fsStorage } from '../src/server/storage/fs.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import request from 'supertest';
@@ -176,16 +177,17 @@ describe('GET /api/sites/:domain/consent-records', () => {
 
 describe('retention', () => {
   it('prunes lines received before the cutoff, keeps the rest and anything unreadable', async () => {
-    const root = path.join(tempDir(), 'sites');
-    const store = new ConsentRecordStore(root, 1825);
+    const dataDir = tempDir();
+    const store = new ConsentRecordStore(fsStorage(dataDir).consentRecords, 1825);
+    const file = (d: string) => path.join(dataDir, 'sites', d, 'consent-records.jsonl');
     const day = 86_400_000;
     const now = Date.parse('2026-10-06T00:00:00Z');
     const mk = (id: string, ageDays: number) => ({ ...normalizeRecord(record({ id, at: new Date(now - ageDays * day).toISOString() }), 'example-shop.test', now - ageDays * day), id });
     await store.append('example-shop.test', mk('old0000000000000id', 1900));
     await store.append('example-shop.test', mk('new0000000000000id', 10));
-    fs.appendFileSync(store.file('example-shop.test'), '{torn\n');
+    fs.appendFileSync(file('example-shop.test'), '{torn\n');
     expect(await store.prune(now)).toBe(1);
-    const left = fs.readFileSync(store.file('example-shop.test'), 'utf8').trim().split('\n');
+    const left = fs.readFileSync(file('example-shop.test'), 'utf8').trim().split('\n');
     expect(left).toHaveLength(2);
     expect(left[0]).toContain('new0000000000000id');
     expect(left[1]).toBe('{torn');
@@ -201,7 +203,7 @@ describe('retention', () => {
   });
 
   it('refuses a post once a site file is at its size cap', async () => {
-    const store = new ConsentRecordStore(path.join(tempDir(), 'sites'), 1825, 100);
+    const store = new ConsentRecordStore(fsStorage(tempDir(), { consentMaxBytes: 100 }).consentRecords, 1825);
     const r = normalizeRecord(record(), 'example-shop.test');
     await store.append('example-shop.test', r);
     await expect(store.append('example-shop.test', r)).rejects.toMatchObject({ status: 507 });

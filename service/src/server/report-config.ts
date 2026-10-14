@@ -7,13 +7,17 @@
 // offline against localStorage.
 //
 // Only reports that carry a workbench (the `workspace-config` block complykit
-// emits) are touched; every other file is served as-is.
+// emits) are touched; every other file is served as-is. Files come from
+// JobFiles (job-files.ts), so this works the same whether the job's files are
+// on the local disk or in blobs.
 
-import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { RequestHandler } from 'express';
+import type { Readable } from 'node:stream';
+import type { Request, RequestHandler, Response } from 'express';
 import type { JobDetail, ReportServiceConfig } from '../shared/api.js';
 import { siteDomain } from './domains.js';
+import { isJobId, type JobStore } from './store.js';
+import type { BlobInfo } from './storage/types.js';
 
 export const SERVICE_CONFIG_ID = 'ck-service';
 const WORKBENCH_MARKER = '<script type="application/json" id="workspace-config">';
@@ -41,36 +45,107 @@ export function injectServiceConfig(html: string, config: ReportServiceConfig): 
 }
 
 /**
- * Middleware for /reports/:id: answers GET/HEAD for a workbench .html with the
- * config injected; everything else (and any HTML it can't read) falls through
- * to the static handler, which owns 404s and path-escape refusals.
+ * Handler for /reports/:id/…: the job's files, read through JobFiles (blobs for a
+ * finished job, scratch for a running one). A workbench .html gets the config
+ * injected; everything else is streamed as it is, with a content type from its
+ * extension (dotfile paths such as .comply/ are allowed). The path is decoded
+ * and refused if it could leave the job: that is a 403 for `..`, a 404 for
+ * anything else that is not a file.
  */
-export function serveReportWithConfig(jobDir: string, job: JobDetail): RequestHandler {
+export function serveReports(store: JobStore): RequestHandler {
   return async (req, res, next) => {
-    if ((req.method !== 'GET' && req.method !== 'HEAD') || !/\.html?$/i.test(req.path)) return next();
-    const config = reportServiceConfig(job);
-    if (!config) return next();
-    let rel: string;
     try {
-      rel = decodeURIComponent(req.path);
-    } catch {
-      return next();
+      const id = String(req.params.id ?? '');
+      const job = isJobId(id) ? store.get(id) : undefined;
+      if (!job) {
+        res.status(404).type('text/plain').send('report not found');
+        return;
+      }
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.set('Allow', 'GET, HEAD').status(405).type('text/plain').send('method not allowed');
+        return;
+      }
+      let rel: string;
+      try {
+        rel = decodeURIComponent(req.path);
+      } catch {
+        res.status(400).type('text/plain').send('bad request');
+        return;
+      }
+      if (rel.includes('\0') || rel.includes('\\')) {
+        res.status(400).type('text/plain').send('bad request');
+        return;
+      }
+      const segs = rel.replace(/^\//, '').split('/');
+      if (segs.includes('..')) {
+        res.status(403).type('text/plain').send('forbidden');
+        return;
+      }
+      rel = segs.join('/');
+      // A trailing slash, an empty or '.' segment, or the job's record: not a report file.
+      if (!rel || segs.some((x) => x === '' || x === '.') || rel === 'job.json' || /[\u0000-\u001f\u007f]/.test(rel)) {
+        res.status(404).type('text/plain').send('not found');
+        return;
+      }
+
+      const files = store.files;
+      const info = await files.head(job, rel).catch((err: Error) => (/not a usable blob key/.test(err.message) ? null : Promise.reject(err)));
+      if (!info) {
+        res.status(404).type('text/plain').send('not found');
+        return;
+      }
+      const isHtml = /\.html?$/i.test(rel);
+      const config = isHtml && info.size <= MAX_HTML_BYTES ? reportServiceConfig(job) : undefined;
+      if (config) {
+        const buf = await files.get(job, rel);
+        if (!buf) {
+          res.status(404).type('text/plain').send('not found');
+          return;
+        }
+        const html = buf.toString('utf8');
+        if (html.includes(WORKBENCH_MARKER)) {
+          // The injected block changes per service, so the stored file's validators don't describe this response.
+          res.set('Cache-Control', 'no-store');
+          res.type('html').send(injectServiceConfig(html, config));
+          return;
+        }
+        // No workbench: the bytes as they are.
+        sendBytes(req, res, info, rel, buf);
+        return;
+      }
+      const stream = await files.read(job, rel);
+      if (!stream) {
+        res.status(404).type('text/plain').send('not found');
+        return;
+      }
+      sendBytes(req, res, info, rel, stream);
+    } catch (err) {
+      next(err);
     }
-    const root = path.resolve(jobDir);
-    const file = path.resolve(root, '.' + rel);
-    if (rel.includes('\0') || !file.startsWith(root + path.sep)) return next();
-    let html: string;
-    try {
-      const stat = await fsp.stat(file);
-      if (!stat.isFile() || stat.size > MAX_HTML_BYTES) return next();
-      html = await fsp.readFile(file, 'utf8');
-    } catch {
-      return next();
-    }
-    if (!html.includes(WORKBENCH_MARKER)) return next();
-    // The injected block changes per service, so the static file's caching
-    // validators don't describe this response.
-    res.set('Cache-Control', 'no-store');
-    res.type('html').send(injectServiceConfig(html, config));
   };
+}
+
+function sendBytes(req: Request, res: Response, info: BlobInfo, rel: string, body: Buffer | Readable): void {
+  res.type(path.extname(rel) || 'bin');
+  res.set('ETag', `"${info.etag}"`);
+  res.set('Last-Modified', new Date(info.modified).toUTCString());
+  res.set('Cache-Control', 'public, max-age=0');
+  if (req.fresh) {
+    if (!Buffer.isBuffer(body)) body.destroy();
+    res.status(304).end();
+    return;
+  }
+  if (Buffer.isBuffer(body)) {
+    res.send(body);
+    return;
+  }
+  if (req.method === 'HEAD') {
+    body.destroy();
+    res.set('Content-Length', String(info.size)).end();
+    return;
+  }
+  res.set('Content-Length', String(info.size));
+  body.on('error', () => res.destroy());
+  res.on('close', () => body.destroy());
+  body.pipe(res);
 }

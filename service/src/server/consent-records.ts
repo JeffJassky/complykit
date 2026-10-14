@@ -10,15 +10,12 @@
 // identifiers by accident. The only per-visitor thing the server looks at is
 // the IP for rate limiting, held in memory for a minute and never written.
 //
-// Writes to one site run one at a time in this process (the same promise-chain
-// the workspace store uses), because pruning rewrites the file. The service is
-// one machine on one volume, so there is no cross-process lock.
+// Persistence is behind ConsentRecordRecords (storage/types.ts): a JSONL file
+// per site with the fs backend, one document per record with the cloud backend.
+// The size cap, de-duplication by id and pruning live there.
 
-import fsp from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
-import path from 'node:path';
-import readline from 'node:readline';
 import { siteDomain } from './domains.js';
+import type { ConsentRecordRecords } from './storage/types.js';
 import { WorkspaceError } from './workspace.js';
 
 export const CONSENT_FILE = 'consent-records.jsonl';
@@ -145,152 +142,55 @@ export class RateLimiter {
 export type ExportFormat = 'csv' | 'jsonl';
 
 export class ConsentRecordStore {
-  private readonly chains = new Map<string, Promise<unknown>>();
+  private readonly pending = new Set<Promise<unknown>>();
 
   constructor(
-    /** DATA_DIR/sites */
-    readonly root: string,
-    /** Lines older than this (by receivedAt) are pruned. */
+    private readonly records: ConsentRecordRecords,
+    /** Records older than this (by receivedAt) are pruned. */
     readonly retentionDays: number,
-    private readonly maxFileBytes = MAX_FILE_BYTES,
   ) {}
 
-  /** The site's directory, guaranteed to be a direct child of root. */
-  private siteDir(domain: string): string {
-    const root = path.resolve(this.root);
-    const dir = path.resolve(root, domain);
-    if (path.dirname(dir) !== root || siteDomain(domain) !== domain) throw new WorkspaceError(400, 'not a site domain');
-    return dir;
+  private track<T>(p: Promise<T>): Promise<T> {
+    const q = p.catch(() => undefined);
+    this.pending.add(q);
+    void q.then(() => this.pending.delete(q));
+    return p;
   }
 
-  file(domain: string): string {
-    return path.join(this.siteDir(domain), CONSENT_FILE);
-  }
-
-  async append(domain: string, record: ConsentRecord): Promise<void> {
-    const file = this.file(domain);
-    await this.serialize(domain, async () => {
-      try {
-        if ((await fsp.stat(file)).size >= this.maxFileBytes) throw new WorkspaceError(507, 'this site has reached its consent-record storage limit; export and prune before posting more');
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-      }
-      await fsp.mkdir(path.dirname(file), { recursive: true });
-      await fsp.appendFile(file, JSON.stringify(record) + '\n');
-    });
+  append(domain: string, record: ConsentRecord): Promise<void> {
+    return this.track(this.records.append(domain, record));
   }
 
   /** Does any record exist for this site? (404 vs an empty export.) */
-  async exists(domain: string): Promise<boolean> {
-    try {
-      await fsp.access(this.file(domain));
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /** Records for a site in file order, first copy of each id (a retried POST can double-write). */
-  private async *records(domain: string): AsyncGenerator<ConsentRecord> {
-    const seen = new Set<string>();
-    const rl = readline.createInterface({ input: createReadStream(this.file(domain), 'utf8'), crlfDelay: Infinity });
-    for await (const line of rl) {
-      if (!line.trim()) continue;
-      let r: ConsentRecord;
-      try {
-        r = JSON.parse(line) as ConsentRecord;
-      } catch {
-        continue; // a torn line (crash mid-append) is skipped, not fatal
-      }
-      if (!isPlainObject(r) || typeof r.id !== 'string' || seen.has(r.id)) continue;
-      seen.add(r.id);
-      yield r;
-    }
+  exists(domain: string): Promise<boolean> {
+    return this.records.exists(domain);
   }
 
   /** The export, as chunks to write to the response. */
   async *export(domain: string, format: ExportFormat): AsyncGenerator<string> {
     if (format === 'jsonl') {
-      for await (const r of this.records(domain)) yield JSON.stringify(r) + '\n';
+      for await (const r of this.records.records(domain)) yield JSON.stringify(r) + '\n';
       return;
     }
     // CSV: a column per category, so the first pass finds the union.
     const cats = new Set<string>();
-    for await (const r of this.records(domain)) for (const k of Object.keys(r.categories ?? {})) cats.add(k);
+    for await (const r of this.records.records(domain)) for (const k of Object.keys(r.categories ?? {})) cats.add(k);
     const catCols = [...cats].sort();
     yield csvRow(['id', 'at', 'receivedAt', 'regime', 'gpc', 'configHash', 'toolVersion', ...catCols.map((c) => `category:${c}`)]);
-    for await (const r of this.records(domain)) {
+    for await (const r of this.records.records(domain)) {
       yield csvRow([r.id, r.at, r.receivedAt, r.regime, r.gpc === undefined ? '' : String(r.gpc), r.configHash, r.toolVersion, ...catCols.map((c) => (r.categories?.[c] === undefined ? '' : String(r.categories[c])))]);
     }
   }
 
-  /** Drop lines received before the retention cutoff, in every site. Returns how many went.
-   *  A line that can't be parsed is kept: pruning never destroys what it can't read. */
-  async prune(now = Date.now()): Promise<number> {
-    const cutoff = now - this.retentionDays * 86_400_000;
-    let names: string[];
-    try {
-      names = await fsp.readdir(this.root);
-    } catch {
-      return 0;
-    }
-    let removed = 0;
-    for (const name of names) {
-      if (siteDomain(name) !== name) continue;
-      try {
-        removed += await this.pruneSite(name, cutoff);
-      } catch (err) {
-        console.warn(`[consent-records] prune ${name}: ${(err as Error).message}`);
-      }
-    }
-    return removed;
-  }
-
-  private pruneSite(domain: string, cutoff: number): Promise<number> {
-    const file = this.file(domain);
-    return this.serialize(domain, async () => {
-      let raw: string;
-      try {
-        raw = await fsp.readFile(file, 'utf8');
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 0;
-        throw err;
-      }
-      const lines = raw.split('\n').filter((l) => l.trim());
-      const keep = lines.filter((l) => {
-        try {
-          const t = Date.parse((JSON.parse(l) as { receivedAt?: string }).receivedAt ?? '');
-          return !(Number.isFinite(t) && t < cutoff);
-        } catch {
-          return true;
-        }
-      });
-      const removed = lines.length - keep.length;
-      if (!removed) return 0;
-      const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-      await fsp.writeFile(tmp, keep.length ? keep.join('\n') + '\n' : '');
-      await fsp.rename(tmp, file);
-      return removed;
-    });
+  /** Drop records received before the retention cutoff, in every site. Returns how many went.
+   *  A record that can't be read is kept: pruning never destroys what it can't read. */
+  prune(now = Date.now()): Promise<number> {
+    return this.track(this.records.prune(now - this.retentionDays * 86_400_000));
   }
 
   /** Wait for in-flight writes (server shutdown). */
   async flush(): Promise<void> {
-    while (this.chains.size) await Promise.allSettled([...this.chains.values()]);
-  }
-
-  private serialize<T>(domain: string, fn: () => Promise<T>): Promise<T> {
-    const prev = this.chains.get(domain) ?? Promise.resolve();
-    const run = prev.then(fn, fn);
-    const tail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    this.chains.set(domain, tail);
-    void tail.then(() => {
-      if (this.chains.get(domain) === tail) this.chains.delete(domain);
-    });
-    return run;
+    while (this.pending.size) await Promise.allSettled([...this.pending]);
   }
 }
 

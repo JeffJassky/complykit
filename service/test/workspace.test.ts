@@ -1,3 +1,4 @@
+import { fsStorage } from '../src/server/storage/fs.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -206,16 +207,17 @@ describe('concurrent PATCH', () => {
   });
 
   it('two processes (separate stores, same directory) do not lose each other’s writes', async () => {
-    const root = path.join(tempDir(), 'sites');
-    const a = new WorkspaceStore(root);
-    const b = new WorkspaceStore(root);
+    const dir = tempDir();
+    const a = new WorkspaceStore(fsStorage(dir).workspaces);
+    const b = new WorkspaceStore(fsStorage(dir).workspaces);
     await Promise.all(Array.from({ length: 30 }, (_, i) => (i % 2 ? a : b).patch('example.com', { entries: { [`k${i}`]: { value: i } } })));
     expect(Object.keys((await a.get('example.com')).entries)).toHaveLength(30);
   });
 
   it('waits for a held lock, and breaks one left by a crashed process', async () => {
-    const root = path.join(tempDir(), 'sites');
-    const store = new WorkspaceStore(root);
+    const dir = tempDir();
+    const root = path.join(dir, 'sites');
+    const store = new WorkspaceStore(fsStorage(dir).workspaces);
     const lock = path.join(root, 'example.com', '.lock');
     fs.mkdirSync(lock, { recursive: true });
     let done = false;

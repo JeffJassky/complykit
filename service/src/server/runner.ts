@@ -509,7 +509,7 @@ export class Runner {
   /**
    * The site workspace for this job's domain, written into the job directory and
    * passed as --workspace, plus the previous run of the site (--previous) when
-   * its job directory is still on disk. A workspace that can't be read doesn't
+   * its evaluation is still stored. A workspace that can't be read doesn't
    * stop the scan (a scan never needs it to judge the site); the log says so and
    * the report then asks again what the team had classified.
    */
@@ -530,8 +530,9 @@ export class Runner {
     // Newest first: the latest earlier run whose evaluation is still on disk.
     for (const r of [...ws.runs].reverse()) {
       if (!r.jobId || r.jobId === job.id) continue;
-      const runDir = path.join(this.store.jobDir(r.jobId), 'consent', '.comply', 'runs', r.id);
-      if (fs.existsSync(path.join(runDir, 'tracking.json'))) {
+      // With the cloud backend this downloads that run's evaluation into this job's scratch (removed when the job is published).
+      const runDir = await this.store.files.previousRunDir(job.id, r.jobId, r.id);
+      if (runDir) {
         args.push('--previous', runDir);
         break;
       }

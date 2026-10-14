@@ -30,7 +30,7 @@ import { isJobId, JobStore, newId, toSummary } from './store.js';
 import { StreamHub } from './stream.js';
 import { sendInstallZip } from './install-zip.js';
 import { WorkspaceError, WorkspaceStore } from './workspace.js';
-import { serveReportWithConfig } from './report-config.js';
+import { serveReports } from './report-config.js';
 import { assertCanGenerate } from './history.js';
 import { generateConsentConfigForJob } from './consent-config.js';
 import { checklistProgress, RemediationVerifier, remediationView } from './remediation.js';
@@ -39,6 +39,8 @@ import { parseLaws } from './law-input.js';
 import { rerenderJob } from './rerender.js';
 import { ChecklistMaker, jobReport } from './job-report.js';
 import { sendJobZip } from './zip.js';
+import { KbSync } from './kb-sync.js';
+import { openStorage, type Storage } from './storage/index.js';
 
 export interface Service {
   app: Express;
@@ -47,45 +49,67 @@ export interface Service {
   runner: Runner;
   hub: StreamHub;
   kb: KnowledgeBase;
-  /** Per-site workspaces under DATA_DIR/sites (never swept by retention). */
+  /** Per-site workspaces (never swept by retention). */
   workspaces: WorkspaceStore;
-  /** Consent records under DATA_DIR/sites/<domain>/consent-records.jsonl (pruned by CONSENT_RECORD_RETENTION_DAYS, not by retentionDays). */
+  /** Consent records (pruned by CONSENT_RECORD_RETENTION_DAYS, not by retentionDays). */
   consentRecords: ConsentRecordStore;
   /** Epoch ms of the last request that counts as activity (see lifecycle.idleReason). */
   lastActivity(): number;
   /** Makes the to-do list after a consent scan (config.autoChecklist). */
   checklists: ChecklistMaker;
-  /** Kill running checks (marked "server stopped"), close streams, flush to disk. */
+  /** Resolves once every in-flight publish of a finished job's files, knowledge-base upload and to-do list is done. */
+  settled(): Promise<void>;
+  /** Upload the knowledge-base directory to blobs (cloud backend; a no-op for fs). Called after anything that changes it. */
+  saveKb(): Promise<void>;
+  /** Kill running checks (marked "server stopped"), close streams, flush to disk, and close the storage if createApp opened it. */
   stop(killGraceMs?: number): Promise<void>;
+}
+
+export interface AppDeps {
+  /** Where records and files live. Absent: opened from the config (DATA_BACKEND), and closed by `stop`. */
+  storage?: Storage;
 }
 
 const RETENTION_SWEEP_MS = 60 * 60_000;
 
-export async function createApp(config: ServiceConfig, runnerOptions: RunnerOptions = {}): Promise<Service> {
-  const store = new JobStore(config.dataDir);
+export async function createApp(config: ServiceConfig, runnerOptions: RunnerOptions = {}, deps: AppDeps = {}): Promise<Service> {
+  const ownsStorage = !deps.storage;
+  const storage = deps.storage ?? (await openStorage({ dataBackend: config.dataBackend, dataDir: config.dataDir, cloud: config.cloud }));
+  const store = new JobStore(config.dataDir, storage);
+  // The knowledge base is a directory the CLI reads and writes; with the cloud backend it is restored from blobs now and saved back after every change.
+  const kbSync = new KbSync(storage, config.kbDir);
+  await kbSync.restore();
   let lastActivity = Date.now();
   const touch = () => (lastActivity = Date.now());
   const hub = new StreamHub(store);
   // A job finishing counts as activity, and a consent check feeds the KB queue.
-  const workspaces = new WorkspaceStore(path.join(config.dataDir, 'sites'), checklistProgress);
+  const workspaces = new WorkspaceStore(storage.workspaces, checklistProgress);
   // A consent job applies its site's workspace and records itself as a run (C3).
   // The to-do list is made when a consent scan finishes (plans/simple-report.md).
-  const checklists = new ChecklistMaker({ config, workspaces, jobDir: (id) => store.jobDir(id), origin: `http://localhost:${config.port}` });
+  const checklists = new ChecklistMaker({ config, workspaces, files: store.files, origin: `http://localhost:${config.port}` });
   const runner = new Runner(
     store,
     config,
     (job) => {
       touch();
       hub.notifyKb();
-      if (job && config.autoChecklist) checklists.afterScan(job);
+      void kbSync.save(); // a consent check feeds the KB queue
+      if (job) {
+        store.files.publish(job); // the finished job's files go to blobs; the to-do list below waits for that
+        if (config.autoChecklist) checklists.afterScan(job);
+      }
     },
     workspaces,
     runnerOptions,
   );
-  const kb = new KnowledgeBase(config, () => hub.notifyKb());
-  const consentRecords = new ConsentRecordStore(path.join(config.dataDir, 'sites'), config.consentRecordRetentionDays);
-  void consentRecords.prune();
-  const consentSweep = setInterval(() => void consentRecords.prune(), RETENTION_SWEEP_MS);
+  const kb = new KnowledgeBase(config, () => {
+    hub.notifyKb();
+    void kbSync.save(); // every KB change (confirm, reject, dismiss, research) is saved
+  });
+  const consentRecords = new ConsentRecordStore(storage.consentRecords, config.consentRecordRetentionDays);
+  const prune = () => void consentRecords.prune().catch((err: Error) => console.warn(`[consent-records] prune: ${err.message}`));
+  prune();
+  const consentSweep = setInterval(prune, RETENTION_SWEEP_MS);
   consentSweep.unref();
 
   // Restart recovery, then retention, then resume the queue.
@@ -266,7 +290,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
 
   app.get('/api/jobs/:id/download', withJob, async (_req, res) => {
     const job = res.locals.job as JobDetail;
-    await sendJobZip(res, job, store.jobDir(job.id));
+    await sendJobZip(res, job, store.files);
   });
 
   // The consent tool config from a finished consent job (D8), stored as the
@@ -281,7 +305,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
       const out = await generateConsentConfigForJob(job, (req.body ?? {}) as ConsentConfigRequest, {
         config,
         workspaces,
-        jobDir: store.jobDir(job.id),
+        files: store.files,
         origin: `${req.protocol}://${req.get('host') ?? 'localhost'}`,
       });
       res.json(out);
@@ -295,7 +319,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     siteRoute(async (_req, res) => {
       const job = res.locals.job as JobDetail;
       res.set('Cache-Control', 'no-store');
-      res.json(await jobReport(job, { jobDir: store.jobDir(job.id), workspaces, maker: checklists, jobs: store.list(), jobDirOf: (id) => store.jobDir(id) }));
+      res.json(await jobReport(job, { files: store.files, workspaces, maker: checklists, jobs: store.list() }));
     }),
   );
 
@@ -310,7 +334,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
       const out = await rerenderJob(job, body, {
         config,
         workspaces,
-        jobDir: (id) => store.jobDir(id),
+        files: store.files,
         origin: `${req.protocol}://${req.get('host') ?? 'localhost'}`,
       });
       res.json(out);
@@ -494,26 +518,11 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     res.status(404).json({ error: 'not found' });
   });
 
-  // --- Reports: the job directory, as files -------------------------------------
-  // dotfiles 'allow' because runs live under .comply/. serve-static (send)
-  // rejects `..` escapes with 403; the job id is validated before use.
+  // --- Reports: the job's files --------------------------------------------------
+  // Read through the job's files (blobs for a finished job, scratch while it
+  // runs); dotfile paths such as .comply/ are allowed, `..` is refused.
 
-  const statics = new Map<string, RequestHandler>();
-  store.on('removed', (id) => statics.delete(id));
-  app.use('/reports/:id', (req, res, next) => {
-    const id = String(req.params.id ?? '');
-    if (!isJobId(id) || !store.get(id)) {
-      res.status(404).type('text/plain').send('report not found');
-      return;
-    }
-    let serve = statics.get(id);
-    if (!serve) {
-      serve = express.static(store.jobDir(id), { dotfiles: 'allow', index: false, redirect: false, fallthrough: false });
-      statics.set(id, serve);
-    }
-    // A report with a workbench gets the site's workspace config injected (report-config.ts).
-    void serveReportWithConfig(store.jobDir(id), store.get(id)!)(req, res, (err?: unknown) => (err ? next(err) : serve(req, res, next)));
-  });
+  app.use('/reports/:id', serveReports(store));
 
   // --- Client SPA ------------------------------------------------------------------
 
@@ -551,13 +560,23 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     consentRecords,
     checklists,
     lastActivity: () => lastActivity,
+    async settled() {
+      // A to-do list waits for a publish and a publish can follow a to-do list's rerender (consent-config files), so loop until quiet.
+      do {
+        await Promise.all([store.files.settled(), checklists.settled(), kbSync.settled(), store.flush()]);
+      } while (store.files.pending() > 0);
+    },
+    saveKb: () => kbSync.save(),
     async stop(killGraceMs?: number) {
       clearInterval(sweep);
       clearInterval(consentSweep);
       await Promise.all([runner.shutdown(killGraceMs), kb.stop(killGraceMs)]);
+      // Stopped jobs are failed ("server stopped"); their partial files are published too.
+      await store.files.settled();
       await checklists.settled();
       hub.closeAll();
-      await Promise.all([store.flush(), workspaces.flush(), consentRecords.flush()]);
+      await Promise.all([store.flush(), workspaces.flush(), consentRecords.flush(), kbSync.settled()]);
+      if (ownsStorage) await storage.close();
     },
   };
 }

@@ -46,8 +46,8 @@ export interface MongoRecords {
   corruptWorkspaceForTest(domain: string): Promise<void>;
 }
 
-export async function mongoRecords(opts: { url: string; db: string; consentMaxBytes?: number }): Promise<MongoRecords> {
-  const client = new MongoClient(opts.url);
+export async function mongoRecords(opts: { url: string; db: string; consentMaxBytes?: number; ca?: string }): Promise<MongoRecords> {
+  const client = new MongoClient(opts.url, opts.ca ? { ca: opts.ca } : {});
   await client.connect();
   const db: Db = client.db(opts.db);
   const jobsC: Collection<JobDoc> = db.collection('jobs');

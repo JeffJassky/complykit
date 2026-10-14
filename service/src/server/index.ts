@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import type { Server } from 'node:http';
 import { createApp, type Service } from './app.js';
 import { loadConfig } from './config.js';
+import { openStorage } from './storage/index.js';
 import { idleReason } from './lifecycle.js';
 import { createWorkerApp, loadWorkerConfig } from './worker.js';
 
@@ -56,11 +57,12 @@ async function main(): Promise<void> {
     console.warn(`[boot] complykit CLI not found at ${config.cliPath} — jobs will fail until it is built (or set COMPLYKIT_CLI)`);
   }
 
-  const service = await createApp(config);
+  const storage = await openStorage({ dataBackend: config.dataBackend, dataDir: config.dataDir, cloud: config.cloud });
+  const service = await createApp(config, {}, { storage });
   const server = service.app.listen(config.port, '0.0.0.0', () => {
     console.log(
       `[boot] complykit service ${config.version} on http://0.0.0.0:${config.port}` +
-        ` (data ${config.dataDir}, concurrency ${config.concurrency}, retention ${config.retentionDays}d` +
+        ` (${config.dataBackend === 'cloud' ? 'storage cloud (Spaces + MongoDB), scratch' : 'data'} ${config.dataDir}, concurrency ${config.concurrency}, retention ${config.retentionDays}d` +
         `${config.idleShutdownMinutes ? `, idle shutdown ${config.idleShutdownMinutes}m` : ''}${config.region ? `, region ${config.region}` : ''})`,
     );
   });
@@ -71,6 +73,7 @@ async function main(): Promise<void> {
     stopping = true;
     console.log(`[shutdown] ${why}`);
     await closeGracefully(server, service, killGraceMs);
+    await storage.close().catch(() => undefined);
     console.log('[shutdown] done');
     process.exit(0);
   };

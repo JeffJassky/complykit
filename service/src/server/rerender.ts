@@ -18,6 +18,12 @@
 // re-rendered, the error says so (`configStored: true`, RerenderErrorBody):
 // the checklist exists, and "Update report" (a rerender without generate)
 // is the retry.
+//
+// Where it runs (plans/do-hosting.md): in the job's scratch. With the fs backend
+// that is the job's own directory, as always. With the cloud backend the run's
+// evaluation (no HARs; screenshots stay, the report inlines them) is downloaded
+// first, the changed files are uploaded after, and the scratch is deleted. One
+// at a time per process: the largest site peaks near 1 GB.
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -25,11 +31,11 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { ConsentConfigRequest, JobDetail, RerenderRequest, RerenderResponse, SiteWorkspace } from '../shared/api.js';
 import type { ServiceConfig } from './config.js';
-import { generateConsentConfigForJob } from './consent-config.js';
+import { generateStagedConsentConfig } from './consent-config.js';
+import { RUN_ID_RE, type JobFiles } from './job-files.js';
 import { WorkspaceError, type WorkspaceStore } from './workspace.js';
 
 const CLI_TIMEOUT_MS = 120_000;
-const RUN_ID_RE = /^[0-9TZ:.-]{10,40}$/;
 /** The generator's placeholder path: passing it explicitly would change the snippet's note, so it is never carried over. */
 const DEFAULT_SCRIPT_SRC = '/complykit/v1/complykit-consent.js';
 const REPORT = 'consent-report.html';
@@ -38,7 +44,8 @@ const SIBLINGS = ['consent-report.json', 'change-list.md', 'owner-report.json'];
 export interface RerenderDeps {
   config: ServiceConfig;
   workspaces: WorkspaceStore;
-  jobDir: (id: string) => string;
+  /** The job's files: the CLI runs in its scratch; a finished job's evaluation is fetched from blobs and the changed files are put back. */
+  files: JobFiles;
   origin: string;
 }
 
@@ -67,43 +74,49 @@ async function rerender(job: JobDetail, body: RerenderRequest, deps: RerenderDep
   const runId = job.result?.consent?.runId;
   if (job.status !== 'done' || !runId) throw new WorkspaceError(409, 'the job has no finished consent run');
   if (!RUN_ID_RE.test(runId)) throw new WorkspaceError(409, 'the job’s run id is not usable');
-  const jobDir = deps.jobDir(job.id);
-  const consentDir = path.join(jobDir, 'consent');
-  const runDir = path.join(consentDir, '.comply', 'runs', runId);
-  if (!fs.existsSync(path.join(runDir, 'tracking.json'))) throw new WorkspaceError(409, 'the consent run’s evaluation is no longer on disk');
+  const { files } = deps;
+  await files.wait(job.id); // the job's files are in blobs once its publish has finished
+  if (!(await files.head(job, `consent/.comply/runs/${runId}/tracking.json`))) throw new WorkspaceError(409, 'the consent run’s evaluation is no longer on disk');
   const by = body.by === undefined || body.by === null || body.by === '' ? undefined : body.by;
   if (by !== undefined && (typeof by !== 'string' || by.length > 80 || /[\u0000-\u001f]/.test(by))) throw new WorkspaceError(400, '`by` must be a string of at most 80 characters');
+  if (body.generate !== undefined && typeof body.generate !== 'boolean') throw new WorkspaceError(400, '`generate` must be a boolean');
 
   const domain = deps.workspaces.domain(new URL(job.url).hostname);
-  let ws = await deps.workspaces.get(domain);
+  return files.exclusive(async () => {
+    try {
+      await files.stage(job);
+      let ws = await deps.workspaces.get(domain);
 
-  if (body.generate !== undefined && typeof body.generate !== 'boolean') throw new WorkspaceError(400, '`generate` must be a boolean');
-  // The stored config follows the classification when it came from this run;
-  // `generate: true` (the report's Generate button) makes it from this run in any case.
-  let config: RerenderResponse['config'] = { regenerated: false };
-  let storedAt: string | undefined;
-  const fromThisRun = ws.config?.runId === runId && isObj(ws.config.value);
-  if (fromThisRun || body.generate === true) {
-    const options = isObj(ws.config?.value) ? storedOptions(ws.config.value, by ?? (fromThisRun ? ws.config.by : undefined)) : by ? { by } : {};
-    const out = await generateConsentConfigForJob(job, options, { config: deps.config, workspaces: deps.workspaces, jobDir, origin: deps.origin });
-    config = { regenerated: true, stale: out.stale };
-    ws = await deps.workspaces.get(domain);
-    if (!out.stale) storedAt = ws.config?.at;
-  }
+      // The stored config follows the classification when it came from this run;
+      // `generate: true` (the report's Generate button) makes it from this run in any case.
+      let config: RerenderResponse['config'] = { regenerated: false };
+      let storedAt: string | undefined;
+      const fromThisRun = ws.config?.runId === runId && isObj(ws.config.value);
+      if (fromThisRun || body.generate === true) {
+        const options = isObj(ws.config?.value) ? storedOptions(ws.config.value, by ?? (fromThisRun ? ws.config.by : undefined)) : by ? { by } : {};
+        const out = await generateStagedConsentConfig(job, options, { config: deps.config, workspaces: deps.workspaces, files, origin: deps.origin });
+        config = { regenerated: true, stale: out.stale };
+        ws = await deps.workspaces.get(domain);
+        if (!out.stale) storedAt = ws.config?.at;
+      }
 
-  try {
-    return { ...(await renderReport(job, runId, ws, deps)), config };
-  } catch (err) {
-    // The config (and so the checklist) is stored; only the report could not follow.
-    // Say exactly that, so the client offers "Update report" instead of a generic failure.
-    if (storedAt === undefined || !(err instanceof WorkspaceError)) throw err;
-    throw new WorkspaceError(err.status, err.message, { configStored: true, configAt: storedAt });
-  }
+      try {
+        return { ...(await renderReport(job, runId, ws, deps)), config };
+      } catch (err) {
+        // The config (and so the checklist) is stored; only the report could not follow.
+        // Say exactly that, so the client offers "Update report" instead of a generic failure.
+        if (storedAt === undefined || !(err instanceof WorkspaceError)) throw err;
+        throw new WorkspaceError(err.status, err.message, { configStored: true, configAt: storedAt });
+      }
+    } finally {
+      await files.clean(job.id);
+    }
+  });
 }
 
 async function renderReport(job: JobDetail, runId: string, ws: SiteWorkspace, deps: RerenderDeps): Promise<Omit<RerenderResponse, 'config'>> {
-  const jobDir = deps.jobDir(job.id);
-  const consentDir = path.join(jobDir, 'consent');
+  const { files } = deps;
+  const consentDir = path.join(files.scratchDir(job.id), 'consent');
   const runDir = path.join(consentDir, '.comply', 'runs', runId);
 
   const work = path.join(consentDir, 'rerender');
@@ -114,19 +127,25 @@ async function renderReport(job: JobDetail, runId: string, ws: SiteWorkspace, de
   await Promise.all([REPORT, ...SIBLINGS].map((f) => fsp.rm(path.join(work, f), { force: true })));
 
   const args = ['report', '--run', runId, '--cwd', consentDir, '--format', 'consent-html', '--workspace', wsFile, '--out', tmp];
-  const previous = previousRunDir(ws.runs, runId, job.id, deps.jobDir);
+  const previous = await previousRunDir(ws.runs, runId, job.id, files);
   if (previous) args.push('--previous', previous);
   await runCli(deps.config, args);
   if (!fs.existsSync(tmp)) throw new WorkspaceError(500, 'complykit report wrote no report');
 
   // Swap in: keep one previous generation of each file, then move the new ones over.
+  const changed: string[] = [];
   for (const f of [REPORT, ...SIBLINGS]) {
     const fresh = path.join(work, f);
     if (!fs.existsSync(fresh)) continue;
     const served = path.join(runDir, f);
-    if (fs.existsSync(served)) await fsp.copyFile(served, path.join(runDir, prevName(f)));
+    if (fs.existsSync(served)) {
+      await fsp.copyFile(served, path.join(runDir, prevName(f)));
+      changed.push(prevName(f));
+    }
     await fsp.rename(fresh, served);
+    changed.push(f);
   }
+  await files.commit(job.id, changed.map((f) => `consent/.comply/runs/${runId}/${f}`));
   const rel = (f: string) => `/reports/${job.id}/consent/.comply/runs/${encodeURIComponent(runId)}/${f}`;
   return {
     ok: true,
@@ -151,14 +170,14 @@ function storedOptions(value: Record<string, unknown>, by: string | undefined): 
   };
 }
 
-/** The run the scan compared with ("Since"): the newest earlier run of the site whose job directory is still on disk. */
-function previousRunDir(runs: Array<{ id: string; at: string; jobId?: string }>, runId: string, jobId: string, jobDir: (id: string) => string): string | undefined {
+/** The run the scan compared with ("Since"): the newest earlier run of the site whose evaluation is still stored (staged into this job's scratch with the cloud backend). */
+async function previousRunDir(runs: Array<{ id: string; at: string; jobId?: string }>, runId: string, jobId: string, files: JobFiles): Promise<string | undefined> {
   const self = runs.find((r) => r.id === runId);
   for (const r of [...runs].reverse()) {
     if (!r.jobId || r.jobId === jobId || r.id === runId) continue;
     if (self && r.at >= self.at) continue;
-    const dir = path.join(jobDir(r.jobId), 'consent', '.comply', 'runs', r.id);
-    if (fs.existsSync(path.join(dir, 'tracking.json'))) return dir;
+    const dir = await files.previousRunDir(jobId, r.jobId, r.id);
+    if (dir) return dir;
   }
   return undefined;
 }

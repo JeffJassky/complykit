@@ -1,14 +1,18 @@
-// Job store: the in-memory index of every job plus its on-disk twin at
-// DATA_DIR/jobs/<id>/job.json. No database — the job directory IS the record,
-// and it also holds the check outputs that /reports serves and the zip packs.
+// Job store: the in-memory index of every job plus its stored record
+// (storage.jobs: DATA_DIR/jobs/<id>/job.json with the fs backend, a Mongo
+// document with the cloud backend). The job's files are JobFiles' business:
+// DATA_DIR/jobs/<id> is the job's scratch directory (where running work
+// happens), and finished files live in blobs (job-files.ts).
 
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { CheckKind, JobDetail, JobSummary } from '../shared/api.js';
 import { siteDomain } from './domains.js';
+import { JobFiles } from './job-files.js';
+import { fsStorage } from './storage/fs.js';
+import type { JobRecords, Storage } from './storage/types.js';
 import type { LawId } from '../shared/laws.js';
 
 export const LOG_LIMIT = 200;
@@ -47,30 +51,28 @@ export class JobStore extends EventEmitter<StoreEvents> {
   private readonly writing = new Map<string, Promise<void>>();
   private readonly dirty = new Set<string>();
   readonly jobsDir: string;
+  private readonly records: JobRecords;
+  /** Where this store's jobs' files are: scratch under DATA_DIR/jobs, finished files in blobs. */
+  readonly files: JobFiles;
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, storage: Storage = fsStorage(dataDir)) {
     super();
     this.jobsDir = path.join(dataDir, 'jobs');
+    this.records = storage.jobs;
+    this.files = new JobFiles(storage, this.jobsDir);
   }
 
   jobDir(id: string): string {
     return path.join(this.jobsDir, id);
   }
 
-  /** Read every job.json from disk. Unreadable dirs are skipped (and logged). */
+  /** Read every stored job record. Unreadable ones are skipped (and logged by the storage). */
   async load(): Promise<JobDetail[]> {
-    await fsp.mkdir(this.jobsDir, { recursive: true });
-    for (const name of await fsp.readdir(this.jobsDir)) {
-      if (!isJobId(name)) continue;
-      try {
-        const job = JSON.parse(await fsp.readFile(path.join(this.jobsDir, name, 'job.json'), 'utf8')) as JobDetail;
-        if (job.id !== name) continue;
-        job.log ??= [];
-        job.slowRepeat ??= false; // jobs from before the option
-        this.jobs.set(job.id, job);
-      } catch (err) {
-        console.warn(`[store] skipping ${name}: ${(err as Error).message}`);
-      }
+    fs.mkdirSync(this.jobsDir, { recursive: true });
+    for (const job of await this.records.loadAll()) {
+      job.log ??= [];
+      job.slowRepeat ??= false; // jobs from before the option
+      this.jobs.set(job.id, job);
     }
     return this.list();
   }
@@ -126,7 +128,8 @@ export class JobStore extends EventEmitter<StoreEvents> {
   async remove(id: string): Promise<void> {
     if (!this.jobs.delete(id)) return;
     await this.writing.get(id)?.catch(() => undefined);
-    await fsp.rm(this.jobDir(id), { recursive: true, force: true });
+    await this.records.remove(id);
+    await this.files.removeAll(id);
     this.emit('removed', id);
   }
 
@@ -147,13 +150,8 @@ export class JobStore extends EventEmitter<StoreEvents> {
         this.dirty.delete(id);
         const job = this.jobs.get(id);
         if (!job) break;
-        // Atomic replace: a crash mid-write leaves the previous job.json intact.
-        const file = path.join(this.jobDir(id), 'job.json');
-        const tmp = `${file}.${process.pid}.tmp`;
         try {
-          await fsp.mkdir(this.jobDir(id), { recursive: true });
-          await fsp.writeFile(tmp, JSON.stringify(job, null, 2));
-          await fsp.rename(tmp, file);
+          await this.records.put(job);
         } catch (err) {
           if (this.jobs.has(id)) console.error(`[store] failed to persist ${id}: ${(err as Error).message}`);
         }

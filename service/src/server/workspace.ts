@@ -7,20 +7,16 @@
 // so resending an edit is harmless). A cleared value is stored as `null` with
 // its time, so an older write arriving late can't bring it back.
 //
-// Writes follow the KB store's pattern (complykit src/research/store.ts): a
-// lock directory per site (mkdir is atomic; a lock older than STALE_MS is from
-// a crashed process and is broken), then temp file + rename, so a reader sees
-// the file before or after a write, never half of one. On top of that, writes
-// to one site run one at a time in this process (a promise chain), so the
-// lock is only ever contended by another process, and waiting on it is async —
-// the KB store's Atomics.wait would stall every request.
+// Persistence is behind WorkspaceRecords (storage/types.ts): the fs backend
+// owns the file, its lock and the atomic rename; the cloud backend owns the
+// Mongo document. A write names the revision it read (`rev`); if someone wrote
+// first the record store answers null and we re-read, re-merge and retry. On
+// top of that, writes to one site run one at a time in this process (a promise
+// chain), so a retry is only ever needed against another process.
 //
 // A workspace that can't be read is a 500, never an empty workspace: writing
-// over it would lose a team's work.
+// over it would lose a team's work (the record store throws, we don't catch).
 
-import fs from 'node:fs';
-import fsp from 'node:fs/promises';
-import path from 'node:path';
 import type {
   SiteSummary,
   SiteWorkspace,
@@ -31,6 +27,7 @@ import type {
   WorkspaceRun,
 } from '../shared/api.js';
 import { siteDomain } from './domains.js';
+import type { WorkspaceRecords } from './storage/types.js';
 
 /** A workspace failure with the HTTP status the route should answer with. */
 export class WorkspaceError extends Error {
@@ -56,8 +53,8 @@ const MAX_META_BYTES = 8 * 1024;
 /** A client clock this far ahead is clamped to ours, so one fast clock can't
  *  freeze a key for everyone else. */
 const MAX_SKEW_MS = 5 * 60_000;
-const STALE_MS = 30_000;
-const WAIT_MS = 15_000;
+/** A write that keeps losing to other writers gives up after this many tries (a 503). */
+const MAX_WRITE_TRIES = 5;
 
 const RUN_ID_RE = /^[A-Za-z0-9][\w.:-]{0,120}$/;
 const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -227,7 +224,7 @@ export class WorkspaceStore {
 
   /** `progress`: the checklist count for a site row (injected: the remediation module imports this one). */
   constructor(
-    readonly root: string,
+    private readonly records: WorkspaceRecords,
     private readonly progress?: (ws: SiteWorkspace) => SiteSummary['checklist'],
   ) {}
 
@@ -238,46 +235,33 @@ export class WorkspaceStore {
     return d;
   }
 
-  /** The site's directory, guaranteed to be a direct child of root. */
-  siteDir(domain: string): string {
-    const root = path.resolve(this.root);
-    const dir = path.resolve(root, domain);
-    if (path.dirname(dir) !== root || siteDomain(domain) !== domain) throw new WorkspaceError(400, 'not a site domain');
-    return dir;
-  }
-
   async get(rawDomain: unknown): Promise<SiteWorkspace> {
     const domain = this.domain(rawDomain);
-    return (await this.read(domain)) ?? emptyWorkspace(domain);
+    return (await this.records.read(domain))?.ws ?? emptyWorkspace(domain);
   }
 
   async patch(rawDomain: unknown, body: unknown, now?: () => number): Promise<SiteWorkspacePatchResponse> {
     const domain = this.domain(rawDomain);
     const normalized = normalizePatch(body, now?.() ?? Date.now());
-    return this.serialize(domain, () =>
-      this.withLock(domain, async () => {
-        const current = (await this.read(domain)) ?? emptyWorkspace(domain);
-        const { changed, ...result } = mergeWorkspace(current, normalized, now?.() ?? Date.now());
-        if (changed) await this.write(domain, result.workspace);
-        return result;
-      }),
-    );
+    return this.serialize(domain, async () => {
+      for (let attempt = 0; attempt < MAX_WRITE_TRIES; attempt++) {
+        const current = await this.records.read(domain);
+        const { changed, ...result } = mergeWorkspace(current?.ws ?? emptyWorkspace(domain), normalized, now?.() ?? Date.now());
+        if (!changed) return result;
+        if ((await this.records.write(domain, result.workspace, current?.rev)) !== null) return result;
+        // Someone else wrote between our read and write: merge again onto theirs.
+      }
+      throw new WorkspaceError(503, `the workspace for ${domain} is being written by others; try again`);
+    });
   }
 
   /** Every site with a workspace, most recently updated first. */
   async list(): Promise<SiteSummary[]> {
-    let names: string[];
-    try {
-      names = await fsp.readdir(this.root);
-    } catch {
-      return [];
-    }
     const out: SiteSummary[] = [];
-    for (const name of names) {
-      if (siteDomain(name) !== name) continue;
+    for (const name of await this.records.domains()) {
       let ws: SiteWorkspace | undefined;
       try {
-        ws = await this.read(name);
+        ws = (await this.records.read(name))?.ws;
       } catch (err) {
         console.warn(`[workspace] skipping ${name}: ${(err as Error).message}`);
         continue;
@@ -304,41 +288,6 @@ export class WorkspaceStore {
     while (this.chains.size) await Promise.allSettled([...this.chains.values()]);
   }
 
-  // --- internals ------------------------------------------------------------------
-
-  /** undefined = no workspace yet; throws (500) when the file exists but is unreadable. */
-  private async read(domain: string): Promise<SiteWorkspace | undefined> {
-    const file = path.join(this.siteDir(domain), WORKSPACE_FILE);
-    let raw: string;
-    try {
-      raw = await fsp.readFile(file, 'utf8');
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-      throw new WorkspaceError(500, `cannot read the workspace for ${domain}: ${(err as Error).message}`);
-    }
-    let ws: unknown;
-    try {
-      ws = JSON.parse(raw);
-    } catch {
-      ws = undefined;
-    }
-    if (!isPlainObject(ws) || ws.version !== 1 || ws.domain !== domain || !isPlainObject(ws.entries) || !Array.isArray(ws.runs)) {
-      // Refuse rather than start over: a write here would replace the team's work.
-      console.error(`[workspace] unreadable: ${file}`);
-      throw new WorkspaceError(500, `the workspace for ${domain} is unreadable; it was left untouched (fix or move ${domain}/${WORKSPACE_FILE} on the data volume)`);
-    }
-    return ws as unknown as SiteWorkspace;
-  }
-
-  private async write(domain: string, ws: SiteWorkspace): Promise<void> {
-    const dir = this.siteDir(domain);
-    const file = path.join(dir, WORKSPACE_FILE);
-    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-    await fsp.mkdir(dir, { recursive: true });
-    await fsp.writeFile(tmp, JSON.stringify(ws, null, 2) + '\n');
-    await fsp.rename(tmp, file);
-  }
-
   /** One write at a time per site in this process. */
   private serialize<T>(domain: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.chains.get(domain) ?? Promise.resolve();
@@ -352,33 +301,5 @@ export class WorkspaceStore {
       if (this.chains.get(domain) === tail) this.chains.delete(domain);
     });
     return run;
-  }
-
-  /** The KB store's cross-process lock, waiting asynchronously. */
-  private async withLock<T>(domain: string, fn: () => Promise<T>): Promise<T> {
-    const dir = this.siteDir(domain);
-    await fsp.mkdir(dir, { recursive: true });
-    const lock = path.join(dir, '.lock');
-    const deadline = Date.now() + WAIT_MS;
-    for (;;) {
-      try {
-        await fsp.mkdir(lock);
-        break;
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-        try {
-          if (Date.now() - fs.statSync(lock).mtimeMs > STALE_MS) fs.rmSync(lock, { recursive: true, force: true });
-        } catch {
-          /* released meanwhile */
-        }
-        if (Date.now() > deadline) throw new WorkspaceError(503, `the workspace for ${domain} is locked by another process; try again`);
-        await new Promise((r) => setTimeout(r, 25));
-      }
-    }
-    try {
-      return await fn();
-    } finally {
-      await fsp.rm(lock, { recursive: true, force: true });
-    }
   }
 }

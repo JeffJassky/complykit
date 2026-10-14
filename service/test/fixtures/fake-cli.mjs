@@ -223,7 +223,7 @@ async function consent() {
   fs.writeFileSync(path.join(runDir, 'tracking.json'), JSON.stringify({ url: opts.url, ...(widget ? { unknownTool: 'widgets.test' } : {}) }));
   fs.writeFileSync(path.join(runDir, 'findings.jsonl'), '{"ruleId":"fake"}\n');
   fs.writeFileSync(path.join(runDir, 'consent-report.json'), JSON.stringify({ url: opts.url }));
-  fs.writeFileSync(path.join(runDir, 'consent-report.html'), `<!doctype html><title>consent report</title><h1>Consent report for ${opts.url}</h1><a href="evidence/note.txt">evidence</a>\n`);
+  fs.writeFileSync(path.join(runDir, 'consent-report.html'), `<!doctype html><title>consent report</title><h1>Consent report for ${opts.url}</h1><a href="evidence/note.txt">evidence</a>\n<script type="application/json" id="workspace-config">{}</script>\n`);
   fs.writeFileSync(path.join(runDir, 'change-list.md'), `# Change list — ${opts.url}\n`);
   if (scenarios.length) writeOwner(runDir, ownerReport({ stage: 'final', url: opts.url, done: finished, widget, ws }));
   fs.mkdirSync(path.join(cwd, '.comply', 'cache'), { recursive: true });
