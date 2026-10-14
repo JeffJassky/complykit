@@ -1,0 +1,40 @@
+# DigitalOcean App Platform spec for the complykit host (plans/do-hosting.md).
+# Secrets are left as ${PLACEHOLDERS}; scripts/deploy-do.sh fills them from the
+# environment when creating the app. After creation, App Platform keeps them
+# encrypted and `doctl apps update` with this file would overwrite them, so
+# the script updates only WORKER_IMAGE on later deploys.
+name: complykit
+region: nyc
+services:
+  - name: host
+    github:
+      repo: JeffJassky/complykit
+      branch: main
+      # The worker image must ship first (scripts/deploy-do.sh), so no deploy on push.
+      deploy_on_push: false
+    dockerfile_path: Dockerfile.host
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-2gb
+    health_check:
+      http_path: /api/health
+      initial_delay_seconds: 20
+      period_seconds: 15
+      timeout_seconds: 5
+    envs:
+      - { key: DATA_BACKEND, value: cloud }
+      - { key: MONGO_DB, value: complykit }
+      - { key: SPACES_ENDPOINT, value: https://nyc3.digitaloceanspaces.com }
+      - { key: SPACES_BUCKET, value: complykit-data }
+      - { key: WORKERS_APP, value: complykit-workers }
+      - { key: WORKER_IMAGE, value: "${WORKER_IMAGE}" }
+      - { key: RETENTION_DAYS, value: "0" }
+      - { key: IDLE_SHUTDOWN_MINUTES, value: "0" }
+      - { key: CONCURRENCY, value: "2" }
+      - { key: ALLOW_OPEN, value: "1" }
+      - { key: MONGO_URL, type: SECRET, value: "${MONGO_URL}" }
+      - { key: MONGO_CA, type: SECRET, value: "${MONGO_CA}" }
+      - { key: SPACES_KEY, type: SECRET, value: "${SPACES_KEY}" }
+      - { key: SPACES_SECRET, type: SECRET, value: "${SPACES_SECRET}" }
+      - { key: FLY_API_TOKEN, type: SECRET, value: "${FLY_API_TOKEN}" }
+      - { key: WORKER_SECRET, type: SECRET, value: "${WORKER_SECRET}" }
