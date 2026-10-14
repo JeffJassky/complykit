@@ -160,3 +160,4 @@ describe('run-to-run diff', () => {
     expect(buildBehaviorMatrix(base).rows.find((r) => r.label === '_uw')?.categorySource).toBe('not classified (unidentified tool)');
   });
 });
+

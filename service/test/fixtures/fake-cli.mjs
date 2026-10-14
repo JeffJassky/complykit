@@ -6,6 +6,8 @@
 //   error.*       consent writes an `error` event and exits 2
 //   slow.*        300ms between events (for cancel / concurrency tests)
 //   unverified.*  location unverified, no scenarios
+//   hold.*        collect-only waits ~500 ms before its first visit and ~1500 ms after
+//                 its last (a test can see a law mid-scan); other modes ignore it
 //   anything else 30ms between events (FAKE_CLI_DELAY overrides)
 // consent also writes env.json (the KB dir it was given) into its cwd, and the
 // owner report (owner-report.json in the run dir) after every visit (stage
@@ -90,7 +92,88 @@ function writeOwner(dir, report) {
   emit({ type: 'live', file, stage: report.stage, visitsDone: report.scan.visitsDone, visitsTotal: report.scan.visitsTotal });
 }
 
+// A collect-only run's live owner report: minimal and valid, one location, banner provider FakeCMP.
+function collectorReport(loc, visitsDone, total, startedAt) {
+  const banner = visitsDone === 0 ? { state: 'pending', visitsWithBanner: 0, visitsChecked: 0 } : { state: 'detected', provider: 'FakeCMP', visitsWithBanner: visitsDone, visitsChecked: visitsDone };
+  const names = ['do-nothing', 'reject'];
+  const columns = names.map((sc, i) => ({ id: `${loc}:${sc}`, location: loc, scenario: sc, label: sc, state: i < visitsDone ? 'done' : 'pending' }));
+  const cells = names.map((_, i) => (i < visitsDone ? { state: 'ok', expected: 'Off until the visitor gives permission', observed: '1 data request(s) observed', reason: 'Working as expected.' } : { state: 'pending' }));
+  const u = new URL(opts.url);
+  return {
+    version: 1, stage: 'live', runId, generatedAt: new Date().toISOString(),
+    site: { url: opts.url, host: u.hostname, domain: u.hostname.split('.').slice(-2).join('.') },
+    scan: { startedAt, visitsDone, visitsTotal: total, pagesVisited: visitsDone, location: { id: loc, label: loc, observed: loc, verified: true } },
+    banner,
+    matrix: {
+      columns,
+      tools: [{ id: 'tool:fake', partyId: 'fake', label: 'Fake Tool', domain: 'fake.test', purpose: 'Analytics', categories: ['analytics'], classified: true, recognized: true, classKey: 'class:fake', cells, cookies: [] }],
+      counts: { ok: visitsDone, mismatch: 0, needsDecision: 0, pending: total - visitsDone, notChecked: 0 },
+    },
+    decisions: [],
+    locations: [{ id: loc, label: loc, verified: true, observed: loc, visitsDone, visitsTotal: total, banner }],
+  };
+}
+
+// `consent --collect-only` (multi-region): writes argv.json in --cwd, the usual
+// start/location/scenario events for --locations, then `collected`, and a run
+// dir holding collection.json. Each visit rewrites the run dir's owner-report.json
+// and emits `live`. fail.* hosts exit 1.
+async function collectOnly() {
+  fs.writeFileSync(path.join(cwd, 'argv.json'), JSON.stringify(process.argv.slice(2)));
+  const loc = String(opts.locations);
+  emit({ type: 'start', runId, url: opts.url, locations: [loc] });
+  await sleep(delay);
+  if (host.startsWith('fail.')) {
+    process.stderr.write('Error: page.goto: net::ERR_NAME_NOT_RESOLVED\n');
+    process.exit(1);
+  }
+  emit({ type: 'location', location: loc, verdict: 'verified', observed: loc, scenarios: ['do-nothing', 'reject'], runs: Number(opts.runs ?? 1) || 1 });
+  const dir = path.join(cwd, '.comply', 'runs', runId);
+  const startedAt = new Date().toISOString();
+  if (host.startsWith('hold.')) await sleep(500);
+  let visits = 0;
+  for (const scenario of ['do-nothing', 'reject']) {
+    emit({ type: 'scenario-start', location: loc, scenario });
+    await sleep(delay);
+    emit({ type: 'scenario-done', location: loc, scenario, status: 'tested', requests: 5, thirdPartyRequests: 2, parties: 1, cookies: 1, durationMs: delay });
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'owner-report.json');
+    fs.writeFileSync(file + '.tmp', JSON.stringify(collectorReport(loc, ++visits, 2, startedAt)));
+    fs.renameSync(file + '.tmp', file);
+    emit({ type: 'live', file, stage: 'live', visitsDone: visits, visitsTotal: 2 });
+  }
+  if (host.startsWith('hold.')) await sleep(1500);
+  fs.mkdirSync(path.join(dir, 'evidence'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'collection.json'), JSON.stringify({ location: loc }));
+  fs.writeFileSync(path.join(dir, 'evidence', `${loc}.txt`), 'raw');
+  emit({ type: 'collected', runId, runDir: dir, locations: [loc] });
+  process.stdout.write(`run ${runId}: collected 1 location(s) · ${dir}\n`);
+}
+
+// `consent --merge a,b --failed id=why`: writes merge-argv.json in --cwd, then a
+// normal-looking run (report, tracking.json, owner report) that names the merged
+// and the failed locations; no scenario events (the collectors emitted them).
+async function mergeRuns() {
+  fs.writeFileSync(path.join(cwd, 'merge-argv.json'), JSON.stringify(process.argv.slice(2)));
+  const dirs = String(opts.merge).split(',').filter(Boolean);
+  const locs = dirs.map((d) => JSON.parse(fs.readFileSync(path.join(d, 'collection.json'), 'utf8')).location);
+  const failed = [].concat(opts.failed ?? []);
+  emit({ type: 'start', runId, url: opts.url, locations: locs });
+  await sleep(delay);
+  const runDir = path.join(cwd, '.comply', 'runs', runId);
+  fs.mkdirSync(path.join(runDir, 'evidence'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'tracking.json'), JSON.stringify({ url: opts.url, locations: locs, failed }));
+  fs.writeFileSync(path.join(runDir, 'findings.jsonl'), '{"ruleId":"fake"}\n');
+  fs.writeFileSync(path.join(runDir, 'consent-report.json'), JSON.stringify({ url: opts.url }));
+  fs.writeFileSync(path.join(runDir, 'consent-report.html'), `<!doctype html><title>consent report</title><h1>Merged ${locs.join(',')}; not scanned: ${failed.join(';')}</h1>\n`);
+  fs.writeFileSync(path.join(runDir, 'change-list.md'), `# Change list — ${opts.url}\n`);
+  emit({ type: 'done', runId, runDir, report: path.join(runDir, 'consent-report.html'), changeList: path.join(runDir, 'change-list.md'), findings: 1, totals: { violation: 1, 'needs-review': 0, exposure: 0, practice: 0 }, parties: 1, unrecognized: 0 });
+  process.stdout.write(`wrote ${runDir}\n`);
+}
+
 async function consent() {
+  if (opts['collect-only']) return collectOnly();
+  if (opts.merge !== undefined) return mergeRuns();
   fs.writeFileSync(path.join(cwd, 'env.json'), JSON.stringify({ COMPLYKIT_KB_DIR: process.env.COMPLYKIT_KB_DIR ?? null }));
   const ws = opts.workspace ? JSON.parse(fs.readFileSync(opts.workspace, 'utf8')) : { entries: {} };
   const widget = /(^|\.)widget\./.test(host);

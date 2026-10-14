@@ -93,6 +93,13 @@ async function readConsentStateUnbounded(page: Page): Promise<Record<string, unk
         return s ? { purposes: s.purposes, vendors: undefined } : undefined;
       });
       safe('cookieconsent', () => w.CookieConsent?.getUserPreferences?.());
+      // A bundled cookieconsent v3 has no window global; its record is the cc_cookie (JSON).
+      safe('cookieconsentCookie', () => {
+        const m = /(?:^|; )cc_cookie=([^;]*)/.exec(document.cookie);
+        if (!m) return undefined;
+        const v = JSON.parse(decodeURIComponent(m[1])) as { categories?: unknown; revision?: unknown };
+        return Array.isArray(v.categories) ? { categories: v.categories, revision: v.revision } : undefined;
+      });
       safe('oneTrustClosed', () => (w.OnetrustActiveGroups !== undefined ? /(?:^|; )OptanonAlertBoxClosed=/.test(document.cookie) : undefined));
       safe('trustarc', () => {
         const m = /(?:^|; )notice_preferences=([^;]*)/.exec(document.cookie);
@@ -176,6 +183,16 @@ export function readoutConfirms(choice: 'accept' | 'reject', readout: Record<str
   const cky = readout.cookieyes as { categories?: Record<string, boolean>; isUserActionCompleted?: boolean } | undefined;
   if (cky?.categories && typeof cky.categories.advertisement === 'boolean') {
     tool.push(Boolean(cky.isUserActionCompleted) && (choice === 'accept' ? cky.categories.advertisement : !cky.categories.advertisement));
+  }
+  // cookieconsent v3: the accepted categories. Its cookie first — written only on a choice, and the
+  // only record when the tool is bundled with no window global; the API reports opt-out-mode
+  // defaults as accepted before anyone chose.
+  const ccStored = (readout.cookieconsentCookie as { categories?: unknown } | undefined)?.categories;
+  const ccPrefs = readout.cookieconsent as { acceptedCategories?: unknown } | undefined;
+  const ccCats = Array.isArray(ccStored) ? ccStored : ccPrefs?.acceptedCategories;
+  if (Array.isArray(ccCats)) {
+    const optional = ccCats.filter((c) => c !== 'necessary');
+    tool.push(choice === 'accept' ? optional.length > 0 : optional.length === 0);
   }
   if (tool.length) return tool.every(Boolean);
   const g = readout.googleConsent as Record<string, { update?: string }> | undefined;
@@ -353,10 +370,11 @@ export async function dismissBanner(page: Page): Promise<{ ok: boolean; method: 
 const ANALYTICS_LABEL = /analytic|statistic|performance|measurement|mesure|statistik/i;
 const SAVE_LABEL = /save|confirm|allow selection|accept selected|submit|apply|speichern|enregistrer/i;
 
-export async function partialConsent(page: Page): Promise<{ ok: boolean; method: string }> {
+export async function partialConsent(page: Page): Promise<{ ok: boolean; method: string; reason?: string; cause?: 'settings-dead' | 'no-category-choice' }> {
   // complykit (D10): exact toggles and buttons, no text matching — also when its
   // banner is not showing (the tool is running): never fall through to heuristics.
   if ((await page.$(CK.banner).catch(() => null)) || (await complykitRunning(page))) return complykitPartial(page);
+  if (await page.$('#cc-main').catch(() => null)) return cookieconsentPartial(page);
   // OneTrust: open preferences, toggle Performance (C0002), confirm.
   if (await page.$('#onetrust-pc-btn-handler').catch(() => null)) {
     await page.click('#onetrust-pc-btn-handler', { timeout: 4000 }).catch(() => {});
@@ -429,6 +447,46 @@ export async function partialConsent(page: Page): Promise<{ ok: boolean; method:
     )
     .catch(() => false);
   return done ? { ok: true, method: 'heuristic:analytics-only' } : { ok: false, method: 'none' };
+}
+
+/** cookieconsent v3 (orestbida): each category toggle is `input.section__toggle` whose value is the
+ *  category key, and the preferences modal saves through `[data-role="save"]`. The generic path
+ *  missed both — the toggle's label is a sibling button, not a <label> (storyfolder.com, 2026-10-08).
+ *  Opened the way a visitor opens it, through the banner's own settings control: when that control
+ *  does nothing, the visitor cannot choose per category either, and the reason says so. */
+async function cookieconsentPartial(page: Page): Promise<{ ok: boolean; method: string; reason?: string; cause?: 'settings-dead' | 'no-category-choice' }> {
+  const open = (): Promise<boolean> => page.evaluate(() => document.documentElement.classList.contains('show--preferences')).catch(() => false);
+  if (!(await open())) {
+    const control = await page
+      .evaluate(() => {
+        const c = Array.from(document.querySelectorAll<HTMLElement>('#cc-main [data-role="show"], #cc-main [data-cc="show-preferencesModal"], [data-cc="show-preferencesModal"]')).find((e) => e.checkVisibility());
+        if (!c) return null;
+        c.setAttribute('data-complykit-cc-show', '1');
+        return (c.textContent ?? '').trim().slice(0, 40);
+      })
+      .catch(() => null);
+    if (control === null) return { ok: false, method: 'cookieconsent3:no-settings-control', reason: 'the banner offers no control that opens per-category settings', cause: 'no-category-choice' };
+    await page.click('[data-complykit-cc-show]', { timeout: 4000 }).catch(() => {});
+    await page.waitForTimeout(900);
+    if (!(await open())) return { ok: false, method: 'cookieconsent3:settings-did-not-open', reason: `the banner’s “${control}” control did not open the cookie settings, so a visitor cannot choose per category`, cause: 'settings-dead' };
+  }
+  const toggled = await page
+    .evaluate((a) => {
+      const analytics = new RegExp(a, 'i');
+      let hit = false;
+      for (const box of Array.from(document.querySelectorAll<HTMLInputElement>('#cc-main .pm input.section__toggle'))) {
+        if (box.disabled) continue;
+        const title = box.closest('.pm__section, .pm__section--toggle')?.querySelector('.pm__section-title')?.textContent ?? '';
+        const want = analytics.test(`${box.value} ${title}`);
+        if (want) hit = true;
+        if (box.checked !== want) box.click();
+      }
+      return hit;
+    }, ANALYTICS_LABEL.source)
+    .catch(() => false);
+  if (!toggled) return { ok: false, method: 'cookieconsent3:no-analytics-category', reason: 'the cookie settings have no analytics category to grant on its own', cause: 'no-category-choice' };
+  const saved = await page.click('#cc-main .pm [data-role="save"]', { timeout: 4000 }).then(() => true, () => false);
+  return saved ? { ok: true, method: 'cookieconsent3:analytics' } : { ok: false, method: 'cookieconsent3:no-save', reason: 'the cookie settings have no save control' };
 }
 
 // --- Withdraw: reopen settings, reject, save ---------------------------------------
@@ -561,6 +619,8 @@ export interface OptOutWalk {
   confirmation?: string;
   landedUrl?: string;
   performed?: boolean;
+  /** When the opt-out control was clicked, on the caller's clock: the opt-out exists from here. */
+  performedAt?: number;
 }
 
 /** Text on the page that confirms an opt-out / GPC was honored, if any. */
@@ -609,7 +669,7 @@ async function uncheckOptionalToggles(page: Page): Promise<void> {
  * or its section for a formless control): a footer newsletter signup or a
  * header login form on the same page is not the opt-out's requirement.
  */
-export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptOutWalk> {
+export async function walkOptOutLink(page: Page, perform: boolean, clock: () => number = Date.now): Promise<OptOutWalk> {
   const link = await page
     .evaluate((src) => {
       const re = new RegExp(src, 'i');
@@ -646,7 +706,9 @@ export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptO
         const act = new RegExp(action, 'i');
         return Array.from(document.querySelectorAll('button, [role="button"], [role="switch"], input[type="checkbox"]')).some((el) => {
           const b = (el as HTMLElement).getBoundingClientRect();
-          return b.width > 0 && b.height > 0 && !el.hasAttribute('data-complykit-optout') && act.test(`${el.textContent ?? ''} ${el.getAttribute('aria-label') ?? ''}`);
+          // A drawn-but-hidden control (visibility:hidden, opacity 0) has a full box: ask the browser.
+          const seen = b.width > 0 && b.height > 0 && (typeof el.checkVisibility !== 'function' || el.checkVisibility({ visibilityProperty: true, opacityProperty: true }));
+          return seen && !el.hasAttribute('data-complykit-optout') && act.test(`${el.textContent ?? ''} ${el.getAttribute('aria-label') ?? ''}`);
         });
       },
       OPT_OUT_ACTION.source,
@@ -661,9 +723,25 @@ export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptO
         const refuse = new RegExp(refusal, 'i');
         const granting = new RegExp(grant, 'i');
         const pf = new RegExp(personal, 'i');
+        // A consent tool can keep a layer drawn but hidden (vanilla-cookieconsent's first-layer banner
+        // under implied consent is visibility:hidden at full size): a box alone is not "visible".
         const visible = (el: Element): boolean => {
           const b = (el as HTMLElement).getBoundingClientRect();
-          return b.width > 0 && b.height > 0;
+          return b.width > 0 && b.height > 0 && (typeof el.checkVisibility !== 'function' || el.checkVisibility({ visibilityProperty: true, opacityProperty: true }));
+        };
+        // A control under another layer (the consent tool's first-layer banner behind its own open
+        // preferences modal, storyfolder.com in California 2026-10-09) is drawn and visible, but a
+        // click lands on what is on top. Ask the browser what is at its centre; a control outside the
+        // viewport cannot be hit-tested and is kept (the click scrolls it into view).
+        const reachable = (el: Element): boolean => {
+          const b = (el as HTMLElement).getBoundingClientRect();
+          const cx = b.left + b.width / 2;
+          const cy = b.top + b.height / 2;
+          if (cx < 0 || cy < 0 || cx > window.innerWidth || cy > window.innerHeight) return true;
+          const top = document.elementFromPoint(cx, cy);
+          if (!top) return true;
+          // A custom toggle draws a span over its input: the label is one control.
+          return top === el || el.contains(top) || Boolean(top.closest('label')?.contains(el)) || Boolean(el.closest('label')?.contains(top));
         };
         // Site chrome present on every page (a footer newsletter signup, a
         // header/drawer login form) is not part of the opt-out control.
@@ -671,6 +749,7 @@ export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptO
         const PAGE_CHROME = 'header, footer, nav, [role="banner"], [role="contentinfo"], [role="navigation"]';
         const controls = Array.from(document.querySelectorAll('button, [role="button"], [role="switch"], input[type="checkbox"]'))
           .filter(visible)
+          .filter(reachable)
           .filter((el) => !el.hasAttribute('data-complykit-optout'))
           .filter((el) => {
             const label = `${el.textContent ?? ''} ${el.getAttribute('aria-label') ?? ''}`;
@@ -712,13 +791,19 @@ export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptO
     .catch(() => ({ required: [] as string[], hasAction: false, refusing: false }));
 
   let performed = false;
+  let performedAt: number | undefined;
   if (perform && inspect.hasAction && inspect.required.length === 0) {
     // A save-type control keeps whatever the toggles say, and they start on under implied consent:
     // switch the optional ones off first (locked / disabled ones stay), as a visitor opting out would.
     if (!inspect.refusing) await uncheckOptionalToggles(page);
-    await page.click('[data-complykit-optout-action="1"]', { timeout: 4000 }).catch(() => {});
+    // Timed at the control's click, like a banner choice: the opt-out exists from here, not from the
+    // start of the walk. Scrolling to the footer and opening the settings layer fire the page's own
+    // events (scroll depth, web vitals), and those are before the visitor opted out.
+    const at = clock();
+    // Performed only when the click landed: a control that timed out (covered, hidden) did nothing.
+    performed = await page.click('[data-complykit-optout-action="1"]', { timeout: 4000 }).then(() => true, () => false);
+    if (performed) performedAt = at;
     steps++;
-    performed = true;
     await page.waitForTimeout(1500);
   } else if (inspect.hasAction) {
     steps++; // the step a visitor would still have to take
@@ -735,6 +820,7 @@ export async function walkOptOutLink(page: Page, perform: boolean): Promise<OptO
     confirmation,
     landedUrl,
     performed,
+    performedAt,
   };
 }
 

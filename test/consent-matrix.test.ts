@@ -5,7 +5,7 @@ import { buildBehaviorMatrix } from '../src/report/consent-matrix.js';
 import { buildConsentReportModel } from '../src/report/consent-model.js';
 import { TrackingEvaluation, Timeline } from '../src/record/index.js';
 import { summarizeBehavior } from '../src/rules/tracking/summary.js';
-import { isCookieDeletion } from '../src/rules/tracking/analyze.js';
+import { isCookieDeletion, analyzeTimeline } from '../src/rules/tracking/analyze.js';
 import { purposeNeedsReview } from '../src/report/consent-view.js';
 
 const inventory={partyId:'meta.pixel',label:'Meta Pixel',domain:'facebook.com',hosts:['facebook.com'],recognized:true,kbStatus:'proposed',categories:['advertising'],behavesLikeTracker:true,trackerSignals:[],sends:[],stores:[{name:'_fbp',kind:'cookie',lifetimeDays:90},{name:'unknown_cookie',kind:'cookie',lifetimeDays:1}],sources:['injected'],loadedBy:[],seenIn:[]};
@@ -35,6 +35,21 @@ describe('consent behavior matrix',()=>{
   // A coverage note that cannot hide requests or cookies does not turn an expected absence into "not checked".
   expect(status({...model,notTested:[{scope:'flow',id:'reject',reason:'navigator.globalPrivacyControl inside workers (init scripts do not run in workers; the Sec-GPC header is still sent)'}]},'storage','_fbp','reject').status).toBe('match');
   expect(status({...model,notTested:[{scope:'flow',id:'reject',reason:'unreadable frame in this visit'}]},'storage','_fbp','reject').status).toBe('unknown');
+  expect(status({...model,notTested:[{scope:'flow',id:'reject',location:'de',reason:'no visible email field to type the marker into'}]},'storage','_fbp','reject').status).toBe('match'); // a marker not typed hides nothing
+  // A visitor action that could not run anywhere (a banner with no close control, no per-category toggle)
+  // is a gap for its own column only — it says nothing about what the other visits captured.
+  expect(status({...model,notTested:[{scope:'scenario',id:'dismiss',location:'de',reason:'the banner offers no way to close it without choosing'}]},'storage','_fbp','reject').status).toBe('match');
+  expect(status({...model,notTested:[{scope:'flow',id:'partial',location:'de',reason:'could not grant a single category (no recognizable analytics-only control)'}]},'tool','Meta Pixel','reject').status).toBe('match');
+ });
+ it('wiretap states: consent-denied pings before a choice or after a refusal are a problem, as in the EU/UK (complykit decides, 2026-10-09); after an opt-out they are the expected restricted mode',()=>{
+  const f=(scenario:string,wiretap=true)=>compareCookieBehavior({scenario,regime:'opt-out-signal',regimeLabel:'California',wiretap,hasActivity:true,limitedOnly:true,captureGap:false},{categories:['advertising']});
+  expect(f('do-nothing').status).toBe('mismatch');
+  expect(f('do-nothing').reason).toMatch(/wiretap/i);
+  expect(f('do-nothing').reason).toMatch(/Consent Mode "basic"/);
+  expect(f('reject').status).toBe('mismatch');
+  expect(f('gpc').status).toBe('match');
+  expect(f('opt-out-link').status).toBe('match');
+  expect(f('do-nothing',false).status).toBe('match'); // no wiretap posture: may run before a choice
  });
  it('a failed opt-out link is one column-level gap that says why, not a "needs a look" per cookie',()=>{
   const loc=evaluation.locations[0];
@@ -57,6 +72,40 @@ describe('consent behavior matrix',()=>{
   const observations=summarizeBehavior([timeline]);
   expect(observations[0].parties[0].stores[0].writePhases).toEqual(['before-choice','after-reject']);
   expect(status({...model,behaviorObservations:observations},'storage','_fbp','reject').status).toBe('mismatch');
+ });
+ it('a write within 1 s of a withdrawal, on its page, is the choice taking effect (grace) — not a write after withdrawal; later writes count',()=>{
+  const w=(t:number)=>({type:'cookie-write',t,name:'_fbp',value:'redacted',chain:['https://connect.facebook.net/pixel.js'],frameUrl:evaluation.site.url,pageIndex:0});
+  const timeline=Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'withdraw',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies:[],storage:[],frames:[]},events:[{type:'banner',t:0,state:'shown',pageIndex:0},{type:'choice',t:100,choice:'accept',ok:true,method:'test',pageIndex:0},w(150),{type:'choice',t:1000,choice:'withdraw',ok:true,method:'test',pageIndex:0},w(1022)]});
+  expect(summarizeBehavior([timeline])[0].parties[0].stores[0].writePhases).toEqual(['after-accept','withdraw-grace']);
+  const later=Timeline.parse({...timeline,events:[...timeline.events,w(2500)]});
+  expect(summarizeBehavior([later])[0].parties[0].stores[0].writePhases).toEqual(['after-accept','withdraw-grace','after-withdraw']);
+ });
+ it('a cookie left in the jar on another company’s domain is not the site’s activity; writing one during the visit still is',()=>{
+  const inv={...inventory,stores:[...inventory.stores,{name:'fr',kind:'cookie',lifetimeDays:90}]};
+  const cookie=(name:string,domain:string)=>({name,value:'x',domain,path:'/',expires:-1,httpOnly:false,secure:true});
+  const tl=(cookies:object[],events:object[]=[])=>Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'reject',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies,storage:[],frames:[]},events:[{type:'banner',t:0,state:'shown',pageIndex:0},{type:'request',t:50,id:'r1',url:'https://www.facebook.com/tr/?ev=PageView',method:'GET',resourceType:'image',origin:'page',pageUrl:evaluation.site.url,pageIndex:0,initiator:{type:'other',chain:[]}},{type:'choice',t:200,choice:'reject',ok:true,method:'test',pageIndex:0},...events]});
+  const m=(t:ReturnType<typeof tl>)=>{const obs=summarizeBehavior([t]);return {...buildConsentReportModel({...evaluation,inventory:[inv]} as unknown as typeof evaluation,[]),behaviorObservations:obs};};
+  const third=summarizeBehavior([tl([cookie('fr','.facebook.com')])])[0].parties.find(p=>p.partyId==='meta.pixel')!.stores.find(s=>s.name==='fr')!;
+  expect(third).toMatchObject({presentAtEnd:true,thirdParty:true});
+  expect(status(m(tl([cookie('fr','.facebook.com')])),'storage','fr','reject').status).toBe('match');
+  // The site's own cookie left behind is still the site's.
+  expect(status(m(tl([cookie('_fbp','.shop.example')])),'storage','_fbp','reject').status).toBe('mismatch');
+ });
+ it('each cookie sits under one tool: the one its name belongs to, not the tag loader that wrote it (storyfolder.com, 2026-10-08)',()=>{
+  const gtag='https://www.googletagmanager.com/gtag/js?id=G-TEST';
+  const t=Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'accept',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies:[{name:'GCL_AW_P',value:'x',domain:'.googleadservices.com',path:'/',expires:-1,httpOnly:false,secure:true}],storage:[],frames:[]},events:[
+   {type:'request',t:10,id:'g',url:gtag,method:'GET',resourceType:'script',origin:'page',pageUrl:evaluation.site.url,pageIndex:0,initiator:{type:'parser',chain:[]}},
+   {type:'request',t:20,id:'a',url:'https://www.googleadservices.com/pagead/conversion/1/?x=1',method:'GET',resourceType:'image',origin:'page',pageUrl:evaluation.site.url,pageIndex:0,initiator:{type:'script',chain:[gtag]}},
+   {type:'cookie-write',t:30,name:'_ga',value:'redacted',chain:[gtag],frameUrl:evaluation.site.url,pageIndex:0},
+   {type:'cookie-write',t:31,name:'_gcl_au',value:'redacted',chain:[gtag],frameUrl:evaluation.site.url,pageIndex:0},
+   {type:'storage-write',t:32,area:'local',key:'_gcl_ls',value:'redacted',chain:[gtag],frameUrl:evaluation.site.url,pageIndex:0},
+  ]});
+  const owners=new Map<string,string[]>();
+  for(const [id,f] of analyzeTimeline(t).parties)for(const st of f.stores)owners.set(st.name,[...(owners.get(st.name)??[]),id]);
+  expect(owners.get('_ga')).toEqual(['google.analytics']);
+  expect(owners.get('_gcl_au')).toEqual(['google.ads.doubleclick']);
+  expect(owners.get('_gcl_ls')).toEqual(['google.ads.doubleclick']);
+  expect(owners.get('GCL_AW_P')).toHaveLength(1);
  });
  it('a cookie deletion after the choice (consent-tool cleanup, a vendor dropping its id) is not a write (E4)',()=>{
   const ev=(t:number,attributes?:string)=>({type:'cookie-write',t,name:'_fbp',value:attributes?'':'redacted',...(attributes?{attributes}:{}),chain:['https://connect.facebook.net/pixel.js'],frameUrl:evaluation.site.url,pageIndex:0});
@@ -93,17 +142,16 @@ describe('purpose choices and saved behavior comparisons', () => {
  it('never lets a necessary label supersede a secondary optional purpose',()=>{
   expect(compareCookieBehavior(active,{categories:['necessary'],userChosen:true}).status).toBe('match');
   for(const optional of ['analytics','performance','advertising','functional'])expect(compareCookieBehavior(active,{categories:['necessary',optional],userChosen:true}).status).toBe('mismatch');
-  expect(compareCookieBehavior(active,{categories:['necessary','other'],userChosen:true}).status).toBe('review');
+  expect(compareCookieBehavior(active,{categories:['necessary','other'],userChosen:true}).status).toBe('mismatch'); // "other" needs consent: complykit decides, never the site
  });
- it('keeps control exceptions and privacy signals separate from purpose labels',()=>{
-  expect(compareCookieBehavior(active,{categories:['necessary'],control:'consent',userChosen:true}).status).toBe('mismatch');
-  expect(compareCookieBehavior(active,{categories:['analytics'],control:'none',userChosen:true}).status).toBe('review');
-  expect(compareCookieBehavior(active,{categories:['other'],control:'consent',userChosen:true}).status).toBe('mismatch');
-  expect(compareCookieBehavior({...active,scenario:'gpc'},{categories:['analytics'],control:'consent',userChosen:true}).status).toBe('review');
+ it('a recorded control never changes the verdict: what a tool does is a fact; what that requires is complykit\'s call (2026-10-09)',()=>{
+  for(const categories of [['necessary'],['analytics'],['other'],['advertising']])for(const control of ['consent','none','other'])for(const scenario of ['do-nothing','gpc','accept'])
+   expect(compareCookieBehavior({...active,scenario},{categories,control,userChosen:true}).status,`${categories} ${control} ${scenario}`).toBe(compareCookieBehavior({...active,scenario},{categories,userChosen:true}).status);
+  expect(compareCookieBehavior(active,{categories:['analytics'],control:'none',userChosen:true}).status).toBe('mismatch');
  });
  it('retains incomplete evidence and restricted traffic even after a classification',()=>{
   for(const category of ['necessary','analytics'])expect(compareCookieBehavior({...active,unavailable:{status:'not-tested',reason:'Choice failed'}},{categories:[category],userChosen:true}).status).toBe('not-tested');
   expect(compareCookieBehavior({...active,hasActivity:false,captureGap:true},{categories:['performance'],userChosen:true}).status).toBe('unknown');
-  expect(compareCookieBehavior({...active,limitedOnly:true},{categories:['analytics'],userChosen:true}).status).toBe('review');
+  expect(compareCookieBehavior({...active,limitedOnly:true},{categories:['analytics'],userChosen:true}).status).toBe('mismatch');
  });
 });

@@ -4,7 +4,7 @@ import { behaviorCellsFrom } from '../src/rules/tracking/index.js';
 import { compareCookieBehavior, type ComparisonFacts, type PrivacyRegime } from '../src/report/cookie-purpose.js';
 import { scopeLine } from '../src/report/consent-scope.js';
 import { isWiretapJurisdiction, WIRETAP_CATEGORIES, describeLocationRules } from '../src/registry/index.js';
-import { noBannerReason } from '../src/collect/browser/evaluation/scenarios.js';
+import { brokenToolReason, errorSource, noBannerReason } from '../src/collect/browser/evaluation/scenarios.js';
 import type { ConsentReportModel } from '../types/index.js';
 
 // Wiretap posture (field run storyfolder.com, 2026-10-08). California is an
@@ -79,13 +79,20 @@ describe('compareCookieBehavior: wiretap posture (runs inside saved HTML, so it 
     expect(cmp('browse', 'opt-out-signal', true, ['session-recording', 'analytics']).status).toBe('mismatch');
   });
 
-  it('analytics alone is not a wiretap category: unchanged', () => {
-    expect(cmp('do-nothing', 'opt-out-signal', true, ['analytics']).status).toBe('match');
+  it('analytics is held too (2026-10-09: §638.51 suits name analytics scripts); accepting analytics alone releases it, and nothing else', () => {
+    expect(cmp('do-nothing', 'opt-out-signal', true, ['analytics']).status).toBe('mismatch');
+    expect(cmp('partial', 'opt-out-signal', true, ['analytics']).status).toBe('match');
+    expect(cmp('partial', 'opt-out-signal', true, ['advertising']).status).toBe('mismatch');
+    expect(cmp('do-nothing', 'opt-out-signal', false, ['analytics']).status).toBe('match');
+    // GA4 in Consent Mode before a choice: cookieless pings are a problem too.
+    expect(cmp('do-nothing', 'opt-out-signal', true, ['analytics'], { limitedOnly: true }).status).toBe('mismatch');
   });
 
-  it('limited-only pings (Consent Mode cookieless, Meta LDU) keep their existing treatment', () => {
-    expect(cmp('do-nothing', 'opt-out-signal', true, ['advertising'], { limitedOnly: true }).status).toBe('match');
+  it('limited-only pings (Consent Mode cookieless, Meta LDU) before a choice are a problem, as in the EU/UK (complykit decides, 2026-10-09); after an opt-out they are the expected restricted mode', () => {
+    expect(cmp('do-nothing', 'opt-out-signal', true, ['advertising'], { limitedOnly: true }).status).toBe('mismatch');
+    expect(cmp('gpc', 'opt-out-signal', true, ['advertising'], { limitedOnly: true }).status).toBe('match');
   });
+
 
   it('a state without wiretap exposure is unchanged, and so are opt-in and reports saved without the flag', () => {
     expect(cmp('do-nothing', 'opt-out-signal', false, ['advertising']).status).toBe('match');
@@ -116,10 +123,10 @@ describe('behaviorCellsFrom: wiretap posture in the compatibility expectation', 
     expect(c[0].reason).toMatch(/wiretap/i);
   });
 
-  it('Florida too; Texas and analytics in California are unchanged', () => {
+  it('Florida too, and analytics in California; Texas is unchanged', () => {
     expect(cells(['us', 'us-fl'], 'meta.pixel', ['advertising'])[0].status).toBe('mismatch');
     expect(cells(['us', 'us-tx'], 'meta.pixel', ['advertising'])[0].status).toBe('no-mismatch-observed');
-    expect(cells(['us', 'us-ca'], 'google.analytics', ['analytics'])[0].status).toBe('no-mismatch-observed');
+    expect(cells(['us', 'us-ca'], 'google.analytics', ['analytics'])[0].status).toBe('mismatch');
   });
 });
 
@@ -153,5 +160,22 @@ describe('scenario skipped for no banner: say what was actually seen', () => {
   });
   it('with no consent tool seen, the old wording stands', () => {
     expect(noBannerReason()).toBe('no consent banner detected (if the site shows one, the driver did not recognize it)');
+  });
+});
+
+describe('a consent tool that crashed before drawing its banner', () => {
+  it('the error source is the first stack frame, host + path only (no query)', () => {
+    const stack = "TypeError: Cannot read properties of undefined (reading '_lawSelected')\n    at https://cdn.example/wp-content/plugins/webtoffee-cookie-consent/lite/frontend/js/script.min.js?ver=3.5.5:1:2345\n    at https://shop.example/other.js:2:3";
+    expect(errorSource(stack)).toBe('cdn.example/wp-content/plugins/webtoffee-cookie-consent/lite/frontend/js/script.min.js');
+    expect(errorSource('Error: x\n    at <anonymous>:1:1')).toBeUndefined();
+    expect(errorSource(undefined)).toBeUndefined();
+  });
+
+  it('the reason names the tool, says no visitor gets a choice, and quotes the error', () => {
+    const r = brokenToolReason({ tool: 'webtoffee-cookie-consent', message: "Cannot read properties of undefined (reading '_lawSelected')", source: 'cdn.example/x/script.min.js' });
+    expect(r).toContain('the consent tool (webtoffee-cookie-consent) is on the page but its script crashed before showing a banner');
+    expect(r).toContain('a visitor gets no banner and no choice');
+    expect(r).toContain('_lawSelected');
+    expect(r).toContain('cdn.example/x/script.min.js');
   });
 });

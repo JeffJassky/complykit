@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import type { Browser } from 'playwright';
 import {
   runDir,
+  timelineArtifact,
   ConsentToolRecord,
   ComplykitToolSnapshot,
   type Artifact,
@@ -333,6 +334,7 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
           scenario,
           status: out.status,
           reason: out.reason,
+          ...(out.cause ? { cause: out.cause } : {}),
           durationMs: tl.snapshot.durationMs,
           banner: { found: Boolean(banner), cmp: banner?.type === 'banner' ? banner.cmp : undefined, shownAtMs: banner?.t },
           consentTool: consentTool?.success ? consentTool.data : undefined,
@@ -349,6 +351,7 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
           scenario,
           status: out.status,
           reason: out.reason,
+          ...(out.cause ? { cause: out.cause } : {}),
           requests: sum.counts?.requests ?? 0,
           thirdPartyRequests: sum.counts?.thirdPartyRequests ?? 0,
           parties: sum.counts?.parties ?? 0,
@@ -383,6 +386,7 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
               run: runNo,
               status: again.status,
               reason: again.reason,
+              ...(again.cause ? { cause: again.cause } : {}),
               ...countsOf(again.timeline),
               durationMs: again.timeline.snapshot.durationMs,
             });
@@ -480,22 +484,6 @@ export async function collectConsentEvaluation(opts: ConsentEvaluationOptions): 
     containers,
     startedAt,
     finishedAt: new Date().toISOString(),
-  };
-}
-
-/** One visit's timeline as the rules consume it (a `consent-timeline` artifact). */
-function timelineArtifact(tl: Timeline, property: string, instanceUrl: string, capturedAt: string): Artifact {
-  const runSuffix = (tl.snapshot.run ?? 1) > 1 ? `-run${tl.snapshot.run}` : '';
-  return {
-    kind: 'consent-timeline',
-    subject: { property, routePattern: '*', instanceUrl, state: `${tl.location.id}/${tl.snapshot.scenario}${runSuffix}` },
-    capturedAt,
-    payloadPath: tl.snapshot.evidence.timeline,
-    scenario: tl.snapshot.scenario,
-    location: tl.location as unknown as Record<string, unknown>,
-    verification: tl.verification as unknown as Record<string, unknown>,
-    events: tl.events as unknown as Record<string, unknown>[],
-    snapshot: tl.snapshot as unknown as Record<string, unknown>,
   };
 }
 

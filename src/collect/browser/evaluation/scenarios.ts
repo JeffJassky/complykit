@@ -5,6 +5,7 @@ import {
   putEvidence,
   redactTimeline,
   detectConsentTool,
+  consentToolOfScript,
   type RunId,
   type LocationSpec,
   type LocationVerification,
@@ -12,6 +13,7 @@ import {
   type Timeline,
   type TimelineEvent,
   type ChoiceEvent,
+  type SkipCause,
 } from '../../../record/index.js';
 import { startCapture, withTimeout, type CaptureHandle } from './capture.js';
 import { AutoconsentDriver } from './autoconsent.js';
@@ -90,6 +92,7 @@ export interface ScenarioOutput {
   timeline: Timeline;
   status: 'tested' | 'not-tested' | 'not-applicable';
   reason?: string;
+  cause?: SkipCause;
   screenshots: string[];
   siteReported: Array<{ source: string; value: string }>;
 }
@@ -99,6 +102,30 @@ class BlockedError extends Error {}
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 const GPC_SCENARIOS: ScenarioId[] = ['gpc', 'opt-out-all'];
+
+/** A script error thrown by the consent tool's own script, host + path only (no query). */
+export interface ToolCrash {
+  tool: string;
+  message: string;
+  source: string;
+}
+
+/** Why a banner scenario could not run: the site's consent tool crashed, so no visitor gets a banner or a choice. */
+export function brokenToolReason(c: ToolCrash): string {
+  return `the consent tool (${c.tool}) is on the page but its script crashed before showing a banner, so a visitor gets no banner and no choice: “${c.message}” in ${c.source}`;
+}
+
+/** The script URL a page error was thrown from: the first frame of its stack, host + path only. */
+export function errorSource(stack: string | undefined): string | undefined {
+  const m = /(https?:\/\/[^\s()]+?):\d+:\d+/.exec(stack ?? '');
+  if (!m) return undefined;
+  try {
+    const u = new URL(m[1]);
+    return `${u.host}${u.pathname}`;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Why a banner scenario was skipped: a tool present but silent is the site's design for this visitor, not a detection failure. */
 export function noBannerReason(cmp?: string): string {
@@ -115,6 +142,10 @@ class Visit {
   cmp?: string;
   /** A consent tool the driver detected that drew no banner for this visitor (e.g. US implied consent). */
   silentCmp?: string;
+  /** The consent tool's script threw before any banner was drawn (a broken install). */
+  toolCrash?: ToolCrash;
+  /** Uncaught script errors on this visit's pages (first few). */
+  readonly pageErrors: Array<{ message: string; source?: string; url?: string }> = [];
   blocked?: string;
   throttleFailed?: string;
   private defaultToolRead = false;
@@ -138,6 +169,11 @@ class Visit {
 
   private async openPage(): Promise<Page> {
     this.page = await this.context.newPage();
+    this.page.on('pageerror', (err) => {
+      if (this.pageErrors.length >= 20) return;
+      const source = errorSource(err.stack);
+      this.pageErrors.push({ message: err.message.slice(0, 200), source, url: /(https?:\/\/[^\s()]+?):\d+:\d+/.exec(err.stack ?? '')?.[1] });
+    });
     this.page.setDefaultTimeout(this.input.throttle ? 45000 : 15000);
     if (this.input.throttle) await this.throttlePage(this.page);
     await this.cap.watchPage(this.page, true);
@@ -274,6 +310,7 @@ class Visit {
         this.ev({ type: 'banner', state: opts.expectBanner === false ? 'reappeared' : 'shown', cmp: this.cmp, via: found.via.startsWith('selector:') ? 'selector' : 'heuristic' });
       } else if (opts.expectBanner !== false) {
         this.ev({ type: 'banner', state: 'not-found' });
+        await step('tool-check', () => this.checkSilentTool());
       }
     }
     const elapsed = Date.now() - since;
@@ -287,6 +324,34 @@ class Visit {
     if (this.input.scenario === 'do-nothing' && opts.expectBanner !== false) {
       await this.design('first');
       if (this.bannerShown) await this.design('second', { open: false });
+    }
+  }
+
+  /**
+   * No banner: is a consent tool on the page anyway, and did its script crash?
+   * A crash is the site's install failing every visitor (blackstaramps, 2026-10-10:
+   * a page optimizer deferred the tool's config past its script), not a detection gap.
+   */
+  private async checkSilentTool(): Promise<void> {
+    if (!this.toolCrash) {
+      for (const e of this.pageErrors) {
+        const tool = e.url ? consentToolOfScript(e.url) : undefined;
+        if (tool && e.source) {
+          this.toolCrash = { tool, message: e.message, source: e.source };
+          this.ev({ type: 'note', text: `consent tool ${tool} crashed before showing a banner: ${e.message} (${e.source})` });
+          break;
+        }
+      }
+    }
+    if (this.toolCrash || this.silentCmp) return;
+    const scripts = await this.page.evaluate(() => Array.from(document.scripts, (s) => s.src).filter(Boolean)).catch(() => [] as string[]);
+    for (const src of scripts) {
+      const tool = consentToolOfScript(src);
+      if (tool) {
+        this.silentCmp = tool;
+        this.ev({ type: 'note', text: `consent tool detected (${tool}) but no banner is visible` });
+        return;
+      }
     }
   }
 
@@ -463,6 +528,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
   const search: SearchStep = { term: input.markers.text, note: (r) => notTested.push(r) };
   let status: ScenarioOutput['status'] = 'tested';
   let reason: string | undefined;
+  let cause: SkipCause | undefined;
   const landing = input.targetUrl;
 
   if (!driver.available) notTested.push('banner driver (@duckduckgo/autoconsent) not installed — heuristic banner detection only');
@@ -471,6 +537,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
   const choiceGate = (ev: ChoiceEvent | null): boolean => {
     if (ev && !ev.ok) {
       status = 'not-tested';
+      cause = 'choice-failed';
       reason = `could not make the "${ev.choice}" choice (${ev.method}${ev.note ? `; ${ev.note}` : ''})`;
       return false;
     }
@@ -515,9 +582,11 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
         // column shows what still runs after a visitor opts out this way.
         await v.land(landing);
         const tLink = cap.now();
-        const walk = await step('opt-out-link', () => walkOptOutLink(v.page, true));
+        const walk = await step('opt-out-link', () => walkOptOutLink(v.page, true, () => cap.now()));
         v.ev({ type: 'opt-out-walk', ...walk });
-        v.ev({ type: 'choice', choice: 'opt-out-link', ok: walk.performed === true, method: walk.performed ? 'link+control' : walk.found ? 'link' : 'none', note: walk.requiredFields.length ? `requires ${walk.requiredFields.join(', ')} — not submitted` : undefined }, tLink);
+        // The choice is timed at the opt-out control's click (walk.performedAt), not at the start of
+        // the walk: what the page fires while the scan scrolls to the link is before the opt-out.
+        v.ev({ type: 'choice', choice: 'opt-out-link', ok: walk.performed === true, method: walk.performed ? 'link+control' : walk.found ? 'link' : 'none', note: walk.requiredFields.length ? `requires ${walk.requiredFields.join(', ')} — not submitted` : undefined }, walk.performedAt ?? tLink);
         await v.shot('opt-out-link');
         if (walk.performed) {
           await navigate(v.page, cap, landing, journey);
@@ -534,9 +603,9 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
           if (!ev.ok) notTested.push(`banner reject failed (${ev.method}) — opted out by signal and link only`);
         }
         const tLink = cap.now();
-        const walk = await step('opt-out-link', () => walkOptOutLink(v.page, true));
+        const walk = await step('opt-out-link', () => walkOptOutLink(v.page, true, () => cap.now()));
         v.ev({ type: 'opt-out-walk', ...walk });
-        v.ev({ type: 'choice', choice: 'opt-out-link', ok: walk.performed === true, method: walk.performed ? 'link+control' : walk.found ? 'link' : 'none', note: walk.requiredFields.length ? `requires ${walk.requiredFields.join(', ')} — not submitted` : undefined }, tLink);
+        v.ev({ type: 'choice', choice: 'opt-out-link', ok: walk.performed === true, method: walk.performed ? 'link+control' : walk.found ? 'link' : 'none', note: walk.requiredFields.length ? `requires ${walk.requiredFields.join(', ')} — not submitted` : undefined }, walk.performedAt ?? tLink);
         await v.shot('after-opt-out');
         await navigate(v.page, cap, landing, journey);
         await dwell(v.page, cap, journey.pageDwellMs);
@@ -552,8 +621,9 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
       case 'return-visit': {
         await v.land(landing);
         if (!v.bannerShown) {
-          status = 'not-applicable';
-          reason = noBannerReason(v.silentCmp);
+          status = v.toolCrash ? 'not-tested' : 'not-applicable';
+          cause = v.toolCrash ? 'tool-broken' : 'no-banner';
+          reason = v.toolCrash ? brokenToolReason(v.toolCrash) : noBannerReason(v.silentCmp);
           break;
         }
         if (scenario === 'dismiss') {
@@ -564,6 +634,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
           if (!d.ok) {
             // A banner with no close control is a design fact, not a test failure.
             status = d.noClose ? 'not-applicable' : 'not-tested';
+            cause = d.noClose ? 'no-close' : 'choice-failed';
             reason = d.noClose ? 'the banner offers no way to close it without choosing' : 'could not close the banner without choosing';
             break;
           }
@@ -581,7 +652,8 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
           await v.shot('after-partial');
           if (!p.ok) {
             status = 'not-tested';
-            reason = 'could not grant a single category (no recognizable analytics-only control)';
+            cause = p.cause ?? 'choice-failed';
+            reason = p.reason ?? 'could not grant a single category (no recognizable analytics-only control)';
             break;
           }
           await v.readout('after-choice');
@@ -636,10 +708,12 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
           await v.shot('after-withdraw');
           if (!re.ok) {
             // Not a failed test: "no withdrawal entry point" is itself the evidence.
+            cause = 'no-withdraw-entry';
             break;
           }
           if (!ok) {
             status = 'not-tested';
+            cause = 'choice-failed';
             reason = 'reopened settings but could not withdraw';
             break;
           }
@@ -693,6 +767,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
     });
     if (timedOut) {
       status = 'not-tested';
+      cause = 'timeout';
       reason = `scenario exceeded its ${Math.round(budget / 1000)}s budget; evidence up to that point is kept`;
       trace(reason);
       const open = timer.summary().filter((st) => st.open);
@@ -700,6 +775,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
     }
   } catch (err) {
     status = 'not-tested';
+    cause = err instanceof BlockedError ? 'bot-blocked' : 'crashed';
     reason =
       err instanceof BlockedError
         ? `bot protection blocked the visit (${err.message}) — a recorded coverage gap, not evidence about the site`
@@ -773,7 +849,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
   };
   const top = topSteps(steps, 3);
   trace(`${status}${reason ? ` (${reason})` : ''} — ${result.events.filter((e) => e.type === 'request').length} requests, ${result.cookies.length} cookies, ${Math.round(durationMs / 1000)}s${top ? ` (${top})` : ''}`);
-  return { timeline, status, reason, screenshots: v.screenshots, siteReported: [...v.siteReported.values()] };
+  return { timeline, status, reason, ...(cause ? { cause } : {}), screenshots: v.screenshots, siteReported: [...v.siteReported.values()] };
 }
 
 /** Write the timeline evidence file (redacted unless raw). */

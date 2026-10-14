@@ -9,6 +9,18 @@ real if CI runs the matrix. See standards/traps.md #10.
 
 ## [Unreleased]
 
+### Added: multi-region scans
+- `complykit consent --collect-only` runs only the browser half and leaves a
+  `collection.json` handoff; `--merge <dirs>` combines handoffs from several machines
+  into one run and report (no browser), and `--failed id=reason` records a location
+  whose collection never arrived.
+- `collectConsentScan` / `analyzeConsentScan` split in the pipeline;
+  `mergeCollections`, `mergeEvidence`, `readCollectionHandoff`,
+  `writeCollectionHandoff` exported.
+- Service: one checkbox per law (EU, UK, California, Texas, US with no state privacy
+  law), each scanned from a Fly Machine in that place; an "I am authorized to scan
+  this site" confirmation on every scan; per-law progress.
+
 ### Added: location rules
 - The report shows each location's model, with a popover that lists the laws compared.
 - Opt-out-link check in every state with a privacy act in force

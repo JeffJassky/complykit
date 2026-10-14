@@ -114,7 +114,8 @@ describe('jurisdictions and scenario plans', () => {
   it('default scenario sets per jurisdiction', () => {
     expect(defaultScenarios(['eu', 'eu-de'])).toContain('withdraw');
     expect(defaultScenarios(['us', 'us-ca'])).toContain('opt-out-link');
-    expect(defaultScenarios(['us', 'us-fl'])).toEqual(['do-nothing', 'browse', 'reject', 'accept', 'gpc', 'markers']);
+    expect(defaultScenarios(['us', 'us-fl'])).toEqual(['do-nothing', 'browse', 'dismiss', 'reject', 'accept', 'partial', 'withdraw', 'return-visit', 'gpc', 'markers']);
+    expect(defaultScenarios(['us', 'us-tx'])).toEqual(['do-nothing', 'browse', 'reject', 'accept', 'gpc', 'opt-out-all', 'opt-out-link', 'markers']);
     expect(locationPreset('us-ca')).toMatchObject({ country: 'US', region: 'CA' });
     expect(locationPreset('uk')).toMatchObject({ country: 'GB' });
     expect(() => locationPreset('mars')).toThrow();
@@ -123,7 +124,9 @@ describe('jurisdictions and scenario plans', () => {
   // A banner under US opt-out rules can hold the main trackers until accepted
   // (Shopify, California): without an accept visit they are never observed there.
   it('US opt-out and opt-out-signal locations plan an accept visit (banner-gated in the runner)', () => {
-    expect(defaultScenarios(['us', 'us-ca'])).toEqual(['do-nothing', 'browse', 'reject', 'accept', 'gpc', 'opt-out-all', 'opt-out-link', 'markers']);
+    // Wiretap states also get the EU/UK banner visits (2026-10-09), all banner-gated.
+    expect(defaultScenarios(['us', 'us-ca'])).toEqual(['do-nothing', 'browse', 'dismiss', 'reject', 'accept', 'partial', 'withdraw', 'return-visit', 'gpc', 'opt-out-all', 'opt-out-link', 'markers']);
+    expect(defaultScenarios(['us', 'us-il'])).toEqual(['do-nothing', 'browse', 'dismiss', 'reject', 'accept', 'partial', 'withdraw', 'return-visit', 'gpc', 'markers']);
     expect(defaultScenarios(['us', 'us-co'])).toContain('accept');
     expect(defaultScenarios(['us', 'us-tx'])).toContain('accept');
     expect(defaultScenarios(['us'])).toContain('accept');

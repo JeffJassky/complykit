@@ -9,6 +9,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { CheckKind, JobDetail, JobSummary } from '../shared/api.js';
 import { siteDomain } from './domains.js';
+import type { LawId } from '../shared/laws.js';
 
 export const LOG_LIMIT = 200;
 
@@ -83,7 +84,7 @@ export class JobStore extends EventEmitter<StoreEvents> {
     return [...this.jobs.values()].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : b.id.localeCompare(a.id)));
   }
 
-  create(input: { batchId: string; url: string; checks: CheckKind[]; quick: boolean; slowRepeat?: boolean }): JobDetail {
+  create(input: { batchId: string; url: string; checks: CheckKind[]; quick: boolean; slowRepeat?: boolean; laws?: LawId[]; authorizedAt?: string }): JobDetail {
     const id = newId();
     const job: JobDetail = {
       id,
@@ -94,6 +95,7 @@ export class JobStore extends EventEmitter<StoreEvents> {
       quick: input.quick,
       // A quick scan is always one pass; the repeat only applies to the consent check.
       slowRepeat: Boolean(input.slowRepeat) && !input.quick && input.checks.includes('consent'),
+      ...(input.laws?.length && input.checks.includes('consent') ? { laws: input.laws, ...(input.authorizedAt ? { authorizedAt: input.authorizedAt } : {}) } : {}),
       status: 'queued',
       createdAt: new Date().toISOString(),
       progress: { fraction: 0, done: 0, total: 0, phase: 'queued' },

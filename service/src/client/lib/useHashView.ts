@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 
 /** The top-level views. `#kb` is the knowledge base, `#sites` and
  *  `#sites/<domain>` are the per-site pages, `#report/<jobId>` is a scan's
- *  report page; anything else is the home page (checks). */
-export type View = 'checks' | 'kb' | 'sites' | 'report';
+ *  report page, `#laws` and `#laws/<code>` are the legal guide (optionally at
+ *  one place); anything else is the home page (checks). */
+export type View = 'checks' | 'kb' | 'sites' | 'report' | 'laws';
 
 export interface Route {
   view: View;
@@ -11,6 +12,8 @@ export interface Route {
   domain?: string;
   /** Set on `#report/<jobId>`. */
   jobId?: string;
+  /** Set on `#laws/<code>`: the place the legal guide opens at. */
+  place?: string;
 }
 
 export function parseHash(hash: string): Route {
@@ -18,6 +21,11 @@ export function parseHash(hash: string): Route {
   if (hash.startsWith('#report/')) {
     const jobId = hash.slice('#report/'.length).replace(/[^A-Za-z0-9_-]/g, '');
     return jobId ? { view: 'report', jobId } : { view: 'checks' };
+  }
+  if (hash === '#laws') return { view: 'laws' };
+  if (hash.startsWith('#laws/')) {
+    const place = hash.slice('#laws/'.length).toLowerCase().replace(/[^a-z-]/g, '');
+    return place ? { view: 'laws', place } : { view: 'laws' };
   }
   if (hash === '#sites') return { view: 'sites' };
   if (hash.startsWith('#sites/')) {

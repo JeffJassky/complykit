@@ -118,6 +118,26 @@ export function gateCategory(categories: readonly string[]): { id: string; note?
 // not-established      — no visit could be compared
 export type BehaviorState = 'mismatch' | 'no-mismatch-observed' | 'only-may-run' | 'not-established';
 
+// The change list lists fixes for observed violations. Behavior is the ground
+// truth (client-consent-design.md §9.1) in both directions: a mismatch puts a
+// tool first whatever its implementation says, and a tool the grid compared in
+// every visit it could — off where the rules expect it off, on only where it may
+// run, no visit unchecked — has nothing to fix, whatever its implementation says
+// (`heldEverywhere`). Its verdict and loader stay in the row as the explanation
+// of how it loads; its implementation changes (rewrite the tag, gate the GTM
+// tag, set the Google default, call the vendor API, find what loads it) are not
+// listed, it is not counted as outside reach, and the to-do list gets nothing
+// for it. Only a markup leak keeps its change: a <noscript> pixel fires for
+// visitors without JavaScript, whom the scan cannot be. Fail closed everywhere
+// else: a tool compared in some visits but not others, or only where it may run
+// anyway, keeps its changes — nothing was proven about the visits it missed.
+// One exception to "only where it may run": a tag manager (gtag.js, GTM) is
+// never expected off by the grid — it is judged by what it loads. Its changes
+// (hold the snippet, set the Google default, call the API) exist only as the path
+// to holding its destinations; when every tool that needs consent was held
+// everywhere, and every one of its own visits was compared, it has nothing to
+// fix either.
+
 export interface CompatibilityRow {
   partyId: string;
   label: string;
@@ -131,6 +151,8 @@ export interface CompatibilityRow {
   loader: string;
   behavior: BehaviorState;
   behaviorNote: string;
+  /** The grid compared it in every visit it could and saw it off wherever the rules expect it off, nothing unchecked: no change listed beyond a markup leak, not counted. */
+  heldEverywhere: boolean;
   /** Counted in the "outside your consent tool's reach" line. */
   outsideReach: boolean;
   reachReason?: string;
@@ -225,6 +247,14 @@ export interface CompatibilityContext {
   runs?: number;
   /** The report's behavior matrix: its tool rows decide the behavior column (and win over the record's flags). */
   matrix?: BehaviorMatrix;
+  /**
+   * The model's grid (location → scenario → status). The matrix has a column for every
+   * visitor action that ran somewhere, at every location — so a location where that action
+   * was never run gets an "untestable" column. The owner's grid does not show those (nothing
+   * was planned there); `heldEverywhere` must not count them as unchecked visits either.
+   * Without the grid every column counts (fail closed).
+   */
+  grid?: Record<string, Partial<Record<string, { status: string } | undefined>> | undefined>;
 }
 
 const attrEsc = (v: string): string => v.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
@@ -347,29 +377,53 @@ function summarizeChanges(changes: CompatibilityChange[], provenHeld: boolean): 
 
 const MISMATCH_RE = /^([^:]+:[^:#]+)(?:#\d+)?: /;
 
-function behaviorOf(c: PartyCompatibility, labelOf: (id: string) => string, matrix: BehaviorMatrix | undefined): { state: BehaviorState; note: string } {
+interface BehaviorView {
+  state: BehaviorState;
+  note: string;
+  heldEverywhere: boolean;
+  /** Planned visits the grid could not compare (0 when every one was). */
+  unchecked: number;
+}
+
+function behaviorOf(c: PartyCompatibility, labelOf: (id: string) => string, matrix: BehaviorMatrix | undefined, planned: (location: string, scenario: string) => boolean): BehaviorView {
   const row = matrix?.rows.find((r) => r.kind === 'tool' && r.partyId === c.partyId);
-  const cells = row ? row.cells.map((cell, i) => ({ cell, col: matrix!.columns[i] })) : [];
+  // Columns for a visitor action never run at that location are not visits (the owner grid has none).
+  const cells = row ? row.cells.map((cell, i) => ({ cell, col: matrix!.columns[i] })).filter((x) => planned(x.col.location, x.col.scenario)) : [];
   const name = (x: (typeof cells)[number]): string => `${labelOf(x.col.location)} · ${x.col.label}`;
   const mism = cells.filter((x) => x.cell.status === 'mismatch');
-  if (mism.length) return { state: 'mismatch', note: `Ran where it should be off (${mism.map(name).join(', ')})` };
+  // Every visit the grid could compare was compared: a cell that is neither compared (match /
+  // allowed) nor "nothing to test" (skipped as not applicable) is an unchecked visit — a
+  // review, an unverified location, a missing observation, a choice that failed, a blocked
+  // visit — and nothing is proven about it. Without a matrix row nothing was compared at all.
+  const unchecked = row ? cells.filter((x) => x.cell.skip !== 'not-applicable' && x.cell.status !== 'match' && x.cell.status !== 'allowed').length : Infinity;
+  if (mism.length) return { state: 'mismatch', note: `Ran where it should be off (${mism.map(name).join(', ')})`, heldEverywhere: false, unchecked };
   if (c.behaviorMismatch) {
     const where = [...new Set(c.reasons.filter((r) => r.source === 'behavior').map((r) => MISMATCH_RE.exec(r.note)?.[1]).filter((x): x is string => !!x))].map((x) => {
       const [loc, sc] = x.split(':');
       return `${labelOf(loc)} · ${sc}`;
     });
-    return { state: 'mismatch', note: `Ran where it should be off${where.length ? ` (${where.join(', ')})` : ''}` };
+    return { state: 'mismatch', note: `Ran where it should be off${where.length ? ` (${where.join(', ')})` : ''}`, heldEverywhere: false, unchecked };
   }
   if (row) {
     // A 'match' cell either expected it OFF (and saw nothing) or expected "may run" (anything goes).
     const off = cells.filter((x) => x.cell.status === 'match' && /^off\b/i.test(x.cell.expected));
     const mayRun = cells.filter((x) => (x.cell.status === 'match' || x.cell.status === 'allowed') && !/^off\b/i.test(x.cell.expected));
-    if (off.length) return { state: 'no-mismatch-observed', note: `Nothing observed where it should be off, in ${off.length} compared visit${off.length === 1 ? '' : 's'} (${off.map(name).join(', ')}) — captured activity only, not a guarantee` };
-    if (mayRun.length) return { state: 'only-may-run', note: `Compared only where it may run anyway (${mayRun.map(name).join(', ')}); never tested where it should be off` };
-    return { state: 'not-established', note: 'Not established: no tested visit could be compared' };
+    if (off.length) {
+      const held = unchecked === 0;
+      return {
+        state: 'no-mismatch-observed',
+        note: held
+          ? `Nothing observed where it should be off, in every compared visit (${off.length}: ${off.map(name).join(', ')}); no visit unchecked — captured activity only, not a guarantee`
+          : `Nothing observed where it should be off, in ${off.length} compared visit${off.length === 1 ? '' : 's'} (${off.map(name).join(', ')}) — captured activity only, not a guarantee; ${unchecked} visit${unchecked === 1 ? '' : 's'} not compared`,
+        heldEverywhere: held,
+        unchecked,
+      };
+    }
+    if (mayRun.length) return { state: 'only-may-run', note: `Compared only where it may run anyway (${mayRun.map(name).join(', ')}); never tested where it should be off`, heldEverywhere: false, unchecked };
+    return { state: 'not-established', note: 'Not established: no tested visit could be compared', heldEverywhere: false, unchecked };
   }
-  if (c.behaviorChecked) return { state: 'only-may-run', note: 'Some visits were compared, but whether any expected it off is not recorded here — see the behavior grid' };
-  return { state: 'not-established', note: 'Not established: no tested visit could be compared' };
+  if (c.behaviorChecked) return { state: 'only-may-run', note: 'Some visits were compared, but whether any expected it off is not recorded here — see the behavior grid', heldEverywhere: false, unchecked };
+  return { state: 'not-established', note: 'Not established: no tested visit could be compared', heldEverywhere: false, unchecked };
 }
 
 function reachOf(c: PartyCompatibility, purpose: PurposeNeed, provenHeld: boolean): string | undefined {
@@ -447,18 +501,54 @@ export function buildCompatibilityReport(section: CompatibilitySection, ctx: Com
   const byId = new Map(ctx.inventory.map((p) => [p.partyId, p]));
   const labelOf = (id: string): string => ctx.locations.find((l) => l.id === id)?.label ?? id;
   const findings = ctx.markup?.findings ?? [];
+  // Same rule as the owner grid's plan: a visitor action is a visit at a location when its grid
+  // entry exists and was not 'not-run'. No grid: every column counts.
+  const planned = (location: string, scenario: string): boolean => {
+    if (!ctx.grid) return true;
+    const g = ctx.grid[location]?.[scenario];
+    return g !== undefined && g.status !== 'not-run';
+  };
 
   const notRequired = section.parties.filter((c) => c.purpose === 'not-required').map((c) => ({ partyId: c.partyId, label: c.label, categories: byId.get(c.partyId)?.categories ?? [], verdict: c.verdict }));
-  const rows: CompatibilityRow[] = section.parties.filter((c) => c.purpose !== 'not-required').map((c) => {
+  const judged = section.parties.filter((c) => c.purpose !== 'not-required');
+  const categoriesOf = (c: PartyCompatibility): string[] => byId.get(c.partyId)?.categories ?? [];
+  const behaviors = new Map(judged.map((c) => [c.partyId, behaviorOf(c, labelOf, ctx.matrix, planned)]));
+  // A tag manager is judged by what it loads (the grid never expects it off): nothing to fix
+  // when every tool that needs a consent decision — or is not classified yet — was held
+  // everywhere, and its own visits were all compared.
+  const isTagManager = (c: PartyCompatibility): boolean => categoriesOf(c).includes('tag-manager');
+  const loadedHeld = judged.filter((c) => !isTagManager(c) && purposeNeed(categoriesOf(c), c.purpose) !== 'context').every((c) => behaviors.get(c.partyId)!.heldEverywhere);
+  const heldOf = (c: PartyCompatibility): { held: boolean; why: string } => {
+    const b = behaviors.get(c.partyId)!;
+    if (b.heldEverywhere) return { held: true, why: b.note };
+    if (isTagManager(c) && b.state === 'only-may-run' && b.unchecked === 0 && loadedHeld) {
+      return { held: true, why: 'A tag manager is judged by what it loads: every tool that needs consent was off where the rules expect it off, in every visit the grid compared, and every visit of its own was compared' };
+    }
+    return { held: false, why: '' };
+  };
+  const rows: CompatibilityRow[] = judged.map((c) => {
     const p = byId.get(c.partyId);
     const categories = p?.categories ?? [];
     const purpose = purposeNeed(categories, c.purpose);
-    const b = behaviorOf(c, labelOf, ctx.matrix);
+    const b = { ...behaviors.get(c.partyId)!, ...heldOf(c) };
+    // Held everywhere the grid compared: nothing to fix. The implementation changes go; a markup
+    // leak stays (it fires for visitors without JavaScript, whom the scan cannot be).
+    const changes = b.held ? c.changes.filter((x) => x.kind === 'remove-leak') : c.changes;
+    const nothingToFix = b.held && !changes.length;
+    const reasons = b.held
+      ? [{ source: 'behavior' as const, note: `${b.why}: ${changes.length ? 'only its markup leak is listed — the scan runs with JavaScript on, so the leak is not what it compared' : 'no change listed'}; the notes below describe how it loads, not something to fix` }, ...c.reasons]
+      : c.reasons;
     const provenHeld = c.verdict === 'tag-manager' && b.state !== 'mismatch' && !c.changes.some((x) => x.kind === 'gate-gtm-tag' || x.kind === 'set-consent-default' || x.kind === 'configure-tag-manager');
-    const reachReason = c.purpose === 'not-required' ? undefined : reachOf(c, purpose, provenHeld);
+    const reachReason = c.purpose === 'not-required' || nothingToFix ? undefined : reachOf(c, purpose, provenHeld);
     // Caveats B1 attaches to a platform verdict (server-side forwarding, a plugin that may not read consent).
     const caveats = c.reasons.filter((r) => r.source === 'platform' && /server-side|may not read consent/.test(r.note)).map((r) => r.note);
-    const summary = !c.changes.length && c.purpose === 'not-required' ? 'No change: its purpose needs no consent' : summarizeChanges(c.changes, provenHeld);
+    const summary = nothingToFix
+      ? isTagManager(c) && !b.heldEverywhere
+        ? 'Nothing to change: every tool it could load was off where the rules expect it off, in every visit the grid compared'
+        : 'Nothing to change: off where the rules expect it off, in every visit the grid compared'
+      : !changes.length && c.purpose === 'not-required'
+        ? 'No change: its purpose needs no consent'
+        : summarizeChanges(changes, provenHeld);
     return {
       partyId: c.partyId,
       label: c.label,
@@ -476,13 +566,14 @@ export function buildCompatibilityReport(section: CompatibilitySection, ctx: Com
       loader: loaderOf(p, c),
       behavior: b.state,
       behaviorNote: b.note,
+      heldEverywhere: b.held,
       outsideReach: reachReason !== undefined,
       ...(reachReason ? { reachReason } : {}),
       provenHeld,
       ...(caveats.length ? { caveats } : {}),
-      whatToChange: purpose === 'unclassified' && c.changes.length ? `Waiting on your decision: what is ${c.label}? Then, if it tracks visitors: ${summary[0].toLowerCase()}${summary.slice(1)}` : summary,
-      changes: c.changes,
-      reasons: c.reasons,
+      whatToChange: purpose === 'unclassified' && changes.length ? `Waiting on your decision: what is ${c.label}? Then, if it tracks visitors: ${summary[0].toLowerCase()}${summary.slice(1)}` : summary,
+      changes,
+      reasons,
     };
   });
   const VERDICT_ORDER: Record<CompatibilityVerdict, number> = { uncontrollable: 0, unknown: 1, 'tag-manager': 2, platform: 3, gateable: 4 };
@@ -645,9 +736,11 @@ export function buildCompatibilityReport(section: CompatibilitySection, ctx: Com
       }
     }
   }
-  // Every uncontrollable tool needs the owner's written decision, whatever else it needs.
+  // Every uncontrollable tool needs the owner's written decision, whatever else it needs —
+  // unless it was held everywhere the grid compared and no leak remains (nothing to decide).
   for (const row of rows) {
     if (row.verdict !== 'uncontrollable' || row.purpose === 'context' || row.changes.some((c) => c.kind === 'accepted-exposure')) continue;
+    if (row.heldEverywhere && !row.changes.length) continue;
     add('exposures', row.partyId, row, { kind: 'accepted-exposure', partyId: row.partyId }, () => ({ kind: 'accepted-exposure', tools: [row.label], partyIds: [row.partyId], note: `${row.label}: no consent tool controls it (${row.reachReason}). Make the changes above — or, where they are not made, remove the integration or record in writing that the exposure is accepted.` }));
   }
 

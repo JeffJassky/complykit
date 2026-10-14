@@ -280,15 +280,15 @@ function shape(ev: TrackingEvaluation, it: ChangeItem, pages: string[], config: 
       return {
         title: `Repoint the DNS alias ${it.host ?? ''}`.trim(),
         summary: `A subdomain of your site points at ${tools}${it.target ? ` (${it.target})` : ''}, so its cookies count as your own and no consent tool can remove them.`,
-        steps: ['Remove or repoint the DNS record, or stop using the integration behind it.', 'Or write down that you accept this (in the task note).', 'Mark it done; a rescan shows whether the cookies are gone.'],
+        steps: ['Remove or repoint the DNS record, or stop using the integration behind it.', 'Mark it done; a rescan shows whether the cookies are gone.'],
         verify: manual('DNS records and the cookies set through them cannot be read from one page fetch; a rescan decides it'),
       };
     case 'accepted-exposure':
       return {
-        title: `Decide what to do about ${tools}`,
-        summary: 'Nothing on the page can hold it back. Remove it, or write down that you accept the risk — a decision for the owner, not a developer task.',
-        steps: ['Make the other changes listed for it, where there are any.', 'If they are not made: remove the integration, or write in the task note who decided to keep it, and why.', 'Mark the task done.'],
-        verify: manual('an owner’s decision; nothing on the page can show it'),
+        title: `Remove ${tools}`,
+        summary: 'Nothing on the page can hold it back until the visitor accepts, so it has to go — or be replaced by an integration that can wait for consent.',
+        steps: ['Make the other changes listed for it, where there are any.', 'If they do not hold it back: remove the integration, or replace it with one your consent tool can block.', 'Mark the task done; a rescan shows whether it is gone.'],
+        verify: manual('the integration loads from outside the page; a rescan decides it'),
       };
     case 'needs-a-look':
       return {
@@ -544,9 +544,17 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
   const draft = (t: Omit<RemediationTask, 'status' | 'lastVerify' | 'order'>): Draft => ({ ...t, aliases: [], alsoFixes: [] });
 
   const slots: Slot[] = [];
-  const { order: _o, ...install } = installTask(config, scriptSrc, page);
-  slots.push({ task: draft(install), seq: 0 });
-  for (const t of removeExistingToolTasks(evaluation, generated.notes ?? [], page)) slots.push({ task: draft(t), seq: slots.length });
+  // The to-do list is the fixes for what the scan observed. With no change item at all — every
+  // tool held where the rules expect it off, in every visit the grid compared — there is nothing
+  // to install the complykit tool for, and nothing to remove the site's own banner for: the
+  // decisions (classify) are the whole list. The generated config and snippet still exist for
+  // an owner who wants them; they are not a task.
+  const hasChanges = report.groups.some((g) => g.items.length > 0) || report.otherChanges.length > 0;
+  if (hasChanges) {
+    const { order: _o, ...install } = installTask(config, scriptSrc, page);
+    slots.push({ task: draft(install), seq: 0 });
+    for (const t of removeExistingToolTasks(evaluation, generated.notes ?? [], page)) slots.push({ task: draft(t), seq: slots.length });
+  }
 
   const seen = new Set<string>(slots.map((s) => s.task.id));
   const add = (it: ChangeItem, group: string, optional: boolean): void => {
@@ -585,7 +593,7 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
   for (const it of report.otherChanges) add(it, 'other', true);
 
   // --- fold --------------------------------------------------------------------------
-  const installSlot = slots[0];
+  const installSlot = slots.find((s) => s.task.kind === 'install');
   const confirm = new Map<string, { from: Draft; ids: string[] }>();
   for (const s of slots) {
     const t = s.task;
@@ -599,7 +607,7 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
       s.folded = true;
       if (!fixers.some((f) => checksTool(f.task, party)) && t.verify.check === 'spot-check') confirm.set(party, { from: t, ids: [...(confirm.get(party)?.ids ?? []), t.id] });
     } else if (t.kind === 'call-consent-api') {
-      if (!config.vendors.some((v) => v.id === party && v.adapter)) continue;
+      if (!installSlot || !config.vendors.some((v) => v.id === party && v.adapter)) continue;
       addFix(installSlot.task, t.id, `Telling ${tools} the visitor’s choice${s.api ? ` (${s.api})` : ''} — the tool makes this call for you.`);
       s.folded = true;
     } else if (t.kind === 'accepted-exposure') {

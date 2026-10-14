@@ -626,6 +626,8 @@ export type TimelineEvent =
       landedUrl?: string;
       /** The scan used the opt-out control (never a form asking for personal data). */
       performed?: boolean;
+      /** When that control was clicked (timeline ms): the opt-out exists from here. */
+      performedAt?: number;
       pageIndex: number;
     }
   | { type: 'note'; t: number; text: string; pageIndex: number }
@@ -943,10 +945,13 @@ export interface ConsentToolProof {
   notTested: string[];
   scope?: { pages?: number; locations: number; runs: number };
 }
+/** Why a visit was skipped or its choice not completed; the report sorts it into not applicable, couldn't test, or blocked by the site. */
+export type SkipCause = 'no-banner' | 'tool-broken' | 'no-close' | 'settings-dead' | 'no-category-choice' | 'no-withdraw-entry' | 'no-opt-out-link' | 'opt-out-asks-personal-data' | 'choice-failed' | 'timeout' | 'crashed' | 'bot-blocked';
 export interface ScenarioSummary {
   scenario: ScenarioId;
   status: 'tested' | 'not-tested' | 'not-applicable';
   reason?: string;
+  cause?: SkipCause;
   durationMs?: number;
   banner?: { found: boolean; cmp?: string; shownAtMs?: number };
   choice?: { kind: string; ok: boolean; method: string };
@@ -971,12 +976,12 @@ export interface NotTestedItem {
   reason: string;
 }
 export interface BehaviorMatrixCell {
-  columnId:string;status:'match'|'mismatch'|'review'|'unknown'|'not-tested'|'allowed';expected:string;observed:string;reason:string;evidencePointers:string[];runs?:{total:number;active:number};comparisonFacts?:{scenario:string;unavailable?:{status:'unknown'|'not-tested';reason:string};hasActivity:boolean;limitedOnly:boolean;captureGap:boolean};
+  columnId:string;status:'match'|'mismatch'|'review'|'unknown'|'not-tested'|'allowed';/** Set when the column was skipped: nothing to test, the scan could not, or the site blocked the visitor. */skip?:'not-applicable'|'untestable'|'blocked';expected:string;observed:string;reason:string;evidencePointers:string[];runs?:{total:number;active:number};comparisonFacts?:{scenario:string;unavailable?:{status:'unknown'|'not-tested';reason:string};hasActivity:boolean;limitedOnly:boolean;captureGap:boolean};
 }
 export interface BehaviorMatrix {
   version:1;comparison:string;
-  /** `unavailable`: the column's visitor action did not run or its choice did not succeed — one gap for the whole column; its cells are 'not-tested'. */
-  columns:Array<{id:string;location:string;scenario:ScenarioId;label:string;locationLabel:string;unavailable?:{reason:string}}>;
+  /** `unavailable`: the column's visitor action did not run or its choice did not succeed — one gap for the whole column; its cells are 'not-tested'. `kind`: nothing to test (not-applicable), the scan could not (untestable), or the site blocked the visitor (blocked). */
+  columns:Array<{id:string;location:string;scenario:ScenarioId;label:string;locationLabel:string;unavailable?:{reason:string;kind:'not-applicable'|'untestable'|'blocked'}}>;
   rows:Array<{id:string;kind:'tool'|'storage';label:string;tool:string;partyId:string;storageKind?:string;categories:string[];purposeCategories?:string[];categorySource:string;link:string;cells:BehaviorMatrixCell[]}>;
 }
 export interface BehaviorObservation {
@@ -984,7 +989,7 @@ export interface BehaviorObservation {
   /** Per phase: pages the journey was on (pageIndex) and the steps it took ('navigate' | 'scroll' | 'search'). */
   journey?: Record<string, { pageIndexes: number[]; steps: string[] }>;
   /** Phase keys include 'withdraw-grace' (requests between the withdraw click and the reload not counted as post-withdraw activity). loadRequestsByPhase = requests that carried no data. */
-  parties: Array<{partyId:string;dataRequests:number;requestPhases:string[];dataRequestPhases:Record<string,number>;limitedRequestsByPhase:Record<string,number>;loadRequestsByPhase?:Record<string,number>;stores:Array<{name:string;kind:string;writePhase?:string;writePhases:string[];presentAtEnd:boolean;attribution:'observed'|'known-name'}>}>;
+  parties: Array<{partyId:string;dataRequests:number;requestPhases:string[];dataRequestPhases:Record<string,number>;limitedRequestsByPhase:Record<string,number>;loadRequestsByPhase?:Record<string,number>;stores:Array<{name:string;kind:string;writePhase?:string;writePhases:string[];presentAtEnd:boolean;thirdParty?:boolean;attribution:'observed'|'known-name'}>}>;
 }
 // Tag-manager containers (A2). A capture is the collector's fetch result; a
 // TagContainer is the parsed record. An unreadable container has no tags and a
@@ -1440,6 +1445,8 @@ export interface GridCell {
   choice?: string;
   /** Why the visitor choice this scenario depends on was not completed, in the owner's words (absent = completed or no choice). */
   choiceGap?: string;
+  /** Why the visit was skipped or its choice not completed, as a code. */
+  cause?: SkipCause;
   /** Visits that completed (1 = a single run; 2 = plus the throttled pass). Absent = not recorded. */
   runs?: number;
 }
@@ -1535,6 +1542,8 @@ export interface CompatibilityRow {
   /** From the report matrix: only-may-run = compared only where it may run anyway (never presented as verified). */
   behavior: 'mismatch' | 'no-mismatch-observed' | 'only-may-run' | 'not-established';
   behaviorNote: string;
+  /** The grid compared it in every visit it could and saw it off wherever the rules expect it off, nothing unchecked: no change listed beyond a markup leak, not counted as outside reach. */
+  heldEverywhere: boolean;
   /** Counted in the "outside your consent tool's reach" line. */
   outsideReach: boolean;
   reachReason?: string;
@@ -1608,6 +1617,41 @@ export function buildCompatibilityReport(
 export function renderChangeListMarkdown(m: { site: { host: string; url: string }; runId: string; startedAt: string; compatibility?: CompatibilityReport }): string;
 /** Re-decide compatibility against the report's behavior matrix (after the site workspace is applied). `extraBehavior`: cells from another expected side (the deployed complykit config's, D10). */
 export function reconcileCompatibility(evaluation: TrackingEvaluation, opts?: { kb?: KnowledgeBase; extraBehavior?: BehaviorCell[] }): CompatibilitySection;
+
+// --- multi-region scans: collect on workers, merge on the primary -----------
+export const COLLECTION_FILE: 'collection.json';
+export const COLLECTION_KIND: 'complykit-consent-collection';
+export const COLLECTION_SCHEMA_VERSION: 1;
+/** Structurally the collect-browser `ConsentEvaluationCollection` (declared here so the root types do not import the collector's). */
+export interface MergedConsentCollection {
+  artifacts: Artifact[];
+  timelines: Timeline[];
+  locations: Array<{ spec: LocationSpec; verification: LocationVerification; scenarios: ScenarioSummary[] }>;
+  notTested: NotTestedItem[];
+  site: { url: string; host: string; registrableDomain: string };
+  autoconsentVersion?: string;
+  containers: ContainerCapture[];
+  startedAt: string;
+  finishedAt: string;
+}
+/** What a collect-only run leaves in its run dir. Contains RAW timelines: transient, never copied into a merged run. */
+export interface ConsentCollectionHandoff {
+  kind: typeof COLLECTION_KIND;
+  schemaVersion: typeof COLLECTION_SCHEMA_VERSION;
+  packageVersion: string;
+  property: string;
+  targetUrl: string;
+  runId: string;
+  collection: Omit<MergedConsentCollection, 'artifacts'>;
+}
+/** Writes <runDir>/collection.json; returns its path. */
+export function writeCollectionHandoff(runDir: string, handoff: ConsentCollectionHandoff): string;
+/** Throws on a missing file, a foreign file, or another schema version. */
+export function readCollectionHandoff(runDir: string): ConsentCollectionHandoff;
+/** Pure. Throws on version skew, different sites or properties, a location collected twice, or nothing to merge. */
+export function mergeCollections(handoffs: readonly ConsentCollectionHandoff[]): MergedConsentCollection;
+/** Copies each source's evidence/ into the destination (first source wins). Sources are untouched. */
+export function mergeEvidence(sourceRunDirs: readonly string[], destRunDir: string): { copied: number; skipped: number };
 
 // --- The proof step (D10): complykit's own tool, deployed config vs reality ---------
 /** Pure, over the evaluation record. See ConsentToolProof for the decision rules. */

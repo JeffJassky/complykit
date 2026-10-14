@@ -318,7 +318,7 @@ export function behaviorCellsFrom(ev: Pick<TrackingEvaluation, 'locations' | 'in
           }
           const requests = facts ? phases.reduce((n, ph) => n + (facts.dataRequestPhases[ph] ?? 0), 0) : 0;
           const limited = facts ? phases.reduce((n, ph) => n + (facts.limitedRequestsByPhase[ph] ?? 0), 0) : 0;
-          const activeStores = facts ? facts.stores.filter((s) => s.presentAtEnd || s.writePhases.some((ph) => phases.includes(ph as Phase))) : [];
+          const activeStores = facts ? facts.stores.filter((s) => (s.presentAtEnd && !s.thirdParty) || s.writePhases.some((ph) => phases.includes(ph as Phase))) : [];
           const active = requests > 0 || activeStores.length > 0;
           const limitedOnly = requests > 0 && limited === requests && !activeStores.length;
           const when = phases.map((ph) => PHASE_LABEL[ph]).join(' / ');
@@ -999,12 +999,16 @@ export function compatibilityFor(party: PartyInventoryItem, input: Compatibility
       } else {
         // Granting before a choice is the violation under opt-in rules; where none of
         // the visits ran under them, say so instead of implying it is wrong everywhere.
-        // Strict wherever opt-in rules (or no known rules) applied, and for an opt-out
-        // visit in a state that must honor the signal.
+        // Strict wherever opt-in rules (or no known rules) applied, and for a visit
+        // that carried the Global Privacy Control signal in a state that must honor
+        // it: the signal is present at load, so granting on load ignores it. An
+        // opt-out through the site's link or settings comes AFTER the load: granting
+        // on load is the regime's expected default there, and whether the opt-out
+        // was honored is the behavior grid's question (after-opt-out-link cells).
         const optInSeen = g.where.some((w) => {
           const [loc, sc] = w.split('#')[0].split(':');
           const r = input.regimes?.[loc];
-          return r === 'opt-in' || r === undefined || r === 'unknown' || (r === 'opt-out-signal' && OPTED_OUT.has(sc));
+          return r === 'opt-in' || r === undefined || r === 'unknown' || (r === 'opt-out-signal' && sc === 'gpc');
         });
         changes.push({
           kind: 'call-consent-api',

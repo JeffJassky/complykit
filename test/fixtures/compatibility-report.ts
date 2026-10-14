@@ -1,10 +1,15 @@
 import { TrackingEvaluation, type PartyInventoryItem } from '../../src/record/index.js';
 
 // A generic consent evaluation for the B2 compatibility section and change
-// list (no client material): one verified EU location, reject + accept, and
-// one tool per verdict — a leaking pixel observed running after rejection, a
-// rewritable analytics tag that stayed off, a GTM-loaded pixel, a platform
-// tool, an unidentified loader, and a CDN whose purpose needs no consent.
+// list (no client material): one verified EU location, do-nothing + reject +
+// accept, and one tool per verdict — a leaking pixel observed running after
+// rejection, a rewritable analytics tag that fires before any choice but stays
+// off after rejection, a GTM-loaded pixel and a platform tool that both fire
+// before any choice, an unidentified loader, and a CDN whose purpose needs no
+// consent. Every tool with a change has a behavior mismatch somewhere: the
+// change list lists fixes for observed violations only (a tool held where the
+// rules expect it off, in every compared visit, gets none). `held` names tools
+// to keep quiet in every visit — so held everywhere the grid compared.
 
 export const PAGE = 'https://www.example-shop.test/';
 const GTAG = 'https://www.googletagmanager.com/gtag/js?id=G-XXXX01';
@@ -47,6 +52,7 @@ const loc = {
   spec: { id: 'de', label: 'Germany', country: 'DE', proxied: false },
   verification: { verdict: 'verified', expected: { country: 'DE' }, observed: { country: 'DE' }, sources: [], jurisdictions: ['eu'], checkedAt: '2026-10-06T10:00:00Z' },
   scenarios: [
+    { scenario: 'do-nothing', status: 'tested', evidence: { screenshots: [] } },
     { scenario: 'reject', status: 'tested', choice: { kind: 'reject', ok: true, method: 'selector' }, evidence: { screenshots: [] } },
     { scenario: 'accept', status: 'tested', choice: { kind: 'accept', ok: true, method: 'selector' }, evidence: { screenshots: [] } },
   ],
@@ -55,7 +61,9 @@ const loc = {
 const facts = (partyId: string, phase: string, requests: number) => ({ partyId, dataRequests: requests, requestPhases: [phase], dataRequestPhases: { [phase]: requests }, limitedRequestsByPhase: {}, stores: [] });
 const known = inventory.map((p) => p.partyId);
 
-export function compatibilityEvaluation(): TrackingEvaluation {
+export function compatibilityEvaluation(opts: { held?: string[] } = {}): TrackingEvaluation {
+  const held = new Set(opts.held ?? []);
+  const quiet = (xs: ReturnType<typeof facts>[]) => xs.filter((f) => !held.has(f.partyId));
   return TrackingEvaluation.parse({
     runId: 'b2-fixture',
     property: 'Example shop',
@@ -68,9 +76,13 @@ export function compatibilityEvaluation(): TrackingEvaluation {
     inventory,
     platform: { name: 'shopify', signals: ['window.Shopify'] },
     behaviorObservations: [
+      // Before any choice (banner showing): analytics, the GTM pixel and the platform tool all send — and so
+      // does the CDN, which is fine for a CDN (its purpose needs no consent) and a violation once a team
+      // says it is used for analytics (test/report-rerender.test.ts).
+      { location: 'de', scenario: 'do-nothing', run: 1, pages: 3, durationMs: 9000, knownPartyIds: known, parties: quiet([facts('google.analytics', 'before-choice', 2), facts('tiktok.pixel', 'before-choice', 1), facts('google.ads.ccm', 'before-choice', 1), facts('cloudflare', 'before-choice', 1)]) },
       // After rejection: the pixel still sends; analytics stays quiet.
-      { location: 'de', scenario: 'reject', run: 1, pages: 3, durationMs: 9000, knownPartyIds: known, parties: [facts('meta.pixel', 'after-reject', 2)] },
-      { location: 'de', scenario: 'accept', run: 1, pages: 3, durationMs: 9000, knownPartyIds: known, parties: [facts('meta.pixel', 'after-accept', 2), facts('google.analytics', 'after-accept', 3)] },
+      { location: 'de', scenario: 'reject', run: 1, pages: 3, durationMs: 9000, knownPartyIds: known, parties: quiet([facts('meta.pixel', 'after-reject', 2)]) },
+      { location: 'de', scenario: 'accept', run: 1, pages: 3, durationMs: 9000, knownPartyIds: known, parties: quiet([facts('meta.pixel', 'after-accept', 2), facts('google.analytics', 'after-accept', 3)]) },
     ],
     markup: {
       pages: [{ url: PAGE, status: 'inspected', locations: ['de'], elements: 4 }],

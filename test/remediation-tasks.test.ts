@@ -159,6 +159,34 @@ describe('buildRemediationTasks', () => {
     expect(spec.check === 'install' && spec.scriptSrc).toBe(r.scriptSrc);
   });
 
+  it('a tool held everywhere the grid compared has no task: the list is the fixes for what was observed', () => {
+    const t = gen(compatibilityEvaluation({ held: ['google.analytics'] })).tasks;
+    expect(t.some((x) => x.partyIds.includes('google.analytics'))).toBe(false);
+    expect(t.map((x) => x.kind)).toEqual(['classify', 'install', 'rewrite-tag', 'remove-leak', 'gate-gtm-tag', 'use-platform-api', 'set-consent-default', 'needs-a-look']);
+    // The install task no longer carries its consent-API call either.
+    expect(install(t).alsoFixes?.join(' ') ?? '').not.toMatch(/Google Analytics/);
+  });
+
+  it('nothing to fix anywhere: no install, no "remove the old banner" — the decisions are the whole list', () => {
+    const ev = compatibilityEvaluation({ held: ['meta.pixel', 'google.analytics', 'tiktok.pixel', 'google.ads.ccm', 'unknown:tracker.test'] });
+    ev.inventory.push({ ...ev.inventory[1], partyId: 'unknown:cmp.test', label: 'cmp.test', domain: 'cmp.test', hosts: ['cmp.test'], recognized: true, categories: ['consent'], implementation: { class: 'direct-script', evidence: [], alsoSeen: [] } });
+    // Meta's <noscript> pixel is a leak the scan cannot observe: it stays, so this site still has one fix.
+    const withLeak = gen(ev).tasks;
+    expect(withLeak.map((x) => x.kind)).toEqual(['classify', 'install', 'remove-existing-tool', 'remove-leak', 'needs-a-look']);
+    // Without the leak, and with the unclassified tool decided: only the decision remains, done.
+    ev.markup!.findings = ev.markup!.findings.filter((f) => f.verdict !== 'leak');
+    ev.inventory.find((p) => p.partyId === 'meta.pixel')!.implementation = { class: 'direct-script', evidence: [{ class: 'direct-script', kind: 'source', observed: true, note: 'a <script> in the page', page: PAGE, line: 38 }], alsoSeen: [] };
+    const p = ev.inventory.find((x) => x.partyId === 'unknown:tracker.test')!;
+    const ws: WorkspaceSnapshot = { domain: 'example-shop.test', entries: { [classificationKey({ kind: 'tool', partyId: p.partyId, domain: p.domain, recognized: p.recognized })]: { value: { category: 'analytics', categoryChosen: true }, at: NOW } }, runs: [] };
+    const r = gen(ev, ws);
+    expect(r.tasks.map((x) => [x.kind, x.status])).toEqual([['classify', 'verified']]);
+    expect(r.compatibility.groups).toEqual([]);
+    expect(r.compatibility.reach.line).toBe("0 tools are loaded outside your consent tool's reach.");
+    expect(remediationTotals(r.tasks)).toMatchObject({ total: 1, verified: 1, todo: 0, required: 1 });
+    // The config and snippet still exist for an owner who wants the tool; they are just not a task.
+    expect(r.snippet).toContain('complykit-consent.js');
+  });
+
   it('context-purpose tools come last, marked optional', () => {
     const ev = compatibilityEvaluation();
     ev.inventory.push({

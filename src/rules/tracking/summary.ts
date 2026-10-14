@@ -12,7 +12,7 @@ import type {
   PlatformSignals,
   ContainerCapture,
 } from '../../record/index.js';
-import { DEFAULT_KB, classifyPlatform, entryStatus, type KnowledgeBase, type KnowledgeEntry } from '../../registry/index.js';
+import { DEFAULT_KB, classifyPlatform, entryStatus, registrableDomain, type KnowledgeBase, type KnowledgeEntry } from '../../registry/index.js';
 import { analyzeTimeline, phaseAt, REJECT_GRACE_PHASE, WITHDRAW_GRACE_MS, WITHDRAW_GRACE_PHASE, type PartyRequest, type TimelineAnalysis } from './analyze.js';
 import { buildMarkupSection } from './markup.js';
 import { parseContainers } from './gtm.js';
@@ -352,6 +352,20 @@ export function summarizeBehavior(timelines: Timeline[], kb: KnowledgeBase = DEF
       const activeBefore = reject !== undefined && p.requests.some((r) => r.dataBearing && r.t < reject.t);
       return (r: PartyRequest): string => (inChoiceGrace(r, withdraw) ? WITHDRAW_GRACE_PHASE : activeBefore && inChoiceGrace(r, reject) ? REJECT_GRACE_PHASE : r.phase);
     };
+    // A store's writes get the same grace as its requests: a write at the instant of the
+    // choice (the vendor's handler racing the consent tool's) is the choice taking effect.
+    const writePhasesOf = (p: { requests: PartyRequest[] }, st: TimelineAnalysis['parties'] extends Map<string, infer F> ? F extends { stores: Array<infer S> } ? S : never : never): string[] => {
+      if (!st.writes?.length) return st.writePhases ?? (st.phase ? [st.phase] : []);
+      const key = keyFor(p);
+      return [...new Set(st.writes.map((w) => key({ t: w.t, pageIndex: w.pageIndex, phase: w.phase, origin: 'page' } as PartyRequest)))];
+    };
+    // A cookie that exists only on another company's domain (doubleclick.net's IDE,
+    // facebook.com's fr) is one the site cannot remove: its mere presence is not the site's activity.
+    const siteDomain = tl.snapshot.site.registrableDomain;
+    const onlyThirdParty = (name: string): boolean => {
+      const jar = tl.snapshot.cookies.filter((c) => c.name === name);
+      return jar.length > 0 && jar.every((c) => registrableDomain(c.domain.replace(/^\./, '')) !== siteDomain);
+    };
     const count = (p: { requests: PartyRequest[] }, keep: (r: PartyRequest) => boolean): Record<string, number> => {
       const key = keyFor(p);
       const rs = p.requests;
@@ -379,8 +393,9 @@ export function summarizeBehavior(timelines: Timeline[], kb: KnowledgeBase = DEF
           name: s.name,
           kind: s.kind,
           writePhase: s.phase,
-          writePhases: s.writePhases ?? (s.phase ? [s.phase] : []),
+          writePhases: writePhasesOf(p, s),
           presentAtEnd: s.kind === 'cookie' ? tl.snapshot.cookies.some((c) => c.name === s.name) : tl.snapshot.storage.some((v) => v.key === s.name && v.area === s.kind),
+          ...(s.kind === 'cookie' && onlyThirdParty(s.name) ? { thirdParty: true } : {}),
           attribution: s.setBy === 'known-name' ? ('known-name' as const) : ('observed' as const),
         })),
       })),

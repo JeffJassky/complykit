@@ -1,6 +1,11 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { JobReportResponse, ScanHistoryItem, OwnerCell, OwnerToolActivity, OwnerToolRow, RemediationTask } from '../../shared/api';
+import type { JobReportResponse, ScanHistoryItem, OwnerCell, OwnerColumn, OwnerReport, OwnerToolActivity, OwnerToolRow, RemediationTask } from '../../shared/api';
+import { LAWS, type LawId } from '../../shared/laws';
 import { api } from '../lib/api';
+import { notifyJobsChanged } from '../lib/useJobs';
+import { JobLaws, LawProgress, RescanButton } from './Laws';
+import { lawRows } from '../lib/laws';
+import { tabReport } from '../lib/lawReport';
 import { formatAbsolute, formatClock, jobDuration, STATUS_LABEL as JOB_STATUS_LABEL } from '../lib/format';
 import { openDecisions, STATUS_LABEL as TASK_STATUS_LABEL, TASK_CHANGE_PREFIX } from '../lib/checklist';
 import { copyText, useReviewer } from '../lib/useKb';
@@ -22,8 +27,18 @@ export const PURPOSES: Array<{ id: string; label: string; help: string }> = [
 ];
 const PURPOSE_LABEL = Object.fromEntries(PURPOSES.map((p) => [p.id, p.label]));
 
-const CELL_ICON: Record<OwnerCell['state'], string> = { pending: '', ok: '✓', mismatch: '✕', 'needs-decision': '?', 'not-checked': '–' };
-const CELL_TEXT: Record<OwnerCell['state'], string> = { pending: 'Checking…', ok: 'As expected', mismatch: 'Problem: running when it should be off', 'needs-decision': 'Needs your decision', 'not-checked': 'Not checked' };
+const CELL_ICON: Record<OwnerCell['state'], string> = { pending: '', ok: '✓', mismatch: '✕', 'needs-decision': '?', 'not-checked': '–', 'not-applicable': '∅', blocked: '⊘' };
+const CELL_TEXT: Record<OwnerCell['state'], string> = {
+  pending: 'Checking…',
+  ok: 'As expected',
+  mismatch: 'Problem: running when it should be off',
+  'needs-decision': 'Tell us what this tool is for',
+  'not-checked': 'Couldn’t test — the scan could not complete this',
+  'not-applicable': 'Not applicable — nothing to test',
+  blocked: 'Blocked — a visitor can’t do this either (a problem)',
+};
+/** Column states that carry a note shown once under the matrix, with the icon its cells use. */
+const GAP_ICON: Partial<Record<OwnerColumn['state'], string>> = { 'not-checked': '–', 'not-applicable': '∅', blocked: '⊘' };
 
 export interface ReportActions {
   onCancel?: () => void;
@@ -31,7 +46,7 @@ export interface ReportActions {
   onClassify?: (classKey: string, purpose: string) => void;
   onVerify?: (task: RemediationTask) => void;
   onMarkDone?: (task: RemediationTask) => void;
-  onRescan?: () => void;
+  onRescan?: (extra?: { laws?: LawId[]; authorized?: true }) => void;
   /** Make the list when none was made (or making it failed). */
   onMakeList?: () => void;
   onCopy?: (text: string) => Promise<boolean>;
@@ -57,13 +72,20 @@ export interface ReportUiState {
 
 // --- a. Scan status -------------------------------------------------------------
 
+/** Pages visited: the report's; before a multi-law job's merged report exists, the most any one law has visited (laws mostly visit the same pages, so a sum would overcount). */
+export function pagesVisited(data: JobReportResponse): number {
+  if (data.report) return data.report.scan.pagesVisited;
+  return Math.max(0, ...(data.laws ?? []).map((l) => l.report?.scan.pagesVisited ?? 0));
+}
+
 export function ScanStatus({ data, now, onCancel }: { data: JobReportResponse; now: number; onCancel?: () => void }) {
   const { job, report } = data;
   if (job.status !== 'queued' && job.status !== 'running') return null;
   const done = report?.scan.visitsDone ?? job.progress.done;
   const total = report?.scan.visitsTotal || job.progress.total;
   const pct = Math.round(Math.max(0, Math.min(1, total ? done / total : job.progress.fraction)) * 100);
-  const current = report?.scan.current ?? (job.progress.phase === 'verifying-location' ? 'Checking the test location' : job.progress.phase === 'analyzing' ? 'Preparing your findings' : undefined);
+  const manyLaws = (job.laws?.length ?? 0) >= 2;
+  const current = manyLaws ? undefined : report?.scan.current ?? (job.progress.phase === 'verifying-location' ? 'Checking the test location' : job.progress.phase === 'analyzing' ? 'Preparing your findings' : undefined);
   return (
     <section className="rp-section rp-status" aria-labelledby="rp-status-title" data-testid="scan-status">
       <div className="rp-status-head">
@@ -80,6 +102,7 @@ export function ScanStatus({ data, now, onCancel }: { data: JobReportResponse; n
       <div className="rp-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Scan progress">
         <span style={{ width: `${pct}%` }} />
       </div>
+      <LawProgress job={job} report={report} />
       <dl className="rp-facts">
         <div>
           <dt>Visits</dt>
@@ -87,7 +110,7 @@ export function ScanStatus({ data, now, onCancel }: { data: JobReportResponse; n
         </div>
         <div>
           <dt>Pages</dt>
-          <dd data-testid="pages">{report?.scan.pagesVisited ?? 0}</dd>
+          <dd data-testid="pages">{pagesVisited(data)}</dd>
         </div>
         <div>
           <dt>Time</dt>
@@ -129,8 +152,14 @@ export function BannerLine({ data }: { data: JobReportResponse }) {
     body = (
       <>
         <span className="rp-dot rp-dot-bad" aria-hidden="true" />
-        <strong>No consent banner detected</strong>
-        {b.consentTools?.length ? <span className="muted">— {b.consentTools.join(', ')} {b.consentTools.length === 1 ? 'is' : 'are'} on the site, but no banner appeared.</span> : null}
+        <strong>{b.broken ? 'Your consent tool is broken: no visitor gets a banner' : 'No consent banner detected'}</strong>
+        {b.broken ? (
+          <span className="muted" data-testid="banner-broken">
+            {' '}— {b.broken.reason.replace(/^the /, 'The ')}. Trackers it should hold back run as if there were no consent tool.
+          </span>
+        ) : b.consentTools?.length ? (
+          <span className="muted">— {b.consentTools.join(', ')} {b.consentTools.length === 1 ? 'is' : 'are'} on the site, but no banner appeared.</span>
+        ) : null}
       </>
     );
   }
@@ -287,7 +316,7 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
     );
   }
   const { columns, tools } = report.matrix;
-  const gaps = columns.filter((c) => c.state === 'not-checked');
+  const gaps = columns.filter((c) => GAP_ICON[c.state] !== undefined);
   const unverified = report.scan.location && !report.scan.location.verified;
   const colName = (i: number) => columns[i].label + (columns[i].locationLabel ? ` (${columns[i].locationLabel})` : '');
   const purposeOf = (t: OwnerToolRow) => (ui.saved?.[t.classKey] && !t.classified ? `${PURPOSE_LABEL[ui.saved[t.classKey]] ?? ui.saved[t.classKey]} (saved)` : t.purpose);
@@ -305,10 +334,16 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
           <b data-state="mismatch">✕</b> problem
         </span>
         <span>
-          <b data-state="needs-decision">?</b> needs your decision
+          <b data-state="needs-decision">?</b> tell us what this tool is for
         </span>
         <span>
-          <b data-state="not-checked">–</b> not checked
+          <b data-state="blocked">⊘</b> blocked: a visitor can’t do this either (a problem)
+        </span>
+        <span>
+          <b data-state="not-checked">–</b> couldn’t test: the scan could not complete this
+        </span>
+        <span>
+          <b data-state="not-applicable">∅</b> not applicable: nothing to test
         </span>
         {scanning ? (
           <span>
@@ -408,8 +443,11 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
       {gaps.length ? (
         <ul className="rp-gaps" data-testid="column-gaps">
           {gaps.map((g) => (
-            <li key={g.id}>
-              <b>– {g.label}:</b> {g.note}
+            <li key={g.id} data-state={g.state}>
+              <b>
+                {GAP_ICON[g.state]} {g.label}:
+              </b>{' '}
+              {g.note}
             </li>
           ))}
         </ul>
@@ -649,9 +687,9 @@ export function TodoList({ data, ui = {}, actions = {} }: { data: JobReportRespo
             </div>
             <p className="muted">{canRescan ? 'Everything above is done. A new scan shows how your site behaves now.' : scanning ? 'After this scan, once everything above is done.' : 'Opens up when everything above is done.'}</p>
             <div className="rp-todo-actions">
-              <button type="button" className="btn btn-sm btn-primary" disabled={!canRescan || ui.rescanning || !actions.onRescan} onClick={actions.onRescan}>
+              <RescanButton className="btn btn-sm btn-primary" laws={data.job.laws} busy={ui.rescanning} disabled={!canRescan} onRescan={actions.onRescan}>
                 {ui.rescanning ? 'Starting…' : 'Run the final scan'}
-              </button>
+              </RescanButton>
             </div>
             {ui.errors?.rescan ? (
               <p className="rp-error" role="alert">
@@ -677,9 +715,9 @@ export function Unreachable({ data, ui, actions }: { data: JobReportResponse; ui
       </p>
       {reason ? <p className="muted">{reason.charAt(0).toUpperCase() + reason.slice(1)}.</p> : null}
       {actions.onRescan ? (
-        <button type="button" className="btn btn-sm btn-secondary" disabled={ui.rescanning} onClick={actions.onRescan}>
+        <RescanButton className="btn btn-sm btn-secondary" laws={data.job.laws} busy={ui.rescanning} onRescan={actions.onRescan}>
           {ui.rescanning ? 'Starting…' : 'Scan again'}
-        </button>
+        </RescanButton>
       ) : null}
     </section>
   );
@@ -749,6 +787,75 @@ export function EarlierScan({ newer }: { newer: NonNullable<JobReportResponse['n
   );
 }
 
+// --- law tabs (plans/per-law-report-contract.md, C3) ---------------------------------
+
+/** The tabs for a multi-law job: stateless, so render tests can pick the selected law. */
+export function LawTabsView({ data, selected, onSelect, ui = {}, actions = {} }: { data: JobReportResponse; selected: LawId; onSelect: (id: LawId) => void; ui?: ReportUiState; actions?: ReportActions }) {
+  const base = useId();
+  const rows = lawRows(data.job, data.report);
+  const tabId = (id: LawId) => `${base}-tab-${id}`;
+  const panelId = `${base}-panel`;
+  const row = rows.find((r) => r.id === selected) ?? rows[0];
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const i = rows.findIndex((r) => r.id === selected);
+    const next = rows[(i + (e.key === 'ArrowRight' ? 1 : rows.length - 1)) % rows.length];
+    if (!next) return;
+    e.preventDefault();
+    onSelect(next.id);
+    document.getElementById(tabId(next.id))?.focus();
+  };
+  let body: ReactNode = null;
+  if (row) {
+    const report = tabReport(data, row.id);
+    if (row.state === 'failed') {
+      body = (
+        <div className="rp-section rp-alert" role="alert">
+          <p>
+            <strong>This law could not be scanned.</strong> {row.error ? <span className="muted">{row.error}</span> : null}
+          </p>
+        </div>
+      );
+    } else if (!report && (row.state === 'waiting' || row.state === 'starting' || row.state === 'verifying')) {
+      body = <p className="muted">{row.text}…</p>;
+    } else {
+      const lawData: JobReportResponse = { ...data, report };
+      body = (
+        <>
+          <BannerLine data={lawData} />
+          <Matrix data={lawData} ui={ui} actions={actions} />
+        </>
+      );
+    }
+  }
+  return (
+    <div className="law-tabs" data-testid="law-tabs">
+      <div role="tablist" aria-label="Laws scanned" onKeyDown={onKeyDown}>
+        {rows.map((r) => (
+          <button key={r.id} type="button" role="tab" id={tabId(r.id)} aria-selected={r.id === row?.id} aria-controls={panelId} tabIndex={r.id === row?.id ? 0 : -1} onClick={() => onSelect(r.id)}>
+            {r.label}
+            <span className="law-dot" data-state={r.state} aria-hidden="true" />
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" id={panelId} aria-labelledby={row ? tabId(row.id) : undefined} tabIndex={0}>
+        {body}
+      </div>
+    </div>
+  );
+}
+
+/** Initial tab: the first law scanning, else the first. */
+function initialLaw(data: JobReportResponse): LawId {
+  const rows = lawRows(data.job, data.report);
+  return (rows.find((r) => r.state === 'scanning') ?? rows[0])?.id ?? LAWS[0].id;
+}
+
+export function LawTabs({ data, ui, actions }: { data: JobReportResponse; ui?: ReportUiState; actions?: ReportActions }) {
+  const [selected, setSelected] = useState<LawId>(() => initialLaw(data));
+  return <LawTabsView data={data} selected={selected} onSelect={setSelected} ui={ui} actions={actions} />;
+}
+
 // --- the page -----------------------------------------------------------------------
 
 export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: JobReportResponse; now: number; ui?: ReportUiState; actions?: ReportActions }) {
@@ -762,6 +869,7 @@ export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: Job
         </p>
         <h1 className="rp-h1">{job.host}</h1>
         <ScanHistory history={data.history ?? []} />
+        <JobLaws job={job} />
       </header>
       {data.newerScan ? <EarlierScan newer={data.newerScan} /> : null}
       <ScanStatus data={data} now={now} onCancel={actions.onCancel} />
@@ -771,17 +879,23 @@ export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: Job
             <strong>{job.status === 'failed' ? 'The scan didn’t finish.' : 'The scan was cancelled.'}</strong> {job.error ? <span className="muted">{job.error.split('\n')[0]}</span> : null}
           </p>
           {actions.onRescan && consent ? (
-            <button type="button" className="btn btn-sm btn-secondary" disabled={ui.rescanning} onClick={actions.onRescan}>
+            <RescanButton className="btn btn-sm btn-secondary" laws={job.laws} busy={ui.rescanning} onRescan={actions.onRescan}>
               Scan again
-            </button>
+            </RescanButton>
           ) : null}
         </div>
       ) : null}
       {consent && data.report?.scan.unreachable ? <Unreachable data={data} ui={ui} actions={actions} /> : null}
       {consent && !data.report?.scan.unreachable ? (
         <>
-          <BannerLine data={data} />
-          <Matrix data={data} ui={ui} actions={actions} />
+          {(job.laws?.length ?? 0) >= 2 ? (
+            <LawTabs data={data} ui={ui} actions={actions} />
+          ) : (
+            <>
+              <BannerLine data={data} />
+              <Matrix data={data} ui={ui} actions={actions} />
+            </>
+          )}
           <TodoList data={data} ui={ui} actions={actions} />
         </>
       ) : null}
@@ -922,13 +1036,14 @@ export function ReportPage({ jobId }: { jobId: string }) {
         setUi((u) => ({ ...u, marking: undefined }));
       }
     },
-    onRescan: async () => {
+    onRescan: async (extra) => {
       const d = dataRef.current;
       if (!d) return;
       clear('rescan');
       setUi((u) => ({ ...u, rescanning: true }));
       try {
-        const res = await api.rescan(d.domain);
+        const res = await api.rescan(d.domain, extra?.laws ? { laws: extra.laws, authorized: extra.authorized } : {});
+        notifyJobsChanged();
         window.location.hash = reportHref(res.job.id);
       } catch (e) {
         err('rescan', e);

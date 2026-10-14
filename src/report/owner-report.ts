@@ -2,10 +2,11 @@ import type { ScenarioId } from '../record/index.js';
 import type { RemediationTask } from '../record/index.js';
 import type { BehaviorMatrix, BehaviorMatrixCell } from '../../types/index.js';
 import type { ConsentReportModel } from './consent-model.js';
-import { buildBehaviorMatrix, categoryLabel } from './consent-matrix.js';
+import { buildBehaviorMatrix, categoryLabel, regimeFor } from './consent-matrix.js';
+import { skipKindOf, SKIP_LEAD, type SkipKind } from './skip-kind.js';
 import { workspaceId } from './workspace.js';
 import { compareCookieBehavior } from './cookie-purpose.js';
-import { hostedOn } from '../registry/index.js';
+import { hostedOn, isWiretapJurisdiction } from '../registry/index.js';
 
 // The owner report (plans/simple-report.md): the one page a site owner reads.
 // Four parts, in order — scan status, consent banner, the matrix, the to-do
@@ -24,11 +25,14 @@ import { hostedOn } from '../registry/index.js';
 //   ok               behaved as expected for its purpose under the location's rules
 //   mismatch         active where it should be off (not a legal verdict)
 //   needs-decision   we need you: what the tool is for, or a use that depends on the site
-//   not-checked      the visit could not complete — one note for the whole column
+//   not-checked      the scan could not complete the visit (its limit, not the site's) — one note for the whole column
+//   not-applicable   nothing to test: no banner where none is required, no close control on the banner
+//   blocked          the site stopped the visitor (a settings control that opens nothing, no way to
+//                    withdraw) — a problem, not a gap (skip-kind.ts)
 
 export const OWNER_REPORT_FILE = 'owner-report.json';
 
-export type OwnerCellState = 'pending' | 'ok' | 'mismatch' | 'needs-decision' | 'not-checked';
+export type OwnerCellState = 'pending' | 'ok' | 'mismatch' | 'needs-decision' | 'not-checked' | 'not-applicable' | 'blocked';
 
 export interface OwnerCell {
   state: OwnerCellState;
@@ -51,9 +55,9 @@ export interface OwnerColumn {
   label: string;
   /** Set only when the scan covers more than one location. */
   locationLabel?: string;
-  /** pending = still to visit; running = being visited now; done; not-checked = the visit could not complete (see note). */
-  state: 'pending' | 'running' | 'done' | 'not-checked';
-  /** Why the whole column is not checked — said once, not per cell. */
+  /** pending = still to visit; running = being visited now; done; not-checked = the scan could not complete the visit; not-applicable = nothing to test; blocked = the site stopped the visitor, a problem (see note). */
+  state: 'pending' | 'running' | 'done' | 'not-checked' | 'not-applicable' | 'blocked';
+  /** Why the whole column is skipped — said once, not per cell. */
   note?: string;
 }
 
@@ -102,6 +106,18 @@ export interface OwnerToolActivity {
   hostedOn?: { provider: string; name: string; matchesSite: boolean };
 }
 
+/** One location of the scan: its verdict, its visits, and the banner its visits saw. */
+export interface OwnerLocationSummary {
+  id: string;
+  label: string;
+  verified: boolean;
+  observed?: string;
+  note?: string;
+  visitsDone: number;
+  visitsTotal: number;
+  banner: { state: 'pending' | 'detected' | 'none'; provider?: string; visitsWithBanner: number; visitsChecked: number };
+}
+
 export interface OwnerReport {
   version: 1;
   /** live: built from the visits finished so far; final: the finished run (re-rendered with the site's classifications). */
@@ -135,16 +151,21 @@ export interface OwnerReport {
     visitsChecked: number;
     /** Consent tools the scan saw loading (e.g. OneTrust), banner or not. */
     consentTools?: string[];
+    /** The consent tool is installed but its script crashed before drawing a banner (record cause 'tool-broken'): the scan's reason, error included. */
+    broken?: { reason: string };
   };
   matrix: {
     columns: OwnerColumn[];
     tools: OwnerToolRow[];
-    counts: Record<'ok' | 'mismatch' | 'needsDecision' | 'pending' | 'notChecked', number>;
+    /** Per cell. notChecked = the scan could not; notApplicable = nothing to test; blocked = the site stopped the visitor (a problem). */
+    counts: Record<'ok' | 'mismatch' | 'needsDecision' | 'pending' | 'notChecked' | 'notApplicable' | 'blocked', number>;
   };
   /** Tools whose purpose is not known yet: the first to-do items, before the checklist exists. */
   decisions: Array<{ partyId: string; label: string; domain: string; classKey: string }>;
   /** The checklist this run's report carries (the generated config's tasks), when there is one. The service replaces it with the site workspace's, with live status. */
   todo?: { tasks: RemediationTask[]; configAt?: string; runId?: string };
+  /** Every location of the scan, in plan order. Absent on reports written before it existed. */
+  locations?: OwnerLocationSummary[];
 }
 
 type InventoryItem = ConsentReportModel['inventory'][number];
@@ -238,12 +259,14 @@ export function bannerProviderName(cmp: string | undefined): string | undefined 
   return cmp.charAt(0).toUpperCase() + cmp.slice(1);
 }
 
+const COLUMN_STATE: Record<SkipKind, OwnerColumn['state']> = { 'not-applicable': 'not-applicable', untestable: 'not-checked', blocked: 'blocked' };
+
 const isChoice = (s: string): boolean => ['reject', 'accept', 'partial', 'withdraw', 'dismiss', 'opt-out-all', 'opt-out-link', 'return-visit'].includes(s);
 
 function cellOf(c: BehaviorMatrixCell | undefined): OwnerCell {
   if (!c) return { state: 'not-checked', reason: 'Nothing was recorded for this visit.' };
   const state: OwnerCellState =
-    c.status === 'match' || c.status === 'allowed' ? 'ok' : c.status === 'mismatch' ? 'mismatch' : c.status === 'review' ? 'needs-decision' : 'not-checked';
+    c.skip === 'not-applicable' ? 'not-applicable' : c.skip === 'blocked' ? 'blocked' : c.status === 'match' || c.status === 'allowed' ? 'ok' : c.status === 'mismatch' ? 'mismatch' : c.status === 'review' ? 'needs-decision' : 'not-checked';
   return { state, expected: c.expected, observed: c.observed, reason: c.reason, ...(c.runs ? { runs: c.runs } : {}) };
 }
 
@@ -312,21 +335,27 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
     }
     const col = bm?.columns.find((c) => c.id === id);
     if (col?.unavailable) {
-      columns.push({ ...base, state: 'not-checked', note: col.unavailable.reason });
+      columns.push({ ...base, state: COLUMN_STATE[col.unavailable.kind], note: col.unavailable.reason });
     } else if (col) {
       columns.push({ ...base, state: 'done' });
     } else {
       // The visit finished but nothing in it could be compared: no banner to act on, or it did not complete.
       const grid = m?.grid[p.location]?.[p.scenario as ScenarioId];
+      const loc = m?.locations.find((l) => l.id === p.location);
+      const kind = grid ? skipKindOf(grid, { regime: regimeFor(loc?.jurisdictions ?? [], m!.startedAt.slice(0, 10)).regime, wiretap: isWiretapJurisdiction(loc?.jurisdictions ?? []) }) : 'untestable';
       const note =
-        grid?.status === 'not-applicable'
-          ? isChoice(p.scenario)
-            ? 'There was no consent banner, so this choice couldn’t be made.'
-            : 'This visit did not apply to the site.'
+        kind === 'blocked'
+          ? `${SKIP_LEAD.blocked}: ${grid?.reason ?? grid?.choiceGap ?? 'the site stopped this visitor action'}.`
+          : grid?.status === 'not-applicable'
+          ? grid.banner !== 'no banner' && grid.reason
+            ? `Not applicable here: ${grid.reason}.` // the banner was there but offered no such control
+            : isChoice(p.scenario)
+              ? 'There was no consent banner, so this choice couldn’t be made.'
+              : 'This visit did not apply to the site.'
           : grid?.reason
             ? `This visit could not be completed: ${grid.reason}.`
             : 'This visit could not be completed.';
-      columns.push({ ...base, state: 'not-checked', note });
+      columns.push({ ...base, state: COLUMN_STATE[kind], note });
     }
   }
 
@@ -345,7 +374,8 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
   const cellsFor = (row: BehaviorMatrix['rows'][number] | undefined): OwnerCell[] =>
     columns.map((col) => {
       if (col.state === 'pending' || col.state === 'running') return { state: 'pending' };
-      if (col.state === 'not-checked') return { state: 'not-checked', reason: col.note };
+      if (col.state === 'not-checked' || col.state === 'not-applicable') return { state: col.state, reason: col.note };
+      if (col.state === 'blocked') return { state: 'blocked', reason: col.note?.startsWith(SKIP_LEAD.blocked) ? col.note : `${SKIP_LEAD.blocked}: ${col.note ?? ''}` };
       const i = bm ? bm.columns.findIndex((c) => c.id === col.id) : -1;
       return cellOf(i >= 0 ? row?.cells[i] : undefined);
     });
@@ -389,8 +419,8 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
     });
   }
 
-  const counts = { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0 };
-  const KEY: Record<OwnerCellState, keyof typeof counts> = { ok: 'ok', mismatch: 'mismatch', 'needs-decision': 'needsDecision', pending: 'pending', 'not-checked': 'notChecked' };
+  const counts = { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0, notApplicable: 0, blocked: 0 };
+  const KEY: Record<OwnerCellState, keyof typeof counts> = { ok: 'ok', mismatch: 'mismatch', 'needs-decision': 'needsDecision', pending: 'pending', 'not-checked': 'notChecked', 'not-applicable': 'notApplicable', blocked: 'blocked' };
   for (const t of tools) for (const c of [...t.cells, ...t.cookies.flatMap((k) => k.cells)]) counts[KEY[c.state]]++;
 
   // The banner: seen in any finished visit, and by whom.
@@ -405,11 +435,37 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
   };
   const consentTools = (m?.inventory ?? []).filter((p) => p.categories.includes('consent')).map((p) => p.label);
   if (consentTools.length) banner.consentTools = consentTools;
+  const brokenCell = withBanner.length ? undefined : visits.find((c) => c!.cause === 'tool-broken' && c!.reason);
+  if (brokenCell) banner.broken = { reason: brokenCell.reason! };
 
   const visitsTotal = plan.reduce((n, p) => n + Math.max(1, p.runs ?? 1), 0);
   const visitsDone = allDone ? visitsTotal : Math.min(visitsTotal, done.size);
   const cur = input.current;
   const location = locations[0];
+
+  // Per location: its own visits and the banner its own visits saw (same rule as the report-wide banner).
+  const locationSummaries: OwnerLocationSummary[] = locations.map((l) => {
+    const total = plan.filter((p) => p.location === l.id).reduce((n, p) => n + Math.max(1, p.runs ?? 1), 0);
+    const doneHere = new Set((input.done ?? []).filter((v) => v.location === l.id).map(visitKey)).size;
+    const cells = unreachableReason ? [] : Object.values(m?.grid[l.id] ?? {}).filter((c) => c && c.status !== 'not-run' && c.banner !== undefined);
+    const seenBanner = cells.filter((c) => c!.banner && c!.banner !== 'no banner');
+    const prov = seenBanner.map((c) => bannerProviderName(c!.banner)).find(Boolean);
+    return {
+      id: l.id,
+      label: l.label,
+      verified: l.verified,
+      ...(l.observed ? { observed: l.observed } : {}),
+      ...(l.note ? { note: l.note } : {}),
+      visitsDone: allDone ? total : Math.min(total, doneHere),
+      visitsTotal: total,
+      banner: {
+        state: seenBanner.length ? 'detected' : cells.length ? 'none' : 'pending',
+        ...(prov ? { provider: prov } : {}),
+        visitsWithBanner: seenBanner.length,
+        visitsChecked: cells.length,
+      },
+    };
+  });
 
   return {
     version: 1,
@@ -428,6 +484,7 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
       ...(location ? { location: { id: location.id, label: location.label, verified: location.verified, ...(location.observed ? { observed: location.observed } : {}), ...(location.note ? { note: location.note } : {}) } } : {}),
     },
     banner,
+    locations: locationSummaries,
     matrix: { columns, tools, counts },
     decisions: tools.filter((t) => !t.classified).map((t) => ({ partyId: t.partyId, label: t.label, domain: t.domain, classKey: t.classKey })),
     ...(!unreachableReason && m?.remediation?.tasks.length ? { todo: { tasks: m.remediation.tasks, ...(m.remediation.configAt ? { configAt: m.remediation.configAt } : {}), ...(m.remediation.runId ? { runId: m.remediation.runId } : {}) } } : {}),

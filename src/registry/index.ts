@@ -47,6 +47,7 @@ export { US_STATE_PRIVACY_ACTS, US_STATE_NAMES, usStateAct, type UsStatePrivacyA
 export { isWiretapJurisdiction, WIRETAP_STATES, WIRETAP_REQUIREMENTS } from './wiretap.js';
 export { citationLabel } from './citation.js';
 export { describeLocationRules, type LocationRules, type LocationRuleLaw, type DescribeLocationOptions } from './describe.js';
+export { GUIDE_POSTURE, GUIDE_MODELS, GUIDE_WIRETAP, GUIDE_LAWS, GUIDE_PLACE_NOTES, type GuideNoteEntry } from './guide-notes.js';
 export {
   KB_VERSION,
   KB_ENTRIES,

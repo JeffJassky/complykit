@@ -1,5 +1,5 @@
 import type { LocationSpec, ScenarioId, LocationVerification, GeoSourceResult } from '../../record/index.js';
-import { ALL_REQUIREMENTS, jurisdictionsFor, normalizeRegion } from '../../registry/index.js';
+import { ALL_REQUIREMENTS, isWiretapJurisdiction, jurisdictionsFor, normalizeRegion } from '../../registry/index.js';
 
 // Evaluation planning (plans/consent-design.md §2.2–2.3): which scenarios a
 // verified location gets, location presets, and the location-verification
@@ -17,6 +17,15 @@ const EU_UK: ScenarioId[] = ['do-nothing', 'browse', 'dismiss', 'reject', 'accep
 const US_PRIVACY_STATE: ScenarioId[] = ['do-nothing', 'browse', 'reject', 'accept', 'gpc', 'opt-out-all', 'opt-out-link', 'markers'];
 const US_OTHER: ScenarioId[] = ['do-nothing', 'browse', 'reject', 'accept', 'gpc', 'markers'];
 const ELSEWHERE: ScenarioId[] = ['do-nothing', 'browse', 'reject', 'accept'];
+// Wiretap states (CA, FL, PA, MD, IL): sites answer the exposure with an opt-in banner, so it gets
+// the EU/UK banner visits — close it, accept analytics only, withdraw, come back. Without them a
+// California banner's withdrawal was never checked (storyfolder.com, 2026-10-09). Banner-gated
+// like reject and accept: no banner ⇒ not applicable after one landing.
+const WIRETAP_BANNER: ScenarioId[] = ['dismiss', 'partial', 'withdraw', 'return-visit'];
+const withWiretapBanner = (set: ScenarioId[]): ScenarioId[] => {
+  const at = set.indexOf('accept') + 1;
+  return [...set.slice(0, set.indexOf('reject')), 'dismiss', ...set.slice(set.indexOf('reject'), at), ...WIRETAP_BANNER.filter((s) => s !== 'dismiss'), ...set.slice(at)];
+};
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 const OPT_OUT_SIGNAL_IDS = new Set<string>(['ccpa.regs.7025', 'us-states.opt-out-signal']);
@@ -44,7 +53,8 @@ export function defaultScenarios(jurisdictions: readonly string[], onDate: strin
   if (jurisdictions.includes('eu') || jurisdictions.includes('uk')) return [...EU_UK];
   if (jurisdictions.includes('us')) {
     const states = optOutSignalStates(onDate);
-    return jurisdictions.some((j) => states.has(j)) ? [...US_PRIVACY_STATE] : [...US_OTHER];
+    const set = jurisdictions.some((j) => states.has(j)) ? [...US_PRIVACY_STATE] : [...US_OTHER];
+    return isWiretapJurisdiction(jurisdictions) ? withWiretapBanner(set) : set;
   }
   return [...ELSEWHERE];
 }

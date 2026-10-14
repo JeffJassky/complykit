@@ -1,11 +1,12 @@
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import type { JobReportResponse, JobSummary, OwnerReport, RemediationTask, SiteSummary } from '../../shared/api';
+import type { JobReportResponse, JobSummary, LawScanProgress, OwnerReport, RemediationTask, SiteSummary } from '../../shared/api';
+import { LAWS, type LawId } from '../../shared/laws';
 import { parseHash, reportHref } from '../lib/useHashView';
 import { createRerenderQueue, isMoving } from '../lib/useJobReport';
 import { HomeView, siteRows, siteStatus } from './Home';
-import { BannerLine, Matrix, ReportPageView, ScanHistory, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
+import { BannerLine, LawTabsView, Matrix, ReportPageView, pagesVisited, ScanHistory, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
 
 // The report page (plans/simple-report.md), rendered per section and state.
 
@@ -37,7 +38,7 @@ function owner(over: Partial<OwnerReport> = {}): OwnerReport {
         { id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', cells: [bad, pending, pending], cookies: [{ id: 'c1', name: '_fbp', kind: 'cookie', purpose: 'Advertising', classified: true, cells: [bad, pending, pending] }] },
         { id: 'tool:w', partyId: 'unknown:widgets.test', label: 'widgets.test', domain: 'widgets.test', purpose: 'Unclassified', categories: [], classified: false, recognized: false, classKey: 'class:w', cells: [ask, pending, pending], cookies: [] },
       ],
-      counts: { ok: 0, mismatch: 2, needsDecision: 1, pending: 6, notChecked: 0 },
+      counts: { ok: 0, mismatch: 2, needsDecision: 1, pending: 6, notChecked: 0, notApplicable: 0, blocked: 0 },
     },
     decisions: [{ partyId: 'unknown:widgets.test', label: 'widgets.test', domain: 'widgets.test', classKey: 'class:w' }],
     ...over,
@@ -59,7 +60,7 @@ const finalOwner = owner({
       { id: 'local:gpc', location: 'local', scenario: 'gpc', label: 'Privacy signal (GPC)', state: 'done' },
     ],
     tools: [{ id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', cells: [bad, gap, ok], cookies: [] }],
-    counts: { ok: 1, mismatch: 1, needsDecision: 0, pending: 0, notChecked: 1 },
+    counts: { ok: 1, mismatch: 1, needsDecision: 0, pending: 0, notChecked: 1, notApplicable: 0, blocked: 0 },
   },
   decisions: [],
 });
@@ -131,6 +132,10 @@ describe('b. consent banner', () => {
     expect(text(<BannerLine data={running({ report: owner({ banner: { state: 'detected', visitsWithBanner: 1, visitsChecked: 1 } }) })} />)).toContain('detected (provider not recognized)');
     expect(text(<BannerLine data={done({ report: owner({ banner: { state: 'none', visitsWithBanner: 0, visitsChecked: 3 } }) })} />)).toContain('No consent banner detected');
     expect(text(<BannerLine data={running({ report: null })} />)).toContain('Looking for a consent banner…');
+    const broken = text(<BannerLine data={done({ report: owner({ banner: { state: 'none', visitsWithBanner: 0, visitsChecked: 3, consentTools: ['WebToffee'], broken: { reason: 'the consent tool (webtoffee-cookie-consent) is on the page but its script crashed before showing a banner, so a visitor gets no banner and no choice: “x”' } } }) })} />);
+    expect(broken).toContain('Your consent tool is broken: no visitor gets a banner');
+    expect(broken).toContain('The consent tool (webtoffee-cookie-consent) is on the page but its script crashed');
+    expect(broken).not.toContain('No consent banner detected');
     expect(text(<BannerLine data={running({ report: owner({ banner: { state: 'pending', visitsWithBanner: 0, visitsChecked: 0 } }) })} />)).toContain('Looking for a consent banner…');
   });
 });
@@ -142,14 +147,14 @@ describe('c. the matrix', () => {
     expect(out).toContain('After rejection');
     expect(out.match(/class="rp-cell" data-state="pending"/g)?.length).toBe(6);
     expect(out.match(/class="rp-cell" data-state="mismatch"/g)?.length).toBe(2);
-    expect(out).toContain('aria-label="widgets.test · Before a choice: Needs your decision"');
+    expect(out).toContain('aria-label="widgets.test · Before a choice: Tell us what this tool is for"');
     expect(out.indexOf('Meta Pixel')).toBeLessThan(out.indexOf('_fbp'));
     expect(out.indexOf('_fbp')).toBeLessThan(out.indexOf('widgets.test'));
     expect(out).toContain('data-unclassified="true"');
     expect(out).toContain('aria-label="visiting now"');
   });
   it('a site that was never reached: one notice, no banner line, matrix or to-do list', () => {
-    const r = owner({ stage: 'final', scan: { ...owner().scan, unreachable: { reason: 'bot protection blocked the visit (HTTP 503)' } }, matrix: { columns: [], tools: [], counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0 } } });
+    const r = owner({ stage: 'final', scan: { ...owner().scan, unreachable: { reason: 'bot protection blocked the visit (HTTP 503)' } }, matrix: { columns: [], tools: [], counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0, notApplicable: 0, blocked: 0 } } });
     const out = html(<ReportPageView data={done({ report: r })} now={NOW} />);
     expect(out).toContain('data-testid="unreachable"');
     expect(text(<ReportPageView data={done({ report: r })} now={NOW} />)).toContain('We couldn’t reach shop.example.');
@@ -163,10 +168,45 @@ describe('c. the matrix', () => {
     expect(out).toContain('data-state="ok"');
     expect(out).not.toContain('class="rp-spinner');
   });
+  it('the three skip kinds look different: icon, text and column note', () => {
+    const na = { state: 'not-applicable' as const, reason: 'No banner here.' };
+    const blocked = { state: 'blocked' as const, reason: 'The settings button opens nothing.' };
+    const base = finalOwner.matrix;
+    const r = owner({
+      stage: 'final',
+      matrix: {
+        ...base,
+        columns: [
+          { id: 'a', location: 'local', scenario: 'close', label: 'Close the banner', state: 'not-applicable', note: 'There is no close control.' },
+          { id: 'b', location: 'local', scenario: 'reject', label: 'After rejection', state: 'not-checked', note: 'The click did not land.' },
+          { id: 'c', location: 'local', scenario: 'withdraw', label: 'Withdraw consent', state: 'blocked', note: 'A visitor cannot do this: no way to withdraw.' },
+        ],
+        tools: [{ ...base.tools[0], cells: [na, gap, blocked], cookies: [] }],
+        counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 1, notApplicable: 1, blocked: 1 },
+      },
+    });
+    const out = html(<Matrix data={done({ report: r })} />);
+    expect(out).toMatch(/data-state="not-applicable"[^>]*>∅</);
+    expect(out).toMatch(/data-state="not-checked"[^>]*>–</);
+    expect(out).toMatch(/data-state="blocked"[^>]*>⊘</);
+    expect(out).toContain('Not applicable — nothing to test');
+    expect(out).toContain('Couldn’t test — the scan could not complete this');
+    expect(out).toContain('Blocked — a visitor can’t do this either (a problem)');
+    const t = text(<Matrix data={done({ report: r })} />);
+    expect(t).toContain('∅ Close the banner: There is no close control.');
+    expect(t).toContain('– After rejection: The click did not land.');
+    expect(t).toContain('⊘ Withdraw consent: A visitor cannot do this: no way to withdraw.');
+  });
+  it('the legend lists all three skip kinds with their icons', () => {
+    const legend = html(<Matrix data={done()} />).match(/<p class="rp-legend[\s\S]*?<\/p>/)![0];
+    expect(legend).toMatch(/data-state="blocked">⊘<\/b> blocked/);
+    expect(legend).toMatch(/data-state="not-checked">–<\/b> couldn’t test/);
+    expect(legend).toMatch(/data-state="not-applicable">∅<\/b> not applicable/);
+  });
   it('before any tool is seen; an unverified location', () => {
-    expect(text(<Matrix data={running({ report: owner({ matrix: { columns: owner().matrix.columns, tools: [], counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0 } } }) })} />)).toContain('Tools and cookies appear here as the scan finds them.');
+    expect(text(<Matrix data={running({ report: owner({ matrix: { columns: owner().matrix.columns, tools: [], counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0, notApplicable: 0, blocked: 0 } } }) })} />)).toContain('Tools and cookies appear here as the scan finds them.');
     expect(text(<Matrix data={running({ report: null })} />)).toContain('Tools and cookies appear here as the scan finds them.');
-    const unverified = owner({ scan: { ...owner().scan, location: { id: 'de', label: 'Germany', verified: false, note: 'exit in US' } }, matrix: { columns: [], tools: [], counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0 } } });
+    const unverified = owner({ scan: { ...owner().scan, location: { id: 'de', label: 'Germany', verified: false, note: 'exit in US' } }, matrix: { columns: [], tools: [], counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0, notApplicable: 0, blocked: 0 } } });
     expect(text(<Matrix data={done({ report: unverified })} />)).toContain('We could not confirm where the scan was running from (exit in US), so nothing was checked.');
   });
   it('a tool classified on this page shows as saved until the next report arrives', () => {
@@ -247,6 +287,7 @@ describe('d. the to-do list', () => {
     expect(text(<TodoList data={data} />)).toContain('Your answer: Analytics');
     expect(text(<TodoList data={done({ todo: { state: 'ready', tasks } })} />)).toContain('Your answer is saved for this site.');
   });
+
   it('says so while the report updates with new answers, and when the list came from an earlier scan', () => {
     expect(html(<TodoList data={done()} ui={{ rerender: 'running' }} />)).toContain('data-testid="updating"');
     expect(text(<TodoList data={done({ todo: { ...done().todo, fromThisRun: false } })} />)).toContain('This list comes from an earlier scan of this site');
@@ -355,5 +396,100 @@ describe('scan history', () => {
 
   it('the latest scan shows no earlier-scan notice', () => {
     expect(html(<ReportPageView data={done({ history })} now={NOW} />)).not.toContain('earlier-scan');
+  });
+});
+
+
+// plans/per-law-report-contract.md, PR C3: a job with two or more laws shows one tab per
+// law (its banner and matrix), above one to-do list; one law or none: the page as before.
+describe('law tabs', () => {
+  const progress = (id: LawId, state: LawScanProgress['state'], over: Partial<LawScanProgress> = {}): LawScanProgress => {
+    const l = LAWS.find((x) => x.id === id)!;
+    return { id, locationId: l.locationId, region: l.flyRegion, local: !!l.local, state, visitsDone: 0, visitsTotal: 0, ...over };
+  };
+  const fiveLaws = (eu: OwnerReport | null = owner()): JobReportResponse => {
+    const laws: JobReportResponse['laws'] = [
+      { id: 'eu', progress: progress('eu', 'scanning', { visitsDone: 1, visitsTotal: 3 }), report: eu },
+      { id: 'uk', progress: progress('uk', 'failed', { error: 'worker in lhr failed: did not become healthy' }), report: null },
+      { id: 'ca', progress: progress('ca', 'collected'), report: null },
+      { id: 'tx', progress: progress('tx', 'starting'), report: null },
+      { id: 'us', progress: progress('us', 'waiting'), report: null },
+    ];
+    const j = job({ laws: laws.map((l) => l.id), progress: { ...job().progress, phase: 'verifying-location', current: 'verifying de, uk' }, metrics: { ...job().metrics, laws: laws.map((l) => l.progress) } });
+    return running({ job: j, report: null, laws });
+  };
+  const panel = (out: string) => out.slice(out.indexOf('role="tabpanel"'));
+
+  it('five tabs in catalog order, the chosen one selected, one panel', () => {
+    const out = html(<LawTabsView data={fiveLaws()} selected="eu" onSelect={() => {}} />);
+    expect([...out.matchAll(/role="tab"[^>]*>/g)]).toHaveLength(5);
+    expect(text(<LawTabsView data={fiveLaws()} selected="eu" onSelect={() => {}} />)).toMatch(/EU law.*UK law.*California law.*Texas law.*US, no state privacy law/s);
+    expect(out.match(/aria-selected="true"/g)).toHaveLength(1);
+    expect(out).toMatch(/role="tab"[^>]*aria-selected="true"[^>]*>(?:(?!role="tab").)*EU law/s);
+    expect(out.match(/role="tabpanel"/g)).toHaveLength(1);
+  });
+
+  it('a scanning law shows its own banner line and matrix', () => {
+    const p = panel(html(<LawTabsView data={fiveLaws()} selected="eu" onSelect={() => {}} />));
+    expect(p).toContain('data-testid="banner"');
+    expect(p).toContain('data-testid="matrix"');
+    expect(p).toContain('Meta Pixel');
+  });
+
+  it('a failed law says it could not be scanned, and why', () => {
+    const p = panel(html(<LawTabsView data={fiveLaws()} selected="uk" onSelect={() => {}} />));
+    expect(p).toContain('role="alert"');
+    expect(p).toContain('This law could not be scanned.');
+    expect(p).toContain('worker in lhr failed: did not become healthy');
+    expect(p).not.toContain('data-testid="matrix"');
+  });
+
+  it('a starting remote law with nothing yet says where its worker is starting', () => {
+    const p = panel(html(<LawTabsView data={fiveLaws()} selected="tx" onSelect={() => {}} />));
+    expect(p).toContain('Starting the worker in Dallas');
+    expect(p).not.toContain('data-testid="matrix"');
+  });
+
+  it('a finished job’s tab shows the final report cut to that law’s location', () => {
+    const final = owner({
+      stage: 'final',
+      matrix: {
+        columns: [
+          { id: 'de:do-nothing', location: 'de', scenario: 'do-nothing', label: 'Before a choice', state: 'done' },
+          { id: 'us-ca:gpc', location: 'us-ca', scenario: 'gpc', label: 'Privacy signal (GPC)', state: 'done' },
+        ],
+        tools: [{ id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', cells: [bad, ok], cookies: [] }],
+        counts: { ok: 1, mismatch: 1, needsDecision: 0, pending: 0, notChecked: 0, notApplicable: 0, blocked: 0 },
+      },
+    });
+    const d = fiveLaws(null);
+    const doneLaws = d.laws!.map((l) => ({ ...l, progress: { ...l.progress, state: l.id === 'uk' ? ('failed' as const) : ('done' as const) }, report: null }));
+    const data = { ...d, job: job({ status: 'done', laws: d.job.laws }), report: final, laws: doneLaws };
+    const p = panel(html(<LawTabsView data={data} selected="eu" onSelect={() => {}} />));
+    expect(p).toContain('Before a choice');
+    expect(p).not.toContain('Privacy signal (GPC)');
+  });
+
+  it('the page: two or more laws get the tabs and one to-do list; one law gets the page as before', () => {
+    const many = html(<ReportPageView data={fiveLaws()} now={NOW} />);
+    expect(many).toContain('role="tablist"');
+    expect(many.match(/data-testid="todo"/g)).toHaveLength(1);
+    expect(many.indexOf('role="tablist"')).toBeLessThan(many.indexOf('data-testid="todo"'));
+    const one = html(<ReportPageView data={running({ job: job({ laws: ['eu'] }) })} now={NOW} />);
+    expect(one).not.toContain('role="tablist"');
+    expect(one).toContain('data-testid="matrix"');
+  });
+
+  it('pages: the merged report’s, else the most any one law has visited', () => {
+    const d = fiveLaws(owner({ scan: { ...owner().scan, pagesVisited: 6 } }));
+    d.laws![2] = { ...d.laws![2], report: owner({ scan: { ...owner().scan, pagesVisited: 9 } }) };
+    expect(pagesVisited(d)).toBe(9);
+    expect(pagesVisited({ ...d, report: owner({ scan: { ...owner().scan, pagesVisited: 11 } }) })).toBe(11);
+    expect(pagesVisited(fiveLaws(null))).toBe(0);
+  });
+
+  it('with several laws the status drops the "Now" line (it would flip between locations)', () => {
+    expect(html(<ReportPageView data={fiveLaws()} now={NOW} />)).not.toContain('data-testid="current"');
+    expect(html(<ReportPageView data={running()} now={NOW} />)).toContain('data-testid="current"');
   });
 });

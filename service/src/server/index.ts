@@ -6,12 +6,48 @@ import type { Server } from 'node:http';
 import { createApp, type Service } from './app.js';
 import { loadConfig } from './config.js';
 import { idleReason } from './lifecycle.js';
+import { createWorkerApp, loadWorkerConfig } from './worker.js';
 
 const IDLE_CHECK_MS = 30_000;
 /** On a signal the platform gives us seconds, not the full 10s kill grace. */
 const SIGNAL_KILL_GRACE_MS = 3_000;
 
+/** WORKER=1: serve only /internal/* for the primary's multi-region scans. */
+async function mainWorker(): Promise<void> {
+  const config = loadWorkerConfig(); // throws without WORKER_SECRET
+  if (!fs.existsSync(config.cliPath)) {
+    console.warn(`[boot] complykit CLI not found at ${config.cliPath} — collections will fail until it is built (or set COMPLYKIT_CLI)`);
+  }
+  const worker = createWorkerApp(config);
+  const server = worker.app.listen(config.port, config.bind, () => {
+    console.log(`[boot] complykit worker ${config.version} on ${config.bind}:${config.port} (tmp ${config.tmpDir}${config.idleShutdownMinutes ? `, idle shutdown ${config.idleShutdownMinutes}m` : ''})`);
+  });
+
+  let stopping = false;
+  const shutdown = async (why: string, killGraceMs?: number) => {
+    if (stopping) return;
+    stopping = true;
+    console.log(`[shutdown] ${why}`);
+    await worker.stop(killGraceMs);
+    server.closeIdleConnections();
+    await Promise.race([new Promise<void>((resolve) => server.close(() => resolve())), new Promise((r) => setTimeout(r, 2_000).unref())]);
+    server.closeAllConnections();
+    console.log('[shutdown] done');
+    process.exit(0);
+  };
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+    process.on(sig, () => void shutdown(`received ${sig}`, SIGNAL_KILL_GRACE_MS));
+  }
+  if (config.idleShutdownMinutes > 0) {
+    setInterval(() => {
+      const reason = idleReason({ idleMinutes: config.idleShutdownMinutes, busy: worker.isBusy(), lastActivity: worker.lastActivity() });
+      if (reason) void shutdown(reason);
+    }, IDLE_CHECK_MS).unref();
+  }
+}
+
 async function main(): Promise<void> {
+  if (process.env.WORKER === '1') return mainWorker();
   const config = loadConfig();
   if (!config.password) {
     console.warn('\n  !!! SERVICE_PASSWORD is not set — the service is OPEN to anyone who can reach it. !!!\n');

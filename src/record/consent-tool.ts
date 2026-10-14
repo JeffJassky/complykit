@@ -271,6 +271,24 @@ function decodeComplykit(raw: string): Decoded | undefined {
   return { grants, choiceRecorded: true, note };
 }
 
+// vanilla-cookieconsent v3 (orestbida): cc_cookie = urlencoded JSON
+//   {"categories":["necessary","analytics"],"revision":1,"consentTimestamp":"<ISO>",
+//    "services":{"necessary":[],"functional":[],"analytics":[],"advertising":[]},…}
+// `categories` lists the accepted ones; `services` is keyed by every configured category, so
+// the rest were refused. Written only on a visitor's choice, in opt-in and opt-out mode alike.
+// The site names its own categories; the usual words are mapped, others are kept as named.
+const COOKIECONSENT_MAP: Array<[RegExp, string]> = [[/^(necessary|essential|required)$/i, 'necessary'], [/analytic|statistic|performance|measurement/i, 'analytics'], [/advertis|marketing|^ads?$|targeting/i, 'marketing'], [/functional|preference/i, 'preferences']];
+function decodeCookieconsentV3(raw: string): Decoded | undefined {
+  const j = parseJson(raw);
+  if (!isObj(j) || !Array.isArray(j.categories) || !j.categories.every((c) => typeof c === 'string')) return undefined;
+  const name = (c: string): string => COOKIECONSENT_MAP.find(([re]) => re.test(c))?.[1] ?? c;
+  const grants: Record<string, boolean> = {};
+  if (isObj(j.services)) for (const c of Object.keys(j.services)) grants[name(c)] = false;
+  for (const c of j.categories as string[]) grants[name(c)] = true;
+  const at = typeof j.consentTimestamp === 'string' ? j.consentTimestamp : undefined;
+  return { grants, choiceRecorded: true, ...(at ? { note: `choice recorded ${at}` } : {}) };
+}
+
 // --- the table -----------------------------------------------------------------
 
 export const CONSENT_TOOLS: ConsentToolSpec[] = [
@@ -289,6 +307,7 @@ export const CONSENT_TOOLS: ConsentToolSpec[] = [
   { vendor: 'Shopify customer privacy', kind: 'cookie', key: '_tracking_consent', decode: (r) => decodeShopify(r) },
   { vendor: 'Shopify customer privacy', kind: 'cookie', key: '_cmp_a', decode: (r) => decodeShopify(r) },
   { vendor: 'complykit', kind: 'cookie', key: 'complykit_consent', decode: (r) => decodeComplykit(r) },
+  { vendor: 'CookieConsent (orestbida)', kind: 'cookie', key: 'cc_cookie', decode: (r) => decodeCookieconsentV3(r) },
 ];
 
 function matches(key: string | RegExp, name: string): boolean {
@@ -326,4 +345,51 @@ export function detectConsentTool(input: StoredConsentInput): ConsentToolRecord 
     };
   }
   return { vendor: null, defaultGrants: {}, decoded: false, source: 'none', note: 'no consent tool detected (no banner, no known stored state)' };
+}
+
+// WordPress consent plugins by directory (ids as in registry/platform.ts CONSENT_PLUGINS;
+// record/ cannot import registry/, so the table is repeated here for the collector).
+const CONSENT_PLUGIN_DIRS: Array<{ id: string; dir: RegExp }> = [
+  { id: 'complianz', dir: /\/wp-content\/plugins\/complianz[^/]*\//i },
+  { id: 'cookieyes', dir: /\/wp-content\/plugins\/cookie-law-info\//i },
+  { id: 'cookie-notice', dir: /\/wp-content\/plugins\/cookie-notice\//i },
+  { id: 'real-cookie-banner', dir: /\/wp-content\/plugins\/real-cookie-banner[^/]*\//i },
+  { id: 'borlabs-cookie', dir: /\/wp-content\/plugins\/borlabs-cookie\//i },
+  { id: 'iubenda', dir: /\/wp-content\/plugins\/iubenda[^/]*\//i },
+  { id: 'cookiebot', dir: /\/wp-content\/plugins\/cookiebot\//i },
+  { id: 'gdpr-cookie-compliance', dir: /\/wp-content\/plugins\/gdpr-cookie-compliance\//i },
+  { id: 'webtoffee-cookie-consent', dir: /\/wp-content\/plugins\/webtoffee-(?:cookie-consent|gdpr-cookie-consent)[^/]*\//i },
+];
+
+// Hosted consent tools, by the host their script loads from.
+const HOSTED_CONSENT_TOOLS: Array<{ id: string; host: RegExp }> = [
+  { id: 'onetrust', host: /(^|\.)(cookielaw\.org|cookiepro\.com|onetrust\.com)$/i },
+  { id: 'cookiebot', host: /(^|\.)cookiebot\.(com|eu)$/i },
+  { id: 'usercentrics', host: /(^|\.)usercentrics\.(eu|com)$/i },
+  { id: 'didomi', host: /(^|\.)privacy-center\.org$/i },
+  { id: 'cookieyes', host: /(^|\.)cdn-cookieyes\.com$/i },
+  { id: 'termly', host: /(^|\.)termly\.io$/i },
+  { id: 'iubenda', host: /(^|\.)iubenda\.com$/i },
+  { id: 'osano', host: /(^|\.)osano\.com$/i },
+  { id: 'trustarc', host: /(^|\.)(trustarc|truste)\.com$/i },
+  { id: 'sourcepoint', host: /(^|\.)privacy-mgmt\.com$/i },
+  { id: 'consentmanager', host: /(^|\.)consentmanager\.(net|de)$/i },
+  { id: 'quantcast-choice', host: /(^|\.)(inmobi\.com|consensu\.org)$/i },
+];
+
+/**
+ * The consent tool whose own script `url` is, or undefined. A WordPress plugin is
+ * named by its directory on any host, so a CDN mirror of the site's /wp-content/
+ * (2026-10-10 field run: WebToffee served from an nxedge.io edge) still counts.
+ */
+export function consentToolOfScript(url: string): string | undefined {
+  const plugin = CONSENT_PLUGIN_DIRS.find((p) => p.dir.test(url));
+  if (plugin) return plugin.id;
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
+  return HOSTED_CONSENT_TOOLS.find((t) => t.host.test(host))?.id;
 }

@@ -104,6 +104,8 @@ export interface PartyStore {
   t?: number;
   phase?: Phase;
   writePhases?: Phase[];
+  /** Every write: when, on which page, in which phase — so a write at the instant of a choice can be told from one after it. */
+  writes?: Array<{ t: number; pageIndex: number; phase: Phase }>;
 }
 
 export interface PartyFacts {
@@ -163,6 +165,45 @@ export function phaseAt(t: number, bannerShownT: number | undefined, choices: Ch
   return t < bannerShownT ? 'before-banner' : 'before-choice';
 }
 
+const WP_ASSET = /^\/wp-(?:content|includes)\//;
+const WP_THEME = /^\/wp-content\/themes\/([^/]+)\//;
+
+/**
+ * Hosts that serve the site's own WordPress files from a CDN (a pull zone or an
+ * edge cache mirroring /wp-content/): the site's files, not a third party. Proof
+ * is strict, else the host stays an unknown party for the owner to decide: every
+ * request to it is a WordPress asset path, and it serves a theme directory the
+ * site's own domain also serves (a theme is the site's own; plugins and uploads
+ * paths are shared by every WordPress site). Field run 2026-10-10: blackstaramps.com
+ * served its theme, plugins and uploads from an nxedge.io edge, and the report
+ * asked to gate its consent plugin's script as an unknown advertiser.
+ */
+export function siteAssetMirrors(urls: string[], siteDomain: string): Set<string> {
+  const ownThemes = new Set<string>();
+  const byHost = new Map<string, { allWp: boolean; themes: Set<string> }>();
+  for (const raw of urls) {
+    let u: URL;
+    try {
+      u = new URL(raw);
+    } catch {
+      continue;
+    }
+    if (!/^https?:$/.test(u.protocol)) continue;
+    const theme = WP_THEME.exec(u.pathname)?.[1];
+    if (registrableDomain(u.hostname) === siteDomain) {
+      if (theme) ownThemes.add(theme);
+      continue;
+    }
+    const h = byHost.get(u.hostname) ?? { allWp: true, themes: new Set<string>() };
+    if (!WP_ASSET.test(u.pathname)) h.allWp = false;
+    if (theme) h.themes.add(theme);
+    byHost.set(u.hostname, h);
+  }
+  const out = new Set<string>();
+  for (const [host, h] of byHost) if (h.allWp && [...h.themes].some((t) => ownThemes.has(t))) out.add(host);
+  return out;
+}
+
 function stripHash(u: string): string {
   return u.replace(/#.*$/, '');
 }
@@ -210,11 +251,13 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
 
   const titleAt = (pageIndex: number): string | undefined => snapshot.pages[pageIndex]?.title;
   const parties = new Map<string, PartyFacts>();
+  const mirrors = siteAssetMirrors(events.filter((e): e is RequestEvent => e.type === 'request').map((e) => e.url), siteDomain);
 
   const partyFor = (host: string, pathname: string): { id: string; entry?: KnowledgeEntry; domain: string; cnameOf?: string } | null => {
     const domain = registrableDomain(host);
     let effectiveHost = host;
     let cnameOf: string | undefined;
+    if (mirrors.has(host)) return null; // the site's own files on its CDN
     if (domain === siteDomain) {
       const target = cname.get(host);
       if (!target) return null; // first party
@@ -315,9 +358,13 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
       if ((c.maxAgeSec !== undefined && c.maxAgeSec <= 0) || (c.maxAgeSec === undefined && c.expires && Date.parse(c.expires) / 1000 <= startEpoch + e.t / 1000 + 1)) continue;
       const lifetimeDays = c.maxAgeSec !== undefined ? c.maxAgeSec / 86400 : c.expires ? Math.max(0, (Date.parse(c.expires) / 1000 - startEpoch) / 86400) : 0;
       const previous = f.stores.find(s=>s.name===c.name&&s.kind==='cookie');
-      if (previous) previous.writePhases = [...new Set([...(previous.writePhases ?? (previous.phase ? [previous.phase] : [])), phaseAt(e.t, bannerShownT, choices)])];
+      const write = { t: e.t, pageIndex: e.pageIndex ?? 0, phase: phaseAt(e.t, bannerShownT, choices) };
+      if (previous) {
+        previous.writePhases = [...new Set([...(previous.writePhases ?? (previous.phase ? [previous.phase] : [])), write.phase])];
+        previous.writes = [...(previous.writes ?? []), write];
+      }
       if (!previous) {
-        f.stores.push({ name: c.name, kind: 'cookie', lifetimeDays: Math.round(lifetimeDays), setBy: 'header', setByUrl: e.url, t: e.t, phase: phaseAt(e.t, bannerShownT, choices) });
+        f.stores.push({ name: c.name, kind: 'cookie', lifetimeDays: Math.round(lifetimeDays), setBy: 'header', setByUrl: e.url, t: e.t, phase: write.phase, writes: [write] });
       }
     }
   }
@@ -373,6 +420,15 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
     return undefined;
   };
   const cookieExpiry = new Map(snapshot.cookies.map((c) => [c.name, c.expires]));
+  // A name the knowledge base assigns to a vendor belongs to that vendor, whichever
+  // script wrote it: gtag.js writes _ga and _gcl_au, but they are Google Analytics'
+  // and Google Ads' identifiers, and listing them under the tag loader as well put
+  // the same cookie on two rows (storyfolder.com, 2026-10-08). The writing script
+  // decides only for names the knowledge base does not know.
+  const storeOwner = (name: string, chain: string[]) => {
+    const entry = lookupStore(kb, name);
+    return entry ? ensure({ id: entry.id, entry, domain: entry.match.hosts[0] }, entry.match.hosts[0]) : writerParty(chain);
+  };
   for (const e of events) {
     if (e.type === 'cookie-write') {
       // Expiring a cookie (Max-Age<=0, or an expiry at or before the write) deletes
@@ -380,34 +436,33 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
       // refusal is not the vendor storing anything (E4: counted as "storage writes
       // after rejecting", which turned held vendors red).
       if (isCookieDeletion(e.attributes, startEpoch + e.t / 1000)) continue;
-      const f = writerParty(e.chain) ?? (() => {
-        const entry = lookupStore(kb, e.name);
-        return entry ? ensure({ id: entry.id, entry, domain: entry.match.hosts[0] }, entry.match.hosts[0]) : undefined;
-      })();
+      const f = storeOwner(e.name, e.chain);
       if (!f) continue;
       const previous = f.stores.find(s=>s.name===e.name&&s.kind==='cookie');
-      if(previous){previous.writePhases=[...new Set([...(previous.writePhases??(previous.phase?[previous.phase]:[])),phaseAt(e.t,bannerShownT,choices)])];continue;}
+      const write = { t: e.t, pageIndex: e.pageIndex ?? 0, phase: phaseAt(e.t, bannerShownT, choices) };
+      if(previous){previous.writePhases=[...new Set([...(previous.writePhases??(previous.phase?[previous.phase]:[])),write.phase])];previous.writes=[...(previous.writes??[]),write];continue;}
       const exp = cookieExpiry.get(e.name);
       const maxAge = /max-age=(\d+)/i.exec(e.attributes ?? '')?.[1];
       const lifetimeDays = exp !== undefined && exp > 0 ? (exp - startEpoch) / 86400 : maxAge ? Number(maxAge) / 86400 : 0;
-      f.stores.push({ name: e.name, kind: 'cookie', lifetimeDays: Math.round(lifetimeDays), setBy: 'script', setByUrl: e.chain[0], t: e.t, phase: phaseAt(e.t, bannerShownT, choices) });
+      f.stores.push({ name: e.name, kind: 'cookie', lifetimeDays: Math.round(lifetimeDays), setBy: 'script', setByUrl: e.chain[0], t: e.t, phase: write.phase, writes: [write] });
     } else if (e.type === 'storage-write') {
-      const f = writerParty(e.chain) ?? (() => {
-        const entry = lookupStore(kb, e.key);
-        return entry ? ensure({ id: entry.id, entry, domain: entry.match.hosts[0] }, entry.match.hosts[0]) : undefined;
-      })();
+      const f = storeOwner(e.key, e.chain);
       if (!f) continue;
       const previous = f.stores.find(s=>s.name===e.key&&s.kind===e.area);
-      if(previous){previous.writePhases=[...new Set([...(previous.writePhases??(previous.phase?[previous.phase]:[])),phaseAt(e.t,bannerShownT,choices)])];continue;}
-      f.stores.push({ name: e.key, kind: e.area, lifetimeDays: e.area === 'local' ? null : 0, setBy: 'script', setByUrl: e.chain[0], t: e.t, phase: phaseAt(e.t, bannerShownT, choices) });
+      const write = { t: e.t, pageIndex: e.pageIndex ?? 0, phase: phaseAt(e.t, bannerShownT, choices) };
+      if(previous){previous.writePhases=[...new Set([...(previous.writePhases??(previous.phase?[previous.phase]:[])),write.phase])];previous.writes=[...(previous.writes??[]),write];continue;}
+      f.stores.push({ name: e.key, kind: e.area, lifetimeDays: e.area === 'local' ? null : 0, setBy: 'script', setByUrl: e.chain[0], t: e.t, phase: write.phase, writes: [write] });
     }
   }
+  // One owner per cookie in the jar: GCL_AW_P on .googleadservices.com is Google Ads'
+  // by name and also matched the Ads party's domain, so it was listed twice.
+  const cookieClaimed = (name: string) => [...parties.values()].some((p) => p.stores.some((s) => s.name === name && s.kind === 'cookie'));
   // Known first-party cookie names (e.g. _ga, _fbp) the shim didn't see written.
   for (const c of snapshot.cookies) {
     const entry = lookupStore(kb, c.name);
     if (!entry) continue;
+    if (cookieClaimed(c.name)) continue;
     const f = parties.get(entry.id) ?? ensure({ id: entry.id, entry, domain: entry.match.hosts[0] }, entry.match.hosts[0]);
-    if (f.stores.some((s) => s.name === c.name && s.kind === 'cookie')) continue;
     f.stores.push({ name: c.name, kind: 'cookie', lifetimeDays: c.expires > 0 ? Math.round((c.expires - startEpoch) / 86400) : 0, setBy: 'known-name' });
   }
   // Third-party cookies in the jar, by domain.
@@ -415,7 +470,7 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
     const d = registrableDomain(c.domain.replace(/^\./, ''));
     if (d === siteDomain) continue;
     const f = [...parties.values()].find((p) => p.domain === d);
-    if (!f || f.stores.some((s) => s.name === c.name && s.kind === 'cookie')) continue;
+    if (!f || cookieClaimed(c.name)) continue;
     f.stores.push({ name: c.name, kind: 'cookie', lifetimeDays: c.expires > 0 ? Math.round((c.expires - startEpoch) / 86400) : 0, setBy: 'header' });
   }
 

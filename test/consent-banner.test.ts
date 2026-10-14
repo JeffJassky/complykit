@@ -27,6 +27,17 @@ describe('consent readout confirmation', () => {
     expect(readoutConfirms('reject', { osano: { MARKETING: 'ACCEPT', OPT_OUT: 'ACCEPT' } })).toBe(true); // US opt-out mode
     expect(readoutConfirms('reject', { tcfData: { eventStatus: 'useractioncomplete', purpose1: false } })).toBe(true);
   });
+
+  it('cookieconsent v3 bundled with no window global: its cc_cookie decides (storyfolder.com, 2026-10-08)', () => {
+    const cc = (categories: string[]) => ({ cookieconsentCookie: { categories, revision: 1 } });
+    expect(readoutConfirms('accept', cc(['necessary', 'functional', 'analytics', 'advertising']))).toBe(true);
+    expect(readoutConfirms('reject', cc(['necessary']))).toBe(true);
+    expect(readoutConfirms('accept', cc(['necessary']))).toBe(false);
+    expect(readoutConfirms('reject', cc(['necessary', 'analytics']))).toBe(false);
+    // The API reports opt-out defaults as accepted before a choice; the stored cookie wins.
+    expect(readoutConfirms('reject', { ...cc(['necessary']), cookieconsent: { acceptedCategories: ['necessary', 'analytics', 'advertising'] } })).toBe(true);
+    expect(readoutConfirms('accept', { cookieconsent: { acceptedCategories: ['necessary', 'analytics'] } })).toBe(true);
+  });
 });
 
 let chromiumAvailable = false;

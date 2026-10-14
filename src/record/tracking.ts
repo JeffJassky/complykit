@@ -4,6 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { ConsentToolRecord } from './consent-tool.js';
 import { ComplykitToolSnapshot, ConsentToolProof } from './consent-tool-proof.js';
+import type { Artifact } from './artifact.js';
 import { MarkupDataUrl, MarkupPage, redactMarkupPages } from './markup.js';
 
 // Consent & tracking evaluation records (plans/consent-design.md §2.4, §3).
@@ -243,6 +244,7 @@ export const OptOutWalkEvent = z.object({
   confirmation: z.string().optional(), // text that confirms an opt-out, if shown
   landedUrl: z.string().optional(),
   performed: z.boolean().optional(), // the scan used the opt-out control (never a form asking for personal data)
+  performedAt: z.number().optional(), // when that control was clicked (timeline ms): the opt-out exists from here
   pageIndex: z.number().int(),
 });
 export type OptOutWalkEvent = z.infer<typeof OptOutWalkEvent>;
@@ -480,10 +482,30 @@ export const PartyInventoryItem = z.object({
 });
 export type PartyInventoryItem = z.infer<typeof PartyInventoryItem>;
 
+// Why a visit was skipped or its choice not completed, as a code the report sorts into "not
+// applicable" (nothing to test), "couldn't test" (the scan's limit) or "blocked" (the site stopped
+// the visitor — a problem). Absent on reports written before it: the report falls back to the reason.
+export const SkipCause = z.enum([
+  'no-banner', // no banner was shown, so there was no choice to make
+  'tool-broken', // the consent tool is on the page but its script crashed before drawing a banner
+  'no-close', // the banner has no way to close it without choosing
+  'settings-dead', // a visible settings control opened nothing
+  'no-category-choice', // the settings offer no per-category choice
+  'no-withdraw-entry', // no way to reopen the consent settings after a choice
+  'no-opt-out-link', // no opt-out link was found
+  'opt-out-asks-personal-data', // the opt-out asks for personal data the scan does not submit
+  'choice-failed', // the scan could not make or confirm the choice
+  'timeout',
+  'crashed',
+  'bot-blocked',
+]);
+export type SkipCause = z.infer<typeof SkipCause>;
+
 export const ScenarioSummary = z.object({
   scenario: ScenarioId,
   status: z.enum(['tested', 'not-tested', 'not-applicable']),
   reason: z.string().optional(),
+  cause: SkipCause.optional(),
   durationMs: z.number().optional(),
   banner: z.object({ found: z.boolean(), cmp: z.string().optional(), shownAtMs: z.number().optional() }).optional(),
   // The consent tool and its stored default on this scenario's fresh profile, read before any interaction.
@@ -540,7 +562,7 @@ const BehaviorObservation = z.object({
     // pixel image, …) per phase: a load the consent tool's gate exists to
     // prevent. Absent on records from older builds (then unknown, not zero).
     loadRequestsByPhase: z.record(z.number().int()).optional(),
-    stores: z.array(z.object({name:z.string(),kind:z.string(),writePhase:z.string().optional(),writePhases:z.array(z.string()),presentAtEnd:z.boolean(),attribution:z.enum(['observed','known-name'])})),
+    stores: z.array(z.object({name:z.string(),kind:z.string(),writePhase:z.string().optional(),writePhases:z.array(z.string()),presentAtEnd:z.boolean(),thirdParty:z.boolean().optional(),attribution:z.enum(['observed','known-name'])})),
   })),
 });
 // --- Markup inspection (plans/client-consent-design.md §3 #1–#2, §5 item 2) ----------
@@ -1032,4 +1054,20 @@ export function readTrackingEvaluation(dir: string): TrackingEvaluation | undefi
     throw new Error(`${file}: tracking schemaVersion ${raw.schemaVersion} is newer than this build understands (${TRACKING_SCHEMA_VERSION}).`);
   }
   return TrackingEvaluation.parse(raw);
+}
+
+/** One visit's timeline as the rules consume it (a `consent-timeline` artifact). */
+export function timelineArtifact(tl: Timeline, property: string, instanceUrl: string, capturedAt: string): Artifact {
+  const runSuffix = (tl.snapshot.run ?? 1) > 1 ? `-run${tl.snapshot.run}` : '';
+  return {
+    kind: 'consent-timeline',
+    subject: { property, routePattern: '*', instanceUrl, state: `${tl.location.id}/${tl.snapshot.scenario}${runSuffix}` },
+    capturedAt,
+    payloadPath: tl.snapshot.evidence.timeline,
+    scenario: tl.snapshot.scenario,
+    location: tl.location as unknown as Record<string, unknown>,
+    verification: tl.verification as unknown as Record<string, unknown>,
+    events: tl.events as unknown as Record<string, unknown>[],
+    snapshot: tl.snapshot as unknown as Record<string, unknown>,
+  };
 }

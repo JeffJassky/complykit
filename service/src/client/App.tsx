@@ -3,6 +3,7 @@ import type { JobSummary } from '../shared/api';
 import { Header } from './components/Header';
 import { Home } from './components/Home';
 import { KnowledgeBase } from './components/KnowledgeBase';
+import LegalGuidePage from './components/LegalGuide';
 import { ReportPage } from './components/ReportPage';
 import { SitePage, SitesList } from './components/Sites';
 import { Toasts, type Toast } from './components/Toasts';
@@ -22,7 +23,7 @@ export function App() {
   }, []);
   const dismissToast = useCallback((id: number) => setToasts((list) => list.filter((t) => t.id !== id)), []);
 
-  const { view, domain: siteDomain, jobId } = useHashRoute();
+  const { view, domain: siteDomain, jobId, place } = useHashRoute();
   const viewRef = useRef({ view, jobId });
   viewRef.current = { view, jobId };
 
@@ -85,6 +86,10 @@ export function App() {
       ) : view === 'sites' ? (
         <main id="main" ref={mainRef} tabIndex={-1} className="kb-layout" aria-label="Sites">
           {siteDomain ? <SitePage domain={siteDomain} jobs={loaded ? jobs : null} /> : <SitesList />}
+        </main>
+      ) : view === 'laws' ? (
+        <main id="main" ref={mainRef} tabIndex={-1} className="kb-layout" aria-label="Legal guide">
+          <LegalGuidePage place={place} />
         </main>
       ) : view === 'kb' ? (
         <main id="main" ref={mainRef} tabIndex={-1} className="kb-layout" aria-label="Knowledge base">

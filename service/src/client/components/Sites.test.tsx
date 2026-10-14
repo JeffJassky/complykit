@@ -5,7 +5,7 @@ import { api, ApiError } from '../lib/api';
 import { configDownloads, configStoredOf, generatableRuns, siteRuns, generateErrorText, summarizeWorkspace } from '../lib/sites';
 import { parseHash, siteHref } from '../lib/useHashView';
 import { checklistFromWorkspace, checklistProgress, readTaskValue, reportChecklistHref } from '../lib/checklist';
-import { LIVE_REFRESH_MS, startLiveRefresh } from '../lib/useSites';
+import { startLiveRefresh } from '../lib/useSites';
 import { ChecklistPanel, SitePageView, SitesListView } from './Sites';
 
 const NOW = Date.parse('2026-10-06T12:00:00Z');
@@ -431,35 +431,30 @@ describe('rescan and progress on the sites list', () => {
 });
 
 describe('the site page stays current (verifies done elsewhere)', () => {
-  it('re-reads on focus, when the page becomes visible, and every 30 s while visible — not while hidden; stop removes it all', () => {
-    const win = new EventTarget();
-    const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
-    let tick: (() => void) | undefined;
-    let cleared = false;
-    const refresh = vi.fn();
-    const stop = startLiveRefresh(refresh, {
-      win,
-      doc,
-      setInterval: ((fn: () => void, ms: number) => ((tick = fn), expect(ms).toBe(LIVE_REFRESH_MS), 1)) as unknown as typeof setInterval,
-      clearInterval: (() => (cleared = true)) as unknown as typeof clearInterval,
-    });
-    expect(LIVE_REFRESH_MS).toBe(30_000);
-    win.dispatchEvent(new Event('focus'));
-    expect(refresh).toHaveBeenCalledTimes(1);
-    tick!();
-    expect(refresh).toHaveBeenCalledTimes(2);
-    doc.visibilityState = 'hidden';
-    doc.dispatchEvent(new Event('visibilitychange'));
-    tick!();
-    expect(refresh).toHaveBeenCalledTimes(2); // hidden: no poll, no read
-    doc.visibilityState = 'visible';
-    doc.dispatchEvent(new Event('visibilitychange'));
-    expect(refresh).toHaveBeenCalledTimes(3);
-    stop();
-    expect(cleared).toBe(true);
-    win.dispatchEvent(new Event('focus'));
-    doc.dispatchEvent(new Event('visibilitychange'));
-    expect(refresh).toHaveBeenCalledTimes(3);
+  it('re-reads on focus and when the page becomes visible — not while hidden, and never on a timer; stop removes it all', () => {
+    vi.useFakeTimers();
+    try {
+      const win = new EventTarget();
+      const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+      const refresh = vi.fn();
+      const stop = startLiveRefresh(refresh, { win, doc });
+      win.dispatchEvent(new Event('focus'));
+      expect(refresh).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(10 * 60_000);
+      expect(refresh).toHaveBeenCalledTimes(1); // an open, visible page left alone makes no requests
+      doc.visibilityState = 'hidden';
+      doc.dispatchEvent(new Event('visibilitychange'));
+      expect(refresh).toHaveBeenCalledTimes(1);
+      doc.visibilityState = 'visible';
+      doc.dispatchEvent(new Event('visibilitychange'));
+      expect(refresh).toHaveBeenCalledTimes(2);
+      stop();
+      win.dispatchEvent(new Event('focus'));
+      doc.dispatchEvent(new Event('visibilitychange'));
+      expect(refresh).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a re-read with statuses stored elsewhere shows them: To do → Verified, and the rescan’s “not verified” count drops', () => {

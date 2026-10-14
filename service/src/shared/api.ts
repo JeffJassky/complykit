@@ -3,6 +3,8 @@
 // except the pure URL-list parser both sides use (so the textarea preview and
 // the server agree exactly on what will be scanned).
 
+import type { LawId } from './laws.js';
+
 export type CheckKind = 'consent' | 'accessibility';
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
@@ -18,6 +20,11 @@ export interface CreateBatchRequest {
   /** Also repeat every visitor choice on a slowed connection (Slow 3G, CPU x4) to catch timing races; about 3x longer.
    *  Consent only; ignored with quick (quick is always one pass). Default false. */
   slowRepeat?: boolean;
+  /** Consent only: the laws to scan under, one location each (shared/laws.ts). Absent = today's single
+   *  scan from the service's own location. When present: non-empty, valid ids, and `authorized` must be true. */
+  laws?: LawId[];
+  /** "I am authorized to scan this site." Required with `laws`; the server stamps the time on the job. */
+  authorized?: boolean;
 }
 
 export interface CreateBatchResponse {
@@ -50,6 +57,37 @@ export interface JobMetrics {
   scenarios: Array<{ location: string; scenario: string; run?: number; status: 'running' | 'tested' | 'not-tested' | 'not-applicable'; reason?: string; durationMs?: number }>;
   /** Every planned visit, in run order, as each location's plan arrives (absent on jobs from before it existed). */
   planned?: Array<{ location: string; scenario: string; run?: number }>;
+  /** One entry per law the job scans under, in catalog order. Absent on jobs without laws and on jobs from before it existed. */
+  laws?: LawScanProgress[];
+}
+
+/**
+ * One law's collection (plans/per-law-report-contract.md):
+ * waiting → starting (worker or child) → verifying (location) → scanning → collected → done (merged).
+ * failed is terminal and carries `error`.
+ */
+export type LawScanState = 'waiting' | 'starting' | 'verifying' | 'scanning' | 'collected' | 'done' | 'failed';
+
+export interface LawScanProgress {
+  id: LawId;
+  /** The complykit location ('de', 'us-ca', …). */
+  locationId: string;
+  /** Fly region ('fra'); the client labels it from LAWS. */
+  region: string;
+  /** Runs on the primary itself. */
+  local: boolean;
+  state: LawScanState;
+  /** failed: why (the same text passed to the merge as --failed, or the location's verdict and note). */
+  error?: string;
+  visitsDone: number;
+  /** 0 until the location announces its plan. */
+  visitsTotal: number;
+  verdict?: string;
+  observed?: string;
+  /** Consent tool id as the events carry it, once a visit saw one. */
+  banner?: string;
+  /** The visit running now at this location. */
+  current?: { scenario: string; run?: number };
 }
 
 export interface JobResult {
@@ -82,6 +120,10 @@ export interface JobSummary {
   quick: boolean;
   /** The consent scan repeats every visitor choice on a slowed connection (see CreateBatchRequest.slowRepeat). */
   slowRepeat: boolean;
+  /** The laws this consent job scans under (one location each); absent on single-location jobs. */
+  laws?: LawId[];
+  /** When the submitter confirmed they are authorized to scan the site (ISO). */
+  authorizedAt?: string;
   status: JobStatus;
   createdAt: string; // ISO
   startedAt?: string;
@@ -465,6 +507,9 @@ export interface RescanRequest {
   quick?: boolean;
   /** Repeat on a slowed connection (full scans only); default: as the site's latest job. Always false when the rescan is quick. */
   slowRepeat?: boolean;
+  /** Laws to scan under; default: as the site's latest job. Requires `authorized` when the result has laws. */
+  laws?: LawId[];
+  authorized?: boolean;
 }
 
 /** POST /api/sites/:domain/rescan: a new consent job with the options of the site's latest one (quick / full as the request chooses). */
@@ -473,7 +518,7 @@ export interface RescanResponse {
   /** The new job (queued). */
   job: JobSummary;
   /** What it repeats: the latest job's URL, checks, quick and slowRepeat flags (or the workspace's newest run URL when no job is left). The new job's own `quick` / `slowRepeat` are the request's choice when it made one. */
-  from: { jobId?: string; url: string; checks: CheckKind[]; quick: boolean; slowRepeat: boolean };
+  from: { jobId?: string; url: string; checks: CheckKind[]; quick: boolean; slowRepeat: boolean; laws?: LawId[] };
 }
 
 /** The job's consent report re-rendered from its saved run with the site's current workspace (R2). */
@@ -548,7 +593,8 @@ export interface ReportServiceConfig {
 // when the run is written and on every re-render). The service never imports
 // the package; a test checks this mirror against the builder's output.
 
-export type OwnerCellState = 'pending' | 'ok' | 'mismatch' | 'needs-decision' | 'not-checked';
+/** not-checked = the scan could not (its limit); not-applicable = nothing to test; blocked = the site stopped the visitor, a problem. */
+export type OwnerCellState = 'pending' | 'ok' | 'mismatch' | 'needs-decision' | 'not-checked' | 'not-applicable' | 'blocked';
 
 export interface OwnerCell {
   state: OwnerCellState;
@@ -565,7 +611,7 @@ export interface OwnerColumn {
   /** Plain name of the visitor action ("After rejection"). */
   label: string;
   locationLabel?: string;
-  state: 'pending' | 'running' | 'done' | 'not-checked';
+  state: 'pending' | 'running' | 'done' | 'not-checked' | 'not-applicable' | 'blocked';
   /** Why the whole column is not checked — said once, not per cell. */
   note?: string;
 }
@@ -611,6 +657,18 @@ export interface OwnerToolActivity {
   hostedOn?: { provider: string; name: string; matchesSite: boolean };
 }
 
+/** One location of the scan: its verdict, its visits, and the banner its visits saw. */
+export interface OwnerLocationSummary {
+  id: string;
+  label: string;
+  verified: boolean;
+  observed?: string;
+  note?: string;
+  visitsDone: number;
+  visitsTotal: number;
+  banner: { state: 'pending' | 'detected' | 'none'; provider?: string; visitsWithBanner: number; visitsChecked: number };
+}
+
 export interface OwnerReport {
   version: 1;
   stage: 'live' | 'final';
@@ -628,15 +686,17 @@ export interface OwnerReport {
     /** Set on a finished scan when no visit reached the site: the page shows one notice instead of the banner, matrix and to-do list. */
     unreachable?: { reason: string };
   };
-  banner: { state: 'pending' | 'detected' | 'none'; provider?: string; visitsWithBanner: number; visitsChecked: number; /** Consent tools seen loading (banner or not). */ consentTools?: string[] };
+  banner: { state: 'pending' | 'detected' | 'none'; provider?: string; visitsWithBanner: number; visitsChecked: number; /** Consent tools seen loading (banner or not). */ consentTools?: string[]; /** The consent tool is installed but crashed before drawing a banner. */ broken?: { reason: string } };
   matrix: {
     columns: OwnerColumn[];
     tools: OwnerToolRow[];
-    counts: Record<'ok' | 'mismatch' | 'needsDecision' | 'pending' | 'notChecked', number>;
+    counts: Record<'ok' | 'mismatch' | 'needsDecision' | 'pending' | 'notChecked' | 'notApplicable' | 'blocked', number>;
   };
   /** Tools whose purpose is not known yet (the to-do list's first items while the checklist does not exist yet). */
   decisions: Array<{ partyId: string; label: string; domain: string; classKey: string }>;
   todo?: { tasks: RemediationTask[]; configAt?: string; runId?: string };
+  /** Every location of the scan, in plan order. Absent on reports written before it existed. */
+  locations?: OwnerLocationSummary[];
 }
 
 /** GET /api/jobs/:id/report — everything the report page shows, in one poll. */
@@ -646,6 +706,13 @@ export interface JobReportResponse {
   domain: string;
   /** The owner report: live while the scan runs (null until the first one is written), final when done. Null for an accessibility-only job. */
   report: OwnerReport | null;
+  /**
+   * Multi-law jobs: one entry per law, catalog order. `report` is that law's live owner
+   * report (its collector's, one location) while the job runs, or after it failed or was
+   * cancelled; null before its first visit finishes, and null once the job is done (the
+   * final `report` covers every location: see OwnerReport.locations).
+   */
+  laws?: Array<{ id: LawId; progress: LawScanProgress; report: OwnerReport | null }>;
   todo: {
     /**
      * waiting   — the scan is running; the list is made when it finishes
