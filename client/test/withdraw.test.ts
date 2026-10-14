@@ -26,7 +26,7 @@ const config = (): any => {
   return c;
 };
 
-const PAGE = (scriptAttrs: string) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Withdraw fixture</title>
+const PAGE = (scriptAttrs: string, cfg: any = config()) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Withdraw fixture</title>
 <script>
   window.ckLog = function (e) { var l = JSON.parse(sessionStorage.getItem('testlog') || '[]'); l.push(e); sessionStorage.setItem('testlog', JSON.stringify(l)); };
   window.dataLayer = [];
@@ -40,7 +40,7 @@ const PAGE = (scriptAttrs: string) => `<!doctype html><html lang="en"><head><met
   };
   document.cookie = 'site_pref=dark; Path=/';
 </script>
-<script type="application/json" id="complykit-config">${JSON.stringify(config())}</script>
+<script type="application/json" id="complykit-config">${JSON.stringify(cfg)}</script>
 <script src="/complykit-consent.js" ${scriptAttrs}></script>
 <script type="text/plain" data-ck-inline="meta">
   window.fbq = function () { ckLog(['fbq'].concat([].slice.call(arguments), document.cookie.indexOf('_fbp=') >= 0)); };
@@ -68,10 +68,12 @@ afterAll(async () => {
   await server?.close();
 });
 
-async function load(scriptAttrs = '', origin = server.origin): Promise<Page> {
+async function load(scriptAttrs = '', origin = server.origin, tweak?: (c: any) => void): Promise<Page> {
+  const cfg = config();
+  tweak?.(cfg);
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  await page.route('**/shop/withdraw-page', (route) => route.fulfill({ contentType: 'text/html; charset=utf-8', body: PAGE(scriptAttrs) }));
+  await page.route('**/shop/withdraw-page', (route) => route.fulfill({ contentType: 'text/html; charset=utf-8', body: PAGE(scriptAttrs, cfg) }));
   await page.route('**/consent-record', (route) => route.fulfill({ status: 204 }));
   if (origin !== server.origin) {
     // A named host (the fixture server is 127.0.0.1, which has no parent domain): serve the IIFE for it too.
@@ -217,15 +219,15 @@ describe('cleanup reach and report (diagnostics.withdrawal)', () => {
     await page.context().close();
   });
 
-  it('deletion strings: http plain; https adds Secure and Secure+Partitioned for every Domain / Path pair', () => {
+  it('deletion strings: http plain; https adds Secure and Secure+SameSite=None+Partitioned for every Domain / Path pair', () => {
     const http = deletionStrings('a.shop.example.com', '/x/y', false, '_c');
     expect(http.some((c) => /Secure|Partitioned/.test(c))).toBe(false);
     const https = deletionStrings('a.shop.example.com', '/x/y', true, '_c');
     // 4 host forms (host-only + 3 Domain=, never the bare TLD) x 5 paths (/, /x, /x/, /x/y, /x/y/) x 2 variants
     expect(https).toHaveLength(4 * 5 * 2);
-    expect(https.filter((c) => c.endsWith('; Secure; Partitioned'))).toHaveLength(4 * 5);
-    expect(https).toContain('_c=; Max-Age=0; Path=/; Secure; Partitioned');
-    expect(https).toContain('_c=; Max-Age=0; Path=/x/; Domain=example.com; Secure; Partitioned');
+    expect(https.filter((c) => c.endsWith('; Secure; SameSite=None; Partitioned'))).toHaveLength(4 * 5);
+    expect(https).toContain('_c=; Max-Age=0; Path=/; Secure; SameSite=None; Partitioned');
+    expect(https).toContain('_c=; Max-Age=0; Path=/x/; Domain=example.com; Secure; SameSite=None; Partitioned');
   });
 });
 
@@ -278,6 +280,83 @@ describe('sweep on load of a stored choice (diagnostics.withdrawalSweep)', () =>
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => (window as any).ComplyKit.diagnostics.withdrawalSweep)).toBeUndefined();
     expect(await hasCookie(page, '_fbp')).toBe(true);
+    await page.context().close();
+  });
+});
+
+describe("protected names: a granted or necessary vendor's cookie survives a denied vendor's pattern", () => {
+  // Meta (advertising) gets a deliberately broad pattern that also matches Analytics' _ga and a necessary vendor's _gkeep.
+  const broad = (c: any) => {
+    c.vendors.find((v: any) => v.id === 'meta.pixel').stores.push({ name: '^_g', kind: 'cookie' });
+    c.vendors.push({ id: 'site.necessary', label: 'Site', category: 'necessary', control: 'none', stores: [{ name: '^_gkeep$', kind: 'cookie' }] });
+  };
+  const hasCookie = async (p: Page, name: string) => (await p.context().cookies()).some((c) => c.name === name);
+  const partial = (p: Page) => p.evaluate(() => (window as any).ComplyKit.init(null).set({ necessary: true, analytics: true, advertising: false }));
+
+  it("partial consent: denying one category leaves the granted category's cookie, even under a broad pattern", async () => {
+    const page = await load('data-complykit-reload="none"', server.origin, broad);
+    await grant(page);
+    await page.evaluate(() => {
+      document.cookie = '_ga=GA1; Path=/';
+      document.cookie = '_gkeep=1; Path=/';
+      document.cookie = '_gother=1; Path=/';
+    });
+    await partial(page);
+    await page.waitForFunction(() => (window as any).ComplyKit.diagnostics.withdrawal);
+    expect(await hasCookie(page, '_fbp')).toBe(false); // the denied vendor's own cookie goes
+    expect(await hasCookie(page, '_gother')).toBe(false); // matched only by the denied vendor's pattern
+    expect(await hasCookie(page, '_ga')).toBe(true); // analytics is still granted
+    expect(await hasCookie(page, '_gkeep')).toBe(true); // necessary vendor's
+    await page.context().close();
+  });
+
+  it("the sweep on load likewise keeps a granted category's cookie", async () => {
+    const page = await load('data-complykit-reload="none"', server.origin, broad);
+    await grant(page);
+    await partial(page);
+    await page.waitForFunction(() => (window as any).ComplyKit.diagnostics.withdrawal);
+    await page.context().addInitScript(() =>
+      document.addEventListener('DOMContentLoaded', () => {
+        document.cookie = '_ga=GA1; Path=/';
+        document.cookie = '_fbp=again; Path=/';
+        document.cookie = '_gkeep=1; Path=/';
+      }),
+    );
+    await page.reload();
+    const w = (await page.waitForFunction(() => (window as any).ComplyKit.diagnostics.withdrawalSweep).then((h) => h.jsonValue())) as any;
+    expect(w.cleared).toContain('cookie:_fbp');
+    expect(w.cleared).not.toContain('cookie:_ga');
+    expect(w.cleared).not.toContain('cookie:_gkeep');
+    expect(await hasCookie(page, '_ga')).toBe(true);
+    expect(await hasCookie(page, '_gkeep')).toBe(true);
+    expect(await hasCookie(page, '_fbp')).toBe(false);
+    await page.context().close();
+  });
+
+  it("a full withdrawal still spares a necessary vendor's cookie that a denied vendor's pattern matches", async () => {
+    const page = await load('data-complykit-reload="none"', server.origin, broad);
+    await grant(page);
+    await page.evaluate(() => (document.cookie = '_gkeep=1; Path=/'));
+    await page.evaluate(() => (window as any).ComplyKit.withdraw());
+    await page.waitForFunction(() => (window as any).ComplyKit.diagnostics.withdrawal);
+    expect(await hasCookie(page, '_fbp')).toBe(false);
+    expect(await hasCookie(page, '_gkeep')).toBe(true);
+    await page.context().close();
+  });
+});
+
+describe('record beacon ordering', () => {
+  it('the consent record is sent before the (delayed) reload after a withdrawal', async () => {
+    const page = await load();
+    await grant(page);
+    const events: string[] = [];
+    page.on('request', (r) => {
+      if (/consent-record/.test(r.url())) events.push('record');
+      else if (r.isNavigationRequest() && r.frame() === page.mainFrame()) events.push('reload');
+    });
+    await Promise.all([page.waitForEvent('load'), page.evaluate(() => (window as any).ComplyKit.withdraw())]);
+    expect(events.indexOf('record')).toBeGreaterThanOrEqual(0);
+    expect(events.indexOf('reload')).toBeGreaterThan(events.indexOf('record'));
     await page.context().close();
   });
 });
