@@ -34,20 +34,35 @@
 // Under "withdraw", a choice made in another tab cleans up here but does not
 // reload this tab.
 //
-// What cleanup cannot reach (design §2.3 — cleanup, not control):
-//   - HttpOnly cookies (invisible to document.cookie) and third-party cookies
-//     (another site's jar) — only the vendor or the server can remove those;
-//   - partitioned (CHIPS) cookies, and a cookie whose Domain or Path is not
-//     one of the variants tried. A cookie is deleted by re-setting it with the
-//     same name, Domain and Path, and the page cannot read a cookie's Domain or
-//     Path, so every plausible pair is tried: host-only and each parent domain
-//     down to two labels (the registrable domain is not knowable client-side
-//     without the public suffix list; a public suffix such as "co.uk" is
-//     refused by the browser, harmlessly), × Path "/" and each prefix of the
-//     current path (with and without the trailing slash);
-//   - data a vendor keeps elsewhere (IndexedDB, its servers).
+// What cleanup does, and cannot reach (design §2.3 — cleanup, not control):
+//   - A cookie is deleted by re-setting it with the same name, Domain, Path (and,
+//     for a partitioned/CHIPS cookie, the Partitioned attribute). document.cookie
+//     shows only names, so the synchronous baseline tries every plausible pair:
+//     host-only and each parent domain down to two labels (the registrable domain
+//     is not knowable client-side without the public suffix list; a public suffix
+//     such as "co.uk" is refused by the browser, harmlessly), × Path "/" and each
+//     prefix of the current path (with and without the trailing slash), × on
+//     https the Secure and Secure+Partitioned variants.
+//   - Where the async Cookie Store API exists (Chromium; not Firefox/Safari at
+//     the time of writing) cookieStore.getAll() also reports each cookie's real
+//     Domain / Path / partitioned flag, and the cookie is deleted precisely with
+//     them. That is additive: the brute force always runs first and stays the
+//     baseline. The reload waits for these deletions, bounded (SETTLE_MS).
+//     (getAll() only reports cookies sent to the current URL, so a Path the page
+//     is not under is invisible; and delete() appends "/" to a path, so a cookie
+//     whose Path has no trailing slash is only reachable by the brute force.)
+//   - Afterwards document.cookie and storage are re-read; matching items still
+//     present are listed in `ComplyKit.diagnostics.withdrawal.leftover` (and one
+//     console.warn). Only what the page can see is listed: HttpOnly cookies are
+//     invisible to document.cookie and to cookieStore, so a surviving HttpOnly
+//     cookie is never reported there.
+//   Not reachable at all: HttpOnly cookies and third-party cookies (another
+//   site's jar) — only the vendor or the server can remove those; a cookie on a
+//   Domain / Path none of the variants cover (when cookieStore is absent); data a
+//   vendor keeps elsewhere (IndexedDB, its servers).
 
-import type { ConsentToolConfig } from './config.js';
+import { isNecessaryCategory, type ConsentToolConfig } from './config.js';
+import { diagnostics } from './diagnostics.js';
 import { COOKIE_NAME, STORAGE_KEY, type ConsentStore } from './store.js';
 
 /** On the tool's <script>: "withdraw" (default) | "revoke" | "none". */
@@ -71,33 +86,115 @@ const matches = (config: ConsentToolConfig, categories: string[], kind: string, 
       }),
   );
 
-/** Expire one cookie name under every Domain / Path pair it may have been set with. */
-function expireCookie(name: string): void {
-  const labels = location.hostname.split('.');
+/** Upper bound on waiting for the async cookieStore deletions (and so on the reload). */
+const SETTLE_MS = 500;
+
+/** The `name=; Max-Age=0` strings that expire `name` under every Domain / Path / attribute variant (pure; tested). */
+export function deletionStrings(hostname: string, pathname: string, https: boolean, name: string): string[] {
+  const labels = hostname.split('.');
   const paths = ['/'];
   let p = '';
-  for (const seg of location.pathname.split('/')) if (seg) paths.push((p += `/${seg}`), `${p}/`);
+  for (const seg of pathname.split('/')) if (seg) paths.push((p += `/${seg}`), `${p}/`);
+  const out: string[] = [];
   for (let i = 0; i < labels.length; i++) {
     // i = 0 is the host-only cookie (no Domain); then each parent with >= 2 labels.
     const d = i ? `; Domain=${labels.slice(i - 1).join('.')}` : '';
-    for (const path of paths) document.cookie = `${name}=; Max-Age=0; Path=${path}${d}${location.protocol === 'https:' ? '; Secure' : ''}`;
+    for (const path of paths) {
+      const base = `${name}=; Max-Age=0; Path=${path}${d}`;
+      // A partitioned cookie is only deleted by a write that is itself Partitioned (+ Secure).
+      out.push(...(https ? [`${base}; Secure`, `${base}; Secure; Partitioned`] : [base]));
+    }
   }
+  return out;
 }
 
-/** Delete the reachable stores of `categories`: cookies + local/session storage keys matching their vendors' `stores` patterns. */
-export function clearStores(config: ConsentToolConfig, categories: string[]): void {
+const expireCookie = (name: string): void => {
+  for (const c of deletionStrings(location.hostname, location.pathname, location.protocol === 'https:', name)) document.cookie = c;
+};
+
+/** Names in document.cookie that match (deduped). */
+const cookieNames = (config: ConsentToolConfig, categories: string[]): string[] => {
+  const names = new Set<string>();
   for (const part of document.cookie.split(';')) {
     const name = part.split('=')[0].trim();
-    if (matches(config, categories, 'cookie', name)) expireCookie(name);
+    if (name && matches(config, categories, 'cookie', name)) names.add(name);
   }
+  return [...names];
+};
+
+/** Matching storage keys as [kind, key]. */
+const storageKeys = (config: ConsentToolConfig, categories: string[]): [string, string][] => {
+  const out: [string, string][] = [];
   for (const kind of ['local', 'session']) {
     try {
       const st = kind === 'local' ? localStorage : sessionStorage;
-      for (const k of Object.keys(st)) if (k !== STORAGE_KEY && matches(config, categories, kind, k)) st.removeItem(k);
+      for (const k of Object.keys(st)) if (k !== STORAGE_KEY && matches(config, categories, kind, k)) out.push([kind, k]);
     } catch {
       /* storage blocked: nothing reachable */
     }
   }
+  return out;
+};
+
+/** Everything matching that is visible to the page now, as `cookie:NAME` / `local:KEY` / `session:KEY`. */
+const present = (config: ConsentToolConfig, categories: string[]): string[] => [
+  ...cookieNames(config, categories).map((n) => `cookie:${n}`),
+  ...storageKeys(config, categories).map(([kind, k]) => `${kind}:${k}`),
+];
+
+/** Delete matching cookies precisely with the Domain / Path / partitioned flag the Cookie Store API reports. Never throws. */
+async function cookieStoreDelete(config: ConsentToolConfig, categories: string[]): Promise<void> {
+  try {
+    const cs = (window as any).cookieStore;
+    if (!cs?.getAll) return;
+    const all: any[] = await cs.getAll();
+    await Promise.all(
+      all
+        .filter((c) => c && matches(config, categories, 'cookie', c.name))
+        .map(async (c) => {
+          try {
+            const o: Record<string, unknown> = { name: c.name };
+            if (c.domain) o.domain = c.domain;
+            if (c.path) o.path = c.path;
+            if (c.partitioned) o.partitioned = true;
+            await cs.delete(o);
+          } catch {
+            /* the brute force already ran; leftover reports what survived */
+          }
+        }),
+    );
+  } catch {
+    /* no / blocked Cookie Store API */
+  }
+}
+
+export interface WithdrawalReport {
+  at: number;
+  categories: string[];
+  /** `cookie:NAME` / `local:KEY` / `session:KEY` that matched and are gone. */
+  cleared: string[];
+  /** ... that matched and are still present (HttpOnly cookies are invisible, so never listed). */
+  leftover: string[];
+}
+
+/**
+ * Delete the reachable stores of `categories`: cookies + local/session storage keys matching their vendors' `stores` patterns.
+ * The synchronous deletions all happen before the first await; the promise settles (never rejects, bounded) once the
+ * cookieStore deletions did, with what was cleared and what survived.
+ */
+export async function clearStores(config: ConsentToolConfig, categories: string[]): Promise<WithdrawalReport> {
+  const before = present(config, categories);
+  for (const n of cookieNames(config, categories)) expireCookie(n);
+  for (const [kind, k] of storageKeys(config, categories)) {
+    try {
+      (kind === 'local' ? localStorage : sessionStorage).removeItem(k);
+    } catch {
+      /* blocked */
+    }
+  }
+  await Promise.race([cookieStoreDelete(config, categories), new Promise((r) => setTimeout(r, SETTLE_MS))]);
+  const leftover = present(config, categories);
+  return { at: Date.now(), categories, cleared: before.filter((k) => !leftover.includes(k)), leftover };
 }
 
 /**
@@ -107,7 +204,17 @@ export function clearStores(config: ConsentToolConfig, categories: string[]): vo
 export function installWithdrawal(config: ConsentToolConfig, store: ConsentStore, adapters?: () => { sync(): void } | undefined): void {
   const attr = ownScript?.getAttribute(RELOAD_ATTR);
   const policy = attr === 'revoke' || attr === 'none' ? attr : 'withdraw';
-  const reload = () => setTimeout(() => location.reload());
+  // Cleanup in flight (bounded, never rejects): a reload waits for it so it cannot race the cookieStore deletions.
+  let cleanup: Promise<unknown> = Promise.resolve();
+  const reload = () => void cleanup.then(() => setTimeout(() => location.reload()));
+  const run = (cats: string[], key: 'withdrawal' | 'withdrawalSweep') =>
+    clearStores(config, cats).then(
+      (r) => {
+        diagnostics[key] = r;
+        if (r.leftover.length && typeof console !== 'undefined') console.warn(`[complykit] ${key === 'withdrawal' ? 'withdrawal' : 'sweep'} left ${r.leftover.join(', ')}`);
+      },
+      () => {},
+    );
   let last = store.state();
   let revoked: string[] = [];
   store.subscribe((s) => {
@@ -115,10 +222,20 @@ export function installWithdrawal(config: ConsentToolConfig, store: ConsentStore
     last = s;
     if (!revoked.length) return;
     adapters?.()?.sync();
-    clearStores(config, revoked);
+    cleanup = run(revoked, 'withdrawal');
     // Only a visitor's own choice reloads (not a regime / GPC update before one).
     if (policy === 'revoke' && s.status === 'chosen') reload();
   });
+  // Sweep on load: a stored visitor choice keeps its denied categories clean on every page, catching cookies
+  // a past withdrawal could not reach or that a script re-set. Only a stored choice ('chosen'; it is final at
+  // startup — the regime only moves an unset state) and only non-necessary categories.
+  const denied = Object.keys(last.categories).filter((id) => !last.categories[id] && !isNecessaryCategory(id));
+  // Once, when the page has loaded (inline scripts have run), so a cookie they set is caught too.
+  if (last.status === 'chosen' && denied.length) {
+    const sweep = () => void run(denied, 'withdrawalSweep');
+    if (document.readyState === 'complete') sweep();
+    else addEventListener('load', sweep, { once: true });
+  }
   store.on('withdraw', () => {
     if (policy === 'withdraw' && revoked.length) reload();
   });
