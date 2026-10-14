@@ -165,6 +165,13 @@ export class KnowledgeBase {
     });
   }
 
+  /** Add a finished run's unrecognized parties to the queue (`kb ingest <run-dir>`); saved and announced after, like any KB change. */
+  ingestRun(dir: string): Promise<void> {
+    return this.mutate(async () => {
+      await this.cli(['ingest', dir]);
+    });
+  }
+
   dismiss(domain: string, note?: string): Promise<void> {
     return this.mutate(async () => {
       const { queue } = await this.json<{ queue: KbQueueItem[] }>(['queue', '--all']);

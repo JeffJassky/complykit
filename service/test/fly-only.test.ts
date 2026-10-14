@@ -167,6 +167,31 @@ describe('fleet configured: the host runs no scan', () => {
     await request(s.app).get(job.result!.consent!.reportUrl).expect(200);
   });
 
+  it('a fleet scan feeds the host KB: kb ingest gets the run tracking.json, then kb/ is saved to blobs', async () => {
+    for (const body of [{}, { laws: ['ca', 'eu'], authorized: true }]) {
+      const blobDir = tempDir();
+      const lax = await startWorker(blobDir);
+      const fra = await startWorker(blobDir);
+      const ord = await startWorker(blobDir);
+      const { s } = await host(blobDir, recordingFleet({ lax: lax.url, fra: fra.url, ord: ord.url }).fleet);
+      const id = await scan(s, body);
+      const job = await waitForStatus(s, id, ['done']);
+      await s.settled();
+      expect(job.error).toBeUndefined();
+      const calls = path.join(s.config.kbDir, 'ingest-calls.ndjson');
+      const lines = fs.readFileSync(calls, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { args: string[]; files: string[] });
+      expect(lines).toHaveLength(1); // once, not twice
+      expect(lines[0].files).toEqual(['tracking.json']);
+      expect(fs.existsSync(lines[0].args[0])).toBe(false); // the temp dir is gone
+      // The save follows the ingest: blobs' kb/ ends up holding the ingest record.
+      const saved = path.join(blobDir, 'kb', 'ingest-calls.ndjson');
+      for (let i = 0; i < 100 && !fs.existsSync(saved); i++) await new Promise((r) => setTimeout(r, 50));
+      expect(fs.existsSync(saved)).toBe(true);
+      // And a worker never publishes its KB copy.
+      expect(keysUnder(path.join(blobDir, 'jobs', id)).some((k) => k.startsWith('kb/') || k.includes('/kb/'))).toBe(false);
+    }
+  });
+
   it('accessibility runs on the ord worker and its report is served from blobs', async () => {
     const blobDir = tempDir();
     const ord = await startWorker(blobDir);

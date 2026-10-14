@@ -402,6 +402,10 @@ async function kb() {
       save();
       return out(`dismissed ${pos[0]}.`);
     }
+    case 'ingest': {
+      fs.appendFileSync(path.join(dir, 'ingest-calls.ndjson'), JSON.stringify({ args, files: pos.flatMap((d) => (fs.existsSync(d) ? fs.readdirSync(d) : [])) }) + '\n');
+      return out('ingested.');
+    }
     default:
       fail(`unknown kb subcommand: ${sub}`);
   }

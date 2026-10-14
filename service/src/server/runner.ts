@@ -44,6 +44,8 @@ export interface RunnerOptions {
   remotePollMs?: number;
   /** One remote collection's cap (30 min). */
   remoteTimeoutMs?: number;
+  /** Ingests a run directory (its tracking.json) into the host's knowledge base; saving it is the callee's business. Default: none. */
+  ingestRun?: (dir: string) => Promise<void>;
 }
 
 const REMOTE_STAGGER_MS = 3_000;
@@ -289,6 +291,7 @@ export class Runner {
     if (mapper.error) throw new Error(`consent check failed: ${mapper.error}`);
     if (!mapper.done) throw new Error('consent check ended without a result');
     if (site.domain) await this.recordRun(job, site.domain, mapper.done);
+    await this.ingestWorkerRun(job, mapper.done.runId);
   }
 
   /**
@@ -377,6 +380,7 @@ export class Runner {
       if (!mapper.done) throw new Error(withTail('consent merge exited without a result', res?.stderr ?? []));
       merged = true;
       if (site.domain) await this.recordRun(job, site.domain, mapper.done);
+      await this.ingestWorkerRun(job, mapper.done.runId, fleet !== undefined);
     } finally {
       await tail.stop(); // idempotent enough: clears the timer, one last read
       await live.settled();
@@ -730,6 +734,28 @@ export class Runner {
       }
     }
     return undefined;
+  }
+
+  /**
+   * The CLI ran on a worker against a throwaway copy of the KB, so the host's
+   * queue never saw this run's unrecognized parties: fetch the run's evaluation
+   * (tracking.json) from blobs and `kb ingest` it here. A failure is logged and
+   * never fails the job.
+   */
+  private async ingestWorkerRun(job: JobDetail, runId: string, onWorker = true): Promise<void> {
+    if (!onWorker || !this.options.ingestRun) return;
+    const tmp = path.join(this.store.jobDir(job.id), 'kb-ingest');
+    try {
+      await fsp.rm(tmp, { recursive: true, force: true });
+      await fsp.mkdir(tmp, { recursive: true });
+      const n = await this.store.files.blobs.download(`jobs/${job.id}/consent/.comply/runs/${runId}/`, tmp, (rel) => rel === 'tracking.json');
+      if (!n) throw new Error('the run has no tracking.json in blobs');
+      await this.options.ingestRun(tmp);
+    } catch (err) {
+      this.store.appendLog(job, [`[consent] could not add this run to the knowledge base: ${(err as Error).message}`]);
+    } finally {
+      await fsp.rm(tmp, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 
   /** A finished consent job appends itself to its site's runs. */

@@ -100,7 +100,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
       }
     },
     workspaces,
-    runnerOptions,
+    { ...runnerOptions, ingestRun: runnerOptions.ingestRun ?? ((dir) => kb.ingestRun(dir)) },
   );
   const kb = new KnowledgeBase(config, () => {
     hub.notifyKb();
