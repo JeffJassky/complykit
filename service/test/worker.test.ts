@@ -41,10 +41,21 @@ describe('worker config', () => {
   it('refuses to start without WORKER_SECRET', () => {
     expect(() => loadWorkerConfig({})).toThrow(/WORKER_SECRET/);
   });
-  it('binds fly-local-6pn on Fly and :: elsewhere; WORKER_BIND wins', () => {
-    expect(loadWorkerConfig({ WORKER_SECRET: 's', FLY_APP_NAME: 'x' }).bind).toBe('fly-local-6pn');
+  it('binds :: everywhere (Fly\'s public proxy and the private network both reach it); WORKER_BIND wins', () => {
+    expect(loadWorkerConfig({ WORKER_SECRET: 's', FLY_APP_NAME: 'x' }).bind).toBe('::');
     expect(loadWorkerConfig({ WORKER_SECRET: 's' }).bind).toBe('::');
     expect(loadWorkerConfig({ WORKER_SECRET: 's', FLY_APP_NAME: 'x', WORKER_BIND: '127.0.0.1' }).bind).toBe('127.0.0.1');
+  });
+});
+
+describe('worker blob store config', () => {
+  it('WORKER_BLOB_DIR → fs blobs; Spaces settings → spaces blobs; neither → none; partial Spaces settings throw', () => {
+    expect(loadWorkerConfig({ WORKER_SECRET: 's' }).blobs).toBeUndefined();
+    expect(loadWorkerConfig({ WORKER_SECRET: 's', WORKER_BLOB_DIR: tempDir() }).blobs?.kind).toBe('fs');
+    const spaces = { SPACES_ENDPOINT: 'https://nyc3.digitaloceanspaces.com', SPACES_BUCKET: 'b', SPACES_KEY: 'k', SPACES_SECRET: 's' };
+    expect(loadWorkerConfig({ WORKER_SECRET: 's', ...spaces }).blobs?.kind).toBe('spaces');
+    expect(loadWorkerConfig({ WORKER_SECRET: 's', ...spaces, WORKER_BLOB_DIR: tempDir() }).blobs?.kind).toBe('fs'); // the dir wins
+    expect(() => loadWorkerConfig({ WORKER_SECRET: 's', SPACES_BUCKET: 'b' })).toThrow(/SPACES_ENDPOINT/);
   });
 });
 

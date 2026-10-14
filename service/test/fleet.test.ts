@@ -54,7 +54,7 @@ function sim(initial: M[] = [], opts: { healthy?: boolean; fullHost?: string } =
       if (action === 'stop') { m.state = 'stopped'; return json({}); }
       if (action === 'wait') return json({ ok: true });
     }
-    calls.push(`HEALTH ${u.host}`);
+    calls.push(`HEALTH ${u.host} ${init.headers?.['fly-force-instance-id'] ?? ''}`.trim());
     if (opts.healthy === false) throw new Error('connect ECONNREFUSED');
     if (init.headers?.['x-complykit-worker-secret'] !== SECRET) return json({}, 403);
     return json({ ok: true });
@@ -66,18 +66,22 @@ function sim(initial: M[] = [], opts: { healthy?: boolean; fullHost?: string } =
   return { fleet, machines, calls, bodies };
 }
 
+const SERVICES = [{ protocol: 'tcp', internal_port: 8080, ports: [{ port: 443, handlers: ['tls', 'http'] }, { port: 80, handlers: ['http'], force_https: true }], autostart: false, autostop: 'off' }];
 const worker = (over: Partial<M> = {}): M => ({
   id: 'w1', region: 'fra', state: 'stopped', private_ip: 'fdaa::9',
-  config: { image: 'img:2', env: { WORKER: '1' }, metadata: { complykit_role: 'worker' } }, ...over,
+  config: { image: 'img:2', env: { WORKER: '1' }, services: SERVICES, metadata: { complykit_role: 'worker' } }, ...over,
 });
 
 describe('flyFleet', () => {
   it('starts a stopped worker and waits for health', async () => {
     const s = sim([worker(), worker({ id: 'other', region: 'lhr', config: { image: 'img:2', metadata: {} } })]);
     const h = await s.fleet.acquire('fra');
-    expect(h).toEqual({ region: 'fra', machineId: 'w1', baseUrl: 'http://[fdaa::9]:8080' });
+    expect(h).toEqual({
+      region: 'fra', machineId: 'w1',
+      baseUrl: 'https://complykit-workers.fly.dev', headers: { 'fly-force-instance-id': 'w1' }, privateUrl: 'http://[fdaa::9]:8080',
+    });
     expect(s.calls).toContain('POST /w1/start');
-    expect(s.calls.some((c) => c.startsWith('HEALTH'))).toBe(true);
+    expect(s.calls).toContain('HEALTH complykit-workers.fly.dev w1'); // the public URL, routed to the Machine
     expect(s.calls.some((c) => c === 'POST /')).toBe(false);
   });
 
@@ -88,8 +92,24 @@ describe('flyFleet', () => {
     expect(s.bodies[0]).toMatchObject({
       name: 'worker-fra', region: 'fra',
       config: { image: 'img:2', env: { WORKER: '1', WORKER_SECRET: SECRET, IDLE_SHUTDOWN_MINUTES: '3' },
-        guest: { cpu_kind: 'performance', cpus: 2, memory_mb: 4096 }, restart: { policy: 'no' }, metadata: { complykit_role: 'worker' } },
+        guest: { cpu_kind: 'performance', cpus: 2, memory_mb: 4096 }, services: SERVICES, restart: { policy: 'no' }, metadata: { complykit_role: 'worker' } },
     });
+    // Secrets (Spaces keys) come from Fly app secrets, never the Machine's config.
+    expect(JSON.stringify(s.bodies[0])).not.toMatch(/SPACES/);
+  });
+
+  it('gives an existing worker without the public service one, then starts it', async () => {
+    const s = sim([worker({ config: { image: 'img:2', guest: { cpu_kind: 'performance', cpus: 2, memory_mb: 4096 }, metadata: { complykit_role: 'worker' } } })]);
+    await s.fleet.acquire('fra');
+    expect(s.calls.indexOf('POST /w1')).toBeGreaterThan(-1);
+    expect(s.calls.indexOf('POST /w1')).toBeLessThan(s.calls.indexOf('POST /w1/start'));
+    expect(s.machines.get('w1')!.config.services).toEqual(SERVICES);
+  });
+
+  it('leaves a worker that already has the service alone (no update)', async () => {
+    const s = sim([worker({ config: { image: 'img:2', guest: { cpu_kind: 'performance', cpus: 2, memory_mb: 4096 }, services: SERVICES, metadata: { complykit_role: 'worker' } } })]);
+    await s.fleet.acquire('fra');
+    expect(s.calls).not.toContain('POST /w1');
   });
 
   it('updates the image when it differs, then starts', async () => {
@@ -165,10 +185,12 @@ describe('flyFleet', () => {
 });
 
 describe('fakeFleet', () => {
-  it('returns the mapped base URL', async () => {
+  it('returns the mapped base URL, no headers, and the same private URL', async () => {
     const f = fakeFleet({ fra: 'http://127.0.0.1:9999' });
     const h = await f.acquire('fra');
     expect(h.baseUrl).toBe('http://127.0.0.1:9999');
+    expect(h.headers).toEqual({});
+    expect(h.privateUrl).toBe('http://127.0.0.1:9999');
     expect(h.region).toBe('fra');
     await expect(f.release(h)).resolves.toBeUndefined();
     await expect(f.acquire('lhr')).rejects.toThrow(/lhr/);

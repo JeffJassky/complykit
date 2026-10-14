@@ -1,12 +1,23 @@
 // Fleet manager: starts and stops the regional worker Machines (Fly Machines
-// API). The primary acquires a region's worker, waits for /internal/health,
+// API). The host acquires a region's worker, waits for /internal/health,
 // uses it, then releases (stops) it. The API token is never logged or put in
 // an error message.
+//
+// Workers are addressed publicly: `https://<app>.fly.dev` plus a
+// `fly-force-instance-id` header that routes the request to one Machine. Peers
+// (the merge worker) reach each other over Fly's private network instead.
+
+import { FLY_INSTANCE_HEADER, WORKER_SECRET_HEADER } from './worker-protocol.js';
 
 export interface WorkerHandle {
   region: string;
   machineId: string;
+  /** Where the host sends requests (public). */
   baseUrl: string;
+  /** Sent on every request to baseUrl (routes to this Machine). */
+  headers: Record<string, string>;
+  /** Where another worker reaches this one (private network). */
+  privateUrl: string;
 }
 
 export interface Fleet {
@@ -37,7 +48,7 @@ interface Machine {
   region: string;
   state: string;
   private_ip?: string;
-  config?: { image?: string; env?: Record<string, string>; metadata?: Record<string, string>; [k: string]: unknown };
+  config?: { image?: string; env?: Record<string, string>; metadata?: Record<string, string>; services?: unknown; [k: string]: unknown };
 }
 
 const HEALTH_TIMEOUT_MS = 90_000;
@@ -51,6 +62,30 @@ const SETTLE_TIMEOUT_MS = 30_000;
  * primary (performance-2x) ran the same visits at normal speed.
  */
 const WORKER_GUEST = { cpu_kind: 'performance', cpus: 2, memory_mb: 4096 };
+/**
+ * The public service: HTTPS through Fly's proxy to the worker's port. The fleet
+ * starts and stops Machines itself, so the proxy must not.
+ */
+const WORKER_SERVICES = [
+  {
+    protocol: 'tcp',
+    internal_port: 8080,
+    ports: [
+      { port: 443, handlers: ['tls', 'http'] },
+      { port: 80, handlers: ['http'], force_https: true },
+    ],
+    autostart: false,
+    autostop: 'off',
+  },
+];
+const sameServices = (s: unknown) => {
+  if (!Array.isArray(s)) return false;
+  return s.some((x) => {
+    const svc = (x ?? {}) as Record<string, unknown>;
+    const ports = Array.isArray(svc.ports) ? (svc.ports as Array<Record<string, unknown>>) : [];
+    return svc.internal_port === 8080 && ports.some((p) => p.port === 443) && svc.autostart === false && svc.autostop === 'off';
+  });
+};
 const sameGuest = (g: unknown) => {
   const x = (g ?? {}) as Record<string, unknown>;
   return x.cpu_kind === WORKER_GUEST.cpu_kind && x.cpus === WORKER_GUEST.cpus && x.memory_mb === WORKER_GUEST.memory_mb;
@@ -114,6 +149,7 @@ export function flyFleet(cfg: FlyFleetConfig): Fleet {
         image: cfg.image,
         env: workerEnv,
         guest: WORKER_GUEST,
+        services: WORKER_SERVICES,
         restart: { policy: 'no' },
         metadata: { complykit_role: 'worker' },
       },
@@ -122,10 +158,10 @@ export function flyFleet(cfg: FlyFleetConfig): Fleet {
 
   /** Bring an existing worker to this image and size, then start it. */
   async function prepare(m: Machine): Promise<Machine> {
-    if (m.config?.image !== cfg.image || !sameGuest(m.config?.guest)) {
+    if (m.config?.image !== cfg.image || !sameGuest(m.config?.guest) || !sameServices(m.config?.services)) {
       const updated = await call<Machine | undefined>('POST', `${base}/${m.id}`, {
         region: m.region,
-        config: { ...m.config, image: cfg.image, env: { ...m.config?.env, ...workerEnv }, guest: WORKER_GUEST },
+        config: { ...m.config, image: cfg.image, env: { ...m.config?.env, ...workerEnv }, guest: WORKER_GUEST, services: WORKER_SERVICES },
       });
       m = { ...m, ...(updated ?? {}), config: updated?.config ?? { ...m.config, image: cfg.image } };
       // Fly leaves a stopped Machine stopped after an update, but its reply shows a
@@ -164,13 +200,15 @@ export function flyFleet(cfg: FlyFleetConfig): Fleet {
     // Re-read for the private IP (create/update responses can predate it).
     m = { ...m, ...(await call<Machine>('GET', `${base}/${m.id}`).catch(() => ({}) as Partial<Machine>)) };
     if (!m.private_ip) throw new Error(`worker in ${region}: Machine ${m.id} has no private address`);
-    const baseUrl = `http://[${m.private_ip}]:8080`;
+    const privateUrl = `http://[${m.private_ip}]:8080`;
+    const baseUrl = `https://${cfg.app}.fly.dev`;
+    const headers = { [FLY_INSTANCE_HEADER]: m.id };
     const deadline = now() + healthTimeout;
     let last = 'no response';
     for (;;) {
       try {
-        const res = await doFetch(`${baseUrl}/internal/health`, { headers: { 'x-complykit-worker-secret': cfg.secret } });
-        if (res.ok) return { region, machineId: m.id, baseUrl };
+        const res = await doFetch(`${baseUrl}/internal/health`, { headers: { ...headers, [WORKER_SECRET_HEADER]: cfg.secret } });
+        if (res.ok) return { region, machineId: m.id, baseUrl, headers, privateUrl };
         last = `HTTP ${res.status}`;
       } catch (e) {
         last = e instanceof Error ? e.message : String(e);
@@ -215,7 +253,7 @@ export function fakeFleet(map: Record<string, string>): Fleet {
     async acquire(region) {
       const baseUrl = map[region];
       if (!baseUrl) throw new Error(`no fake worker for region ${region}`);
-      return { region, machineId: `fake-${region}`, baseUrl };
+      return { region, machineId: `fake-${region}`, baseUrl, headers: {}, privateUrl: baseUrl };
     },
     async release() {},
   };
