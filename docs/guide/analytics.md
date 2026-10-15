@@ -94,7 +94,11 @@ events that do not validate are dropped alone. Dropped messages are not stored.
 ## What is never collected
 
 - Cookies. The script and the beacon endpoint neither set nor read any, and the beacon
-  is sent without them.
+  is sent without them. One exception while the host runs on its default address
+  (`*.ondigitalocean.app`): DigitalOcean's edge network, not complykit, adds Cloudflare's
+  bot-management cookie `__cf_bm` (HttpOnly, about 30 minutes, used only to tell bots
+  from browsers) to responses on that domain. It goes away when the host moves to its
+  own domain with bot management turned off.
 - IP addresses. Not logged, not stored with the counters. (The host keeps a count of
   recent requests per IP in memory, to limit abuse. It is never written to disk or to
   a log.)
@@ -102,8 +106,8 @@ events that do not validate are dropped alone. Dropped messages are not stored.
   generated and kept to recognise a returning visitor.
 - Fingerprinting inputs: no screen size, language, timezone, user agent, or similar.
 - Page addresses: no URL, path, query string, referrer or page title. The tool never
-  reads the page address for analytics, and the install line asks the browser not to
-  send a referrer to our host.
+  reads the page address for analytics, and every request to our host (the install
+  line, the files it loads, the beacon) asks the browser not to send a referrer.
 - Anything a visitor typed.
 - The message itself. The body is read, turned into counters, and discarded. It is not
   logged.
@@ -122,7 +126,7 @@ you compare banner wording and layout. They carry nothing that identifies a visi
 > banner's script is delivered from ComplyKit's servers, so ComplyKit receives the
 > technical requests the visitor's browser makes to fetch it and to send the counts
 > described below, including the IP address. ComplyKit does not store IP addresses with banner statistics, does not set
-> or read cookies, and does not receive the address of the page being viewed. The
+> or read cookies of its own, and does not receive the address of the page being viewed. The
 > banner also sends ComplyKit anonymous counts about its own use (whether the banner
 > was shown, which choice was made, how long it took, the visitor's approximate
 > country or region where available, and the version of the banner). These counts
