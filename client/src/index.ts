@@ -67,6 +67,12 @@ export { resolveLocation, readGpc, DEFAULT_REGION_META } from './location.js';
 export { uiHost as _ui, loadUi } from './ui-loader.js';
 import { installUiLoader } from './ui-loader.js';
 whenStore((s) => installUiLoader(s));
+// T2: the banner beacon (only when config.analytics.endpoint is set).
+import { startEvents } from './events.js';
+whenStore((s) => {
+  const c = getConfig();
+  if (c) startEvents(c, s);
+});
 // D3: start on the inline config, if the snippet carries one (keep this last).
 import { autoInit } from './api.js';
 autoInit();
