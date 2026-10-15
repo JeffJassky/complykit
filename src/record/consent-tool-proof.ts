@@ -57,8 +57,10 @@ export const ComplykitToolSnapshot = z.object({
   version: z.string().optional(),
   /** `<script type="application/json" id="complykit-config">` exists. */
   configElement: z.boolean(),
-  /** Its raw text (the site's own public markup), capped; absent when there is no element. */
+  /** The config's JSON text, capped: the element's raw text, else `JSON.stringify(window.ComplyKitConfig)` (the hosted script). Absent when neither exists. */
   configJson: z.string().optional(),
+  /** Where configJson came from: the inline element (self-hosted) or the global the hosted script sets. Absent when neither exists (snapshots from before hosting: the element when configElement). */
+  configSource: z.enum(['element', 'global']).optional(),
   cookiePresent: z.boolean(),
   /** `ComplyKit.get()` returned a state: the store started (the config was accepted). */
   running: z.boolean(),

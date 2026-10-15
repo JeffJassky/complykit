@@ -69,6 +69,8 @@ export interface RemediationSource {
   notes?: RemediationSourceNote[];
   compatibility?: CompatibilityReport;
   scriptSrc?: string;
+  /** Set when the install is hosted (plans/hosted-script.md): the hosted script URL. */
+  hostedScriptUrl?: string;
   snippet?: string;
 }
 
@@ -351,7 +353,7 @@ export function installTask(config: ConsentToolConfig, scriptSrc: string, page: 
     ],
     snippet: { after: renderHeadSnippet(config, scriptSrc) },
     pages: [page],
-    verify: { check: 'install', method: 'static', page, configHash: config.hash, scriptSrc, elementId: CONSENT_CONFIG_ELEMENT_ID },
+    verify: { check: 'install', method: 'static', mode: 'self', page, configHash: config.hash, scriptSrc, elementId: CONSENT_CONFIG_ELEMENT_ID },
     optional: false,
     notes: ['Every other task assumes the tool is installed and first: holding tags, the Google Tag Manager bridge, the vendor signals and the platform bridges all live in it.'],
     guide: { label: 'Installing the consent tool', href: INSTALL_GUIDE },

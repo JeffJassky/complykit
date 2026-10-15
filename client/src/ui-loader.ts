@@ -51,6 +51,8 @@ export const uiHost: UiHost = {
     uiHost.opener = from;
     getStore()?.open();
   },
+  // Replaced by the banner beacon (events.ts) when the config has analytics.
+  report() {},
 };
 
 /** Where the UI file is; undefined when it cannot be derived (inlined core, no attribute). */

@@ -115,9 +115,19 @@ function configElementText(html: string): { count: number; type?: string; text?:
 
 export interface InstallExpectation {
   page: string;
-  configHash: string;
+  /** Absent = 'self'. */
+  mode?: 'self' | 'hosted';
+  /** Self mode: required (a self-mode spec without it fails). */
+  configHash?: string;
+  /** Self: the core's src. Hosted: the full hosted script URL. */
   scriptSrc: string;
   elementId?: string;
+}
+
+/** The hosted script as fetched for Verify (hosted mode): its status and body. */
+export interface HostedScriptFetch {
+  status: number;
+  text?: string;
 }
 
 /**
@@ -125,7 +135,7 @@ export interface InstallExpectation {
  * latest generated config; the core script is present, blocking, and runs
  * before any tag-manager / vendor script.
  */
-export function verifyInstall(html: string, expected: InstallExpectation, opts: VerifyOptions = {}): VerifyOutcome {
+export function verifyInstall(html: string, expected: InstallExpectation, opts: VerifyOptions = {}, _hostedScript?: HostedScriptFetch): VerifyOutcome {
   const bad = notHtml(html);
   if (bad) return bad;
   const kb = opts.kb ?? DEFAULT_KB;
@@ -145,6 +155,7 @@ export function verifyInstall(html: string, expected: InstallExpectation, opts: 
   const parsed = parseConsentToolConfig(raw);
   if (!parsed.ok) return fail(`the deployed config is refused (${parsed.reason}): ${parsed.issues.map((i) => `${i.path}: ${i.message}`).slice(0, 4).join('; ')}`);
   if (!parsed.hashMatches) return fail('the deployed config was edited after generation (its hash does not verify): regenerate and paste it unchanged', [`deployed hash ${parsed.config.hash.slice(0, 12)}`]);
+  if (!expected.configHash) return fail('this install task has no config hash: regenerate the checklist');
   if (parsed.config.hash !== expected.configHash) {
     return fail('the deployed config is not the latest generated one: paste the newest snippet', [`deployed ${parsed.config.hash.slice(0, 12)}, latest ${expected.configHash.slice(0, 12)}`]);
   }
@@ -271,7 +282,7 @@ export function toolConsentDefault(config: { gtm?: unknown; vendors: ReadonlyArr
   return covered.size && consentTypes.every((t) => covered.has(t)) ? 'adapter' : undefined;
 }
 
-export function verifyConsentDefault(html: string, spec: { page: string; consentTypes: string[] }): VerifyOutcome {
+export function verifyConsentDefault(html: string, spec: { page: string; consentTypes: string[]; scriptSrc?: string }, _hostedScript?: HostedScriptFetch): VerifyOutcome {
   const bad = notHtml(html);
   if (bad) return bad;
   const elements = parseMarkup(html, spec.page);
@@ -437,6 +448,8 @@ export interface StaticVerifyInput {
   observation?: SpotCheckObservation;
   /** A server-cookie observation, when the browser check has run one. */
   cookieObservation?: ServerCookieObservation;
+  /** Hosted mode (install with mode 'hosted', consent-default with scriptSrc): the hosted script, fetched from spec.scriptSrc. */
+  hostedScript?: HostedScriptFetch;
 }
 
 /** Run the checker a spec names over what was fetched. Browser specs need an observation; manual ones are never decided here. */

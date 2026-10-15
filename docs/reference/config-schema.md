@@ -93,5 +93,11 @@ rules). Those are described in [Consent tool config](/guide/config).
 | `privacyPolicyUrl` | `string` |  |  | Linked from the banner. pattern `^https:\/\/[^\s]+$` |
 | `record` | `object` |  |  |  |
 | `record.endpoint` | `string` | yes |  | min length 1 |
+| `analytics` | `object` |  |  | Where the banner beacon (counters only: shown, choice, time to choose) is posted. Absent = no beacon. Set by the complykit host when it serves the script |
+| `analytics.endpoint` | `string` | yes |  | min length 1 |
+| `mode` | `"full"` / `"companion"` |  |  | full (absent): complykit is the consent manager — banner, gate, signals. companion: the site keeps its own banner; complykit follows its choice and deletes the cookies of revoked categories |
+| `companion` | `object` |  |  | Add-on mode: which banner to follow. Required when mode is companion |
+| `companion.cmp` | `"onetrust"` / `"cookiebot"` / `"usercentrics"` / `"didomi"` / `"trustarc"` / `"shopify"` / `"wordpress"` / `"tcf"` / `"consent-mode"` / `"manual"` | yes |  |  |
+| `companion.map` | map |  |  | The banner's purpose/group id → complykit category ids. Absent = the built-in map for that banner |
 | `layout` | `"bar"` / `"box"` / `"modal"` |  | `"bar"` |  |
 | `blockPage` | `boolean` |  | `false` | Block the page until the visitor chooses: backdrop, page inert, scrolling locked. Any layout. Released by the choice |

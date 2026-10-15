@@ -1,4 +1,4 @@
-import type { Finding, PartyInventoryItem, TrackingEvaluation } from './record/index.js';
+import type { CompanionCmp, Finding, PartyInventoryItem, TrackingEvaluation } from './record/index.js';
 import {
   CONSENT_CONFIG_VERSION,
   NECESSARY_CATEGORY,
@@ -179,6 +179,8 @@ export interface GenerateConsentConfigOptions {
   /** generatedFrom.at (default: now). */
   now?: string;
   scriptSrc?: string;
+  /** The hosted install (plans/hosted-script.md): the full URL of the site's hosted script on the complykit host. Set → a one-line snippet and a hosted install task; scriptSrc is ignored. */
+  hostedScriptUrl?: string;
   /** Opt-in consent-record endpoint (omitted by default). */
   recordEndpoint?: string;
   privacyPolicyUrl?: string;
@@ -204,6 +206,10 @@ export interface GeneratedConsentConfig {
   notesMarkdown: string;
   /** Where the snippet loads the tool from (opts.scriptSrc or DEFAULT_SCRIPT_SRC). */
   scriptSrc: string;
+  /** opts.hostedScriptUrl, when the install is hosted. */
+  hostedScriptUrl?: string;
+  /** The site's existing banner, as an add-on source (plans/hosted-script.md "Add-on mode"): from the scan's existing consent tool or consent plugin. Absent when none was seen or it has no source. */
+  detectedCmp?: CompanionCmp;
   /** The report's compatibility section this config was built from: the change items carry their stable ids. */
   compatibility: CompatibilityReport;
   /** The guided checklist (plans/remediation-flow.md): install first, then one task per change item. Status 'todo' unless the workspace says otherwise. */

@@ -817,3 +817,30 @@ describe('D10 follow-up: gated snippets that call document.write', () => {
     expect(codes(evaluation({ markup: markup([f({})]) }))).not.toContain('gated-document-write');
   });
 });
+
+// Hosted consent script (plans/hosted-script.md, T1b): the config arrives as
+// window.ComplyKitConfig, not an element; the host fills in record/analytics
+// endpoints and re-hashes, so the deployed hash differs from the workspace's.
+describe('hosted install: config from the global', () => {
+  it('a global config (no element) is read and is not config-missing', () => {
+    const ev = evaluation({ snap: { configElement: false, configSource: 'global' } });
+    const p = evaluateConsentToolProof(ev);
+    expect(codes(ev)).not.toContain('config-missing');
+    expect(p.config).toMatchObject({ status: 'ok', hashMatches: true });
+  });
+
+  it('neither element nor global → config-missing, and its message no longer only names the element', () => {
+    const ev = evaluation({ cfg: undefined, snap: { configElement: false } });
+    const f = evaluateConsentToolProof(ev).findings.find((x) => x.code === 'config-missing');
+    expect(f).toBeDefined();
+    expect(f!.message).toMatch(/hosted|window\.ComplyKitConfig/);
+  });
+
+  it('host-filled endpoints are not a content difference: no config-behind against the stored workspace config', () => {
+    const stored = config();
+    const served = withConsentConfigHash({ ...configInput(), record: { endpoint: 'https://ck.example-host.test/api/consent-records' }, analytics: { endpoint: 'https://ck.example-host.test/e' } });
+    expect(served.hash).not.toBe(stored.hash);
+    const ev = evaluation({ cfg: served, snap: { configElement: false, configSource: 'global' } });
+    expect(codes(ev, { workspaceConfig: { value: { config: stored }, at: '2026-10-06T10:00:00.000Z' } })).not.toContain('config-behind');
+  });
+});

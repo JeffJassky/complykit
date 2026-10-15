@@ -848,8 +848,10 @@ export interface ComplykitToolSnapshot {
   global: boolean;
   version?: string;
   configElement: boolean;
-  /** The config element's raw text (the site's own public markup), capped. */
+  /** The config's JSON text, capped: the element's raw text, else JSON.stringify(window.ComplyKitConfig) (the hosted script). */
   configJson?: string;
+  /** Where configJson came from. */
+  configSource?: 'element' | 'global';
   cookiePresent: boolean;
   /** ComplyKit.get() returned a state: the store started on the config. */
   running: boolean;
@@ -1280,6 +1282,13 @@ export interface MeasuredPlace {
   region?: string;
 }
 export const KB_VERSION: string;
+/** complykit's own consent tool party id (the hosted script's host). */
+export const COMPLYKIT_PARTY_ID: 'consent.complykit';
+export const COMPLYKIT_HOSTS: readonly string[];
+/** Hosted consent script helpers (plans/hosted-script.md). */
+export const HOSTED_CONFIG_PREFIX: 'window.ComplyKitConfig=';
+export function hostedScriptPath(domain: string): string;
+export function parseHostedScript(text: string): unknown;
 export const KB_ENTRIES: KnowledgeEntry[];
 export const DEFAULT_KB: KnowledgeBase;
 /** Categories that need prior consent in the EU/UK. */
@@ -1708,6 +1717,8 @@ export interface GenerateConsentConfigOptions {
   complykitVersion: string;
   now?: string;
   scriptSrc?: string;
+  /** Hosted install: the full URL of the site's hosted script. */
+  hostedScriptUrl?: string;
   recordEndpoint?: string;
   privacyPolicyUrl?: string;
   regimeSource?: RegimeSource;
@@ -1747,6 +1758,10 @@ export interface GeneratedConsentConfig {
   notesMarkdown: string;
   /** Where the snippet loads the tool from. */
   scriptSrc: string;
+  /** Set when the install is hosted: the site's hosted script URL on the complykit host. */
+  hostedScriptUrl?: string;
+  /** The site's existing banner as an add-on source, when the scan saw one. */
+  detectedCmp?: CompanionCmp;
   /** The compatibility section the config was built from (its change items carry stable ids). */
   compatibility: CompatibilityReport;
   /** The guided remediation checklist: install first, then one task per change item. */
@@ -1790,11 +1805,11 @@ export function elementSignatureOf(f: Pick<MarkupFinding, 'kind' | 'context' | '
 export type RemediationTaskKind = 'classify' | 'install' | 'remove-existing-tool' | CompatibilityChangeKind | 'confirm-in-browser';
 export type RemediationVerifyMethod = 'static' | 'browser' | 'manual';
 export type RemediationVerifySpec =
-  | { check: 'install'; method: 'static'; page: string; configHash: string; scriptSrc: string; elementId: string }
+  | { check: 'install'; method: 'static'; page: string; mode: 'self' | 'hosted'; configHash?: string; scriptSrc: string; elementId?: string }
   | { check: 'rewrite-tag'; method: 'static'; page: string; element: ElementSignature; category: string }
   | { check: 'remove-leak'; method: 'static'; page: string; element: ElementSignature }
   | { check: 'gtm-tag-consent'; method: 'static'; containerId: string; containerUrl?: string; tagId: number; consentTypes: string[] }
-  | { check: 'consent-default'; method: 'static'; page: string; consentTypes: string[] }
+  | { check: 'consent-default'; method: 'static'; page: string; consentTypes: string[]; scriptSrc?: string }
   | { check: 'remove-existing-tool'; method: 'static'; page: string; partyId?: string; hosts: string[]; pathPattern?: string; label: string }
   | { check: 'spot-check'; method: 'browser'; page: string; partyId: string; hosts: string[]; scenario: 'reject-then-accept' }
   | { check: 'server-cookie'; method: 'browser'; page: string; partyId: string; names: string[] }
@@ -1848,6 +1863,8 @@ export interface RemediationTask {
   alsoFixes?: string[];
   /** Steps whose wording depends on the surface: each replaces steps[step] on the service (`service`) or in a report file / the CLI (`offline`). */
   stepVariants?: Array<{ step: number; service: string; offline: string }>;
+  /** Install task, hosted: the add-on mode steps. */
+  companionSteps?: string[];
   order: number;
 }
 /** What a browser spot check observed on one page: reject phase, then accept phase. */
@@ -1924,9 +1941,18 @@ export interface VerifyOptions {
 }
 export interface InstallExpectation {
   page: string;
-  configHash: string;
+  /** Absent = 'self'. */
+  mode?: 'self' | 'hosted';
+  /** Self mode: required. */
+  configHash?: string;
+  /** Self: the core's src. Hosted: the full hosted script URL. */
   scriptSrc: string;
   elementId?: string;
+}
+/** The hosted script as fetched for Verify. */
+export interface HostedScriptFetch {
+  status: number;
+  text?: string;
 }
 export interface RemoveExistingToolExpectation {
   page: string;
@@ -1946,12 +1972,14 @@ export interface StaticVerifyInput {
   observation?: SpotCheckObservation;
   /** A server-cookie observation, when the browser check has run one. */
   cookieObservation?: ServerCookieObservation;
+  /** Hosted mode: the hosted script fetched from spec.scriptSrc. */
+  hostedScript?: HostedScriptFetch;
 }
-export function verifyInstall(html: string, expected: InstallExpectation, opts?: VerifyOptions): VerifyOutcome;
+export function verifyInstall(html: string, expected: InstallExpectation, opts?: VerifyOptions, hostedScript?: HostedScriptFetch): VerifyOutcome;
 export function verifyRewriteTag(html: string, spec: { page: string; element: ElementSignature; category: string }): VerifyOutcome;
 export function verifyRemoveLeak(html: string, spec: { page: string; element: ElementSignature }): VerifyOutcome;
 export function verifyGtmTagConsent(containerJs: string, spec: { containerId: string; tagId: number; consentTypes: string[] }): VerifyOutcome;
-export function verifyConsentDefault(html: string, spec: { page: string; consentTypes: string[] }): VerifyOutcome;
+export function verifyConsentDefault(html: string, spec: { page: string; consentTypes: string[]; scriptSrc?: string }, hostedScript?: HostedScriptFetch): VerifyOutcome;
 export function verifyRemoveExistingTool(html: string, spec: RemoveExistingToolExpectation, opts?: VerifyOptions): VerifyOutcome;
 /** Pass only when nothing reached the vendor after the reject AND something did after the accept. */
 export function judgeSpotCheck(spec: SpotCheckSpec, obs: SpotCheckObservation): VerifyOutcome;
@@ -2092,6 +2120,12 @@ export interface ConsentStateConfig {
 export interface ConsentRecordEndpoint {
   endpoint: string;
 }
+export type CompanionCmp = 'onetrust' | 'cookiebot' | 'usercentrics' | 'didomi' | 'trustarc' | 'shopify' | 'wordpress' | 'tcf' | 'consent-mode' | 'manual';
+export const COMPANION_CMPS: readonly CompanionCmp[];
+export interface CompanionConfig {
+  cmp: CompanionCmp;
+  map?: Record<string, string[]>;
+}
 export interface ConsentToolConfig {
   version: string;
   generatedFrom: { runId: string; at: string; site: string; complykit: string; kb?: string };
@@ -2107,6 +2141,12 @@ export interface ConsentToolConfig {
   consent: ConsentStateConfig;
   privacyPolicyUrl?: string;
   record?: ConsentRecordEndpoint;
+  /** Where the banner beacon is posted (counters only). Absent = no beacon. */
+  analytics?: { endpoint: string };
+  /** Absent = 'full'. 'companion': follow the site's own banner and clean up on revoke. */
+  mode?: 'full' | 'companion';
+  /** Required when mode is 'companion'. */
+  companion?: CompanionConfig;
   layout: ConsentLayout;
   /** Block the page (backdrop, inert, no scroll) until the visitor chooses. */
   blockPage: boolean;
