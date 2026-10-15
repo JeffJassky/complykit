@@ -4,7 +4,9 @@
 // 10 s), maps what it reports as granted through `companion.map ?? DEFAULT_MAPS[cmp]` and hands that to
 // host.sync (store.set; a grant -> deny runs the core's withdrawal cleanup). The first answer also sweeps
 // the stores of the categories the banner reports denied. `manual` has no source: the site calls
-// ComplyKit.sync(). diagnostics.companion = { cmp, state } says 'waiting' | 'ready' | 'not-found'.
+// ComplyKit.sync(). The first state learned on a page is applied (and swept) but not reported as a decision;
+// only later changes are (`decide via 'cmp'`). A config category no map entry can reach is unknown: it is never
+// passed to sync (the core keeps its current value) and never swept. diagnostics.companion = { cmp, state } says 'waiting' | 'ready' | 'not-found'.
 import { isNecessaryCategory } from '../config.js';
 import { DEFAULT_MAPS } from './maps.js';
 import type { CompanionHost } from './host.js';
@@ -45,11 +47,11 @@ export function startCompanion(host: CompanionHost): void {
     if (key === last) return;
     const first = last === undefined;
     last = key;
-    host.sync(mapped);
+    host.sync(mapped, first);
     if (!first) return;
     // Sweep on load: what the banner already denies is cleaned (cookies from before the add-on, or another device's choice).
     const denied = Object.keys(mapped).filter((c) => !mapped[c]);
-    if (denied.length) void host.clear(denied, Object.keys(mapped).filter((c) => mapped[c])).then((r) => void (host.diagnostics.withdrawalSweep = r), () => {});
+    if (denied.length) void host.clear?.(denied, Object.keys(mapped).filter((c) => mapped[c]))?.then((r) => void (host.diagnostics.withdrawalSweep = r), () => {});
   };
   const poll = source(push);
   const t0 = Date.now();

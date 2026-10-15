@@ -10,7 +10,7 @@
   "files": ["dist"],
   "engines": { "node": ">=20" },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/write-build.mjs",
     "size": "node scripts/check-size.mjs",
     "check-pack": "node ../scripts/check-pack.mjs . --refuse-private",
     "prepublishOnly": "node ../scripts/check-pack.mjs . --refuse-private && npm run check",

@@ -174,6 +174,22 @@ describe('add-on mode: follow the banner, clean up what it revokes', () => {
     await o.ctx.close();
   });
 
+  it('analytics: the first state learned on a page is not a decision; only a later change is, once', async () => {
+    const o = await open(companionConfig('onetrust', { analytics: { endpoint: `${server.origin}/e` } }), { before: ONETRUST });
+    await settle(o.page);
+    await o.page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+    await settle(o.page);
+    const first = o.beacons.flatMap((b) => b.ev);
+    expect(first.find((e: any) => e.t === 'load')).toBeDefined();
+    expect(first.find((e: any) => e.t === 'decide')).toBeUndefined();
+    await o.page.evaluate(ONETRUST_REVOKE);
+    await settle(o.page);
+    await o.page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+    await settle(o.page);
+    expect(o.beacons.flatMap((b) => b.ev).filter((e: any) => e.t === 'decide')).toHaveLength(1);
+    await o.ctx.close();
+  });
+
   it('full mode is untouched: the banner shows', async () => {
     const o = await open({ ...companionConfig('onetrust'), mode: undefined, companion: undefined });
     await o.page.waitForSelector('#complykit-ui .ck-banner', { state: 'visible' });

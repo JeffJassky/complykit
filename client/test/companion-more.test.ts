@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { type Browser, type BrowserContext, type Page } from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { DEFAULT_MAPS } from '../src/companion/maps';
 import { DIST, launchBrowser, startFixtureServer, type FixtureServer } from './harness';
 
 // T6 add-on mode, the sources companion.test.ts does not cover: usercentrics, didomi, trustarc, wordpress,
@@ -179,5 +180,55 @@ describe('add-on mode: the remaining sources', () => {
     const o = await open({ ...companionConfig('onetrust'), mode: undefined, companion: undefined });
     expect(await o.page.evaluate(() => (window as any).ComplyKit.sync({ analytics: true }))).toBeNull();
     await o.ctx.close();
+  });
+});
+
+// The generated configs have `performance` (and `functional`) categories; follow-mode must neither revoke nor
+// sweep one the map cannot reach, and the default maps must carry performance with analytics.
+const withPerf = (config: any, on = true): any => {
+  config.categories.push({ id: 'performance', label: 'Performance', description: 'Speed and errors.', defaultByRegime: { 'opt-in': false, 'opt-out-signal': on, 'opt-out': on } });
+  config.vendors.push({ id: 'perf.tool', label: 'Perf tool', category: 'performance', control: 'none', stores: [{ name: '^_perf$', kind: 'cookie' }] });
+  return config;
+};
+
+describe('add-on mode: categories the map does not cover', () => {
+  it('a config category absent from the map is never revoked or swept', async () => {
+    const cfg = withPerf(companionConfig('onetrust', { regimeSource: { kind: 'fixed', regime: 'opt-out' }, companion: { cmp: 'onetrust', map: { C0002: ['analytics'], C0004: ['advertising'] } } })); // opt-out: performance starts granted and no map entry can reach it
+    const o = await open(cfg, { before: `<script>document.cookie='_perf=1;path=/';</script><script>window.OnetrustActiveGroups=',C0001,C0002,C0004,';window.OneTrust={};</script>` });
+    await settle(o.page);
+    expect(await state(o.page)).toMatchObject({ analytics: true, advertising: true, performance: true });
+    await o.page.evaluate(`window.OnetrustActiveGroups=',C0001,C0004,';window.dispatchEvent(new CustomEvent('OneTrustGroupsUpdated',{detail:['C0001','C0004']}));`);
+    await settle(o.page);
+    expect(await state(o.page)).toMatchObject({ analytics: false, advertising: true, performance: true });
+    expect(await cookies(o.page)).toEqual(['_fbp', '_perf', 'site_pref']);
+    await o.ctx.close();
+  });
+
+  for (const [cmp, fake, revoke] of [
+    ['didomi', DIDOMI, DIDOMI_REVOKE],
+    ['wordpress', WORDPRESS, WORDPRESS_REVOKE],
+  ] as const) {
+    it(`${cmp}: the default map carries performance with analytics`, async () => {
+      const o = await open(withPerf(companionConfig(cmp)), { before: `<script>document.cookie='_perf=1;path=/';</script>${fake}` });
+      await settle(o.page);
+      expect(await state(o.page)).toMatchObject({ analytics: true, performance: true });
+      await o.page.evaluate(revoke);
+      await settle(o.page);
+      expect(await state(o.page)).toMatchObject({ analytics: false, performance: false, advertising: true });
+      expect(await cookies(o.page)).toEqual(['_fbp', 'site_pref']);
+      await o.ctx.close();
+    });
+  }
+
+  it('every default map that reaches analytics reaches performance by the same banner ids', () => {
+    for (const [cmp, map] of Object.entries(DEFAULT_MAPS)) {
+      for (const [id, cats] of Object.entries(map)) {
+        if (!cats.includes('analytics')) continue;
+        // usercentrics/trustarc: analytics also hangs on marketing / level 3 (fail closed); performance follows too.
+        expect(cats, `${cmp} ${id}`).toContain('performance');
+      }
+    }
+    expect(DEFAULT_MAPS['consent-mode'].functionality_storage).toEqual(['functional']);
+    expect(DEFAULT_MAPS['consent-mode'].personalization_storage).toEqual(['functional']);
   });
 });

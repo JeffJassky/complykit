@@ -182,7 +182,7 @@ describe('UI file version pinning', () => {
     const a = await open(baseConfig());
     await a.page.waitForSelector(BANNER, { state: 'visible' });
     const url = await a.page.evaluate(() => (window as any).ComplyKit.diagnostics.ui.url as string);
-    const version = await a.page.evaluate(() => (window as any).ComplyKit.version as string);
+    const version = await a.page.evaluate(() => (window as any).ComplyKit.build as string);
     expect(url).toBe(`${server.origin}/complykit-consent-ui.js?v=${encodeURIComponent(version)}`);
     await a.ctx.close();
 
