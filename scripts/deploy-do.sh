@@ -52,7 +52,7 @@ PY
   doctl --context "$DO_CONTEXT" apps create --spec "$SPEC" --wait
 else
   echo "==> updating $APP_NAME ($APP_ID): WORKER_IMAGE=$WORKER_IMAGE"
-  doctl --context "$DO_CONTEXT" apps spec get "$APP_ID" -o json > "$SPEC"
+  doctl --context "$DO_CONTEXT" apps spec get "$APP_ID" --format json > "$SPEC"
   python3 - "$SPEC" "$WORKER_IMAGE" .do/app.yaml <<'PY'
 import json, re, sys
 path, image, yaml_path = sys.argv[1], sys.argv[2], sys.argv[3]
