@@ -32,6 +32,7 @@ import { StreamHub } from './stream.js';
 import { cloudflarePurger, noopPurger, type CdnPurger } from './cdn.js';
 import { CONSENT_SETTINGS_KEY, normalizeConsentSettings, storedConsentSettings } from './consent-settings.js';
 import { hostedBundleHash, hostedScript } from './hosted-script.js';
+import { ConsentStats, MAX_BEACON_BYTES, readStats } from './consent-stats.js';
 import { WorkspaceError, WorkspaceStore } from './workspace.js';
 import { serveReports } from './report-config.js';
 import { assertCanGenerate } from './history.js';
@@ -56,6 +57,8 @@ export interface Service {
   workspaces: WorkspaceStore;
   /** Consent records (pruned by CONSENT_RECORD_RETENTION_DAYS, not by retentionDays). */
   consentRecords: ConsentRecordStore;
+  /** Banner analytics counters (POST /e): held in memory, flushed every STATS_FLUSH_MS and on stop. */
+  stats: { flush(): Promise<void> };
   /** Epoch ms of the last request that counts as activity (see lifecycle.idleReason). */
   lastActivity(): number;
   /** Makes the to-do list after a consent scan (config.autoChecklist). */
@@ -228,6 +231,68 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
       await consentRecords.append(domain, record);
       res.status(204).end();
     }),
+  );
+
+  // --- Banner analytics beacon (public by design) -------------------------------------
+  // POST /e: counters only (plans/hosted-script.md). The body is parsed, turned into
+  // increments and dropped; the IP feeds the in-memory rate limiter and nothing else;
+  // user agent, referrer and URL are never read. Always 204 except 413 and 429.
+  const stats = new ConsentStats(storage.configSnapshots, storage.consentStats, { flushMs: config.statsFlushMs, trustCfGeo: config.trustCfGeo });
+  const beaconLimitIp = new RateLimiter(120);
+  const beaconLimitSite = new RateLimiter(20_000);
+
+  app.options('/e', (req, res) => {
+    if (consentCors(req, res)) {
+      res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.set('Access-Control-Allow-Headers', 'Content-Type');
+      res.set('Access-Control-Max-Age', '86400');
+    }
+    res.status(204).end();
+  });
+
+  app.post(
+    '/e',
+    (req, res, next) => {
+      consentCors(req, res);
+      const wait = beaconLimitIp.hit(req.ip ?? '');
+      if (wait) {
+        res.set('Retry-After', String(wait)).status(429).end();
+        return;
+      }
+      // Any content type (sendBeacon's text/plain needs no preflight); the limit applies while streaming.
+      express.text({ limit: MAX_BEACON_BYTES, type: () => true })(req, res, (err?: unknown) => {
+        if (err) {
+          // Too large: 413. Anything else unreadable (bad charset, aborted): nothing to count.
+          res.status((err as { status?: number }).status === 413 ? 413 : 204).end();
+          return;
+        }
+        next();
+      });
+    },
+    async (req, res, next) => {
+      try {
+        let body: unknown;
+        try {
+          body = JSON.parse(typeof req.body === 'string' ? req.body : '');
+        } catch {
+          res.status(204).end();
+          return;
+        }
+        const cf = (name: string): string | undefined => {
+          const v = req.get(name);
+          return v === undefined ? undefined : v.slice(0, 16);
+        };
+        let waitSite = 0;
+        const outcome = await stats.ingest(body, originDomain(req.get('origin')), config.trustCfGeo ? { country: cf('cf-ipcountry'), region: cf('cf-region-code') } : {}, (domain) => (waitSite = beaconLimitSite.hit(domain)) === 0);
+        if (outcome === 'limited') {
+          res.set('Retry-After', String(waitSite)).status(429).end();
+          return;
+        }
+        res.status(204).end();
+      } catch (err) {
+        next(err);
+      }
+    },
   );
 
   // --- Hosted consent script (public by design) --------------------------------------
@@ -556,6 +621,28 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     }),
   );
 
+  // Banner analytics, read back per config version (plans/hosted-script.md "Stats API").
+  app.get(
+    '/api/sites/:domain/stats',
+    siteRoute(async (req, res) => {
+      const domain = workspaces.domain(req.params.domain);
+      const raw = req.query.days;
+      const days = raw === undefined ? 30 : typeof raw === 'string' && /^\d{1,3}$/.test(raw) ? Number(raw) : 0;
+      if (days < 1 || days > 366) throw new WorkspaceError(400, '`days` must be a whole number from 1 to 366');
+      res.json(await readStats(domain, days, { stats: storage.consentStats, snapshots: storage.configSnapshots }));
+    }),
+  );
+
+  app.get(
+    '/api/sites/:domain/configs/:hash',
+    siteRoute(async (req, res) => {
+      const domain = workspaces.domain(req.params.domain);
+      const snap = await storage.configSnapshots.get(String(req.params.hash));
+      if (!snap || snap.domain !== domain) throw new WorkspaceError(404, 'no such config version for this site');
+      res.json(snap);
+    }),
+  );
+
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'not found' });
   });
@@ -600,6 +687,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     kb,
     workspaces,
     consentRecords,
+    stats: { flush: () => stats.flush() },
     checklists,
     lastActivity: () => lastActivity,
     async settled() {
@@ -617,7 +705,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
       await store.files.settled();
       await checklists.settled();
       hub.closeAll();
-      await Promise.all([store.flush(), workspaces.flush(), consentRecords.flush(), kbSync.settled()]);
+      await Promise.all([store.flush(), workspaces.flush(), consentRecords.flush(), stats.stop(), kbSync.settled()]);
       if (ownsStorage) await storage.close();
     },
   };

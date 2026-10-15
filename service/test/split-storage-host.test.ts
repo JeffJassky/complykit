@@ -25,7 +25,7 @@ afterEach(stopAll);
 async function split(wrap: (b: Blobs) => Blobs = (b) => b): Promise<{ storage: Storage; blobDir: string }> {
   const blobDir = tempDir();
   const records = await mongoRecords({ url: mongo.getUri(), db: `ck_host_${crypto.randomBytes(4).toString('hex')}` });
-  return { blobDir, storage: { kind: 'cloud', blobs: wrap(new FsBlobs(blobDir)), jobs: records.jobs, workspaces: records.workspaces, consentRecords: records.consentRecords, configSnapshots: records.configSnapshots, close: records.close } };
+  return { blobDir, storage: { kind: 'cloud', blobs: wrap(new FsBlobs(blobDir)), jobs: records.jobs, workspaces: records.workspaces, consentRecords: records.consentRecords, configSnapshots: records.configSnapshots, consentStats: records.consentStats, close: records.close } };
 }
 
 type S = Awaited<ReturnType<typeof startService>>;

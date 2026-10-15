@@ -1,12 +1,13 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { JobSummary, RemediationTask, SiteWorkspace } from '../../shared/api';
+import type { ConsentStatsResponse, JobSummary, RemediationTask, SiteWorkspace } from '../../shared/api';
 import { api, ApiError } from '../lib/api';
 import { configDownloads, configStoredOf, generatableRuns, siteRuns, generateErrorText, summarizeWorkspace } from '../lib/sites';
 import { parseHash, siteHref } from '../lib/useHashView';
 import { checklistFromWorkspace, checklistProgress, readTaskValue, reportChecklistHref } from '../lib/checklist';
 import { startLiveRefresh } from '../lib/useSites';
-import { ChecklistPanel, SitePageView, SitesListView } from './Sites';
+import { summarizeStats } from '../lib/stats';
+import { BannerStatsPanel, ChecklistPanel, SitePageView, SitesListView } from './Sites';
 
 const NOW = Date.parse('2026-10-06T12:00:00Z');
 const at = (n: number) => new Date(NOW - n * 3600_000).toISOString();
@@ -467,5 +468,70 @@ describe('the site page stays current (verifies done elsewhere)', () => {
     const html = renderToStaticMarkup(<ChecklistPanel workspace={after} jobs={null} />);
     expect(html).toContain('2 of 3 done');
     expect(html).not.toMatch(/required items? (is|are) not done/);
+  });
+});
+
+describe('banner stats panel', () => {
+  const h1 = 'a'.repeat(64);
+  const h2 = 'b'.repeat(64);
+  const stats: ConsentStatsResponse = {
+    domain: 'example-shop.test',
+    from: '2026-09-07',
+    to: '2026-10-06',
+    configs: [
+      {
+        hash: h1,
+        firstServed: '2026-10-01T10:00:00.000Z',
+        totals: {
+          load: 200,
+          shown: 150,
+          'decide:accept:banner': 60,
+          'decide:reject:banner': 20,
+          'decide:custom:settings': 20,
+          'ttd:accept:lt2s': 30,
+          'ttd:accept:2-5s': 40,
+          'ttd:reject:2-5s': 10,
+          'geo:US-CA:load': 80,
+          'geo:DE:load': 50,
+          'geo:XX:load': 30,
+          'geo:FR:load': 20,
+          'geo:GB:load': 10,
+          'geo:NL:load': 5,
+        },
+        days: [{ day: '2026-10-06', n: { load: 200 } }],
+      },
+      { hash: h2, firstServed: '2026-09-10T10:00:00.000Z', totals: { 'regime:opt-in': 1 }, days: [] },
+    ],
+  };
+
+  it('shows loads, shown, decision shares, the most common time bucket and the top five regions', () => {
+    const s = summarizeStats(stats.configs[0]);
+    expect(s).toMatchObject({ loads: 200, shown: 150, decisions: 100, percent: { accept: 60, reject: 20, custom: 20 }, commonTtd: '2–5 s' });
+    expect(s.regions.map((r) => r.region)).toEqual(['US-CA', 'DE', 'XX', 'FR', 'GB']);
+    const html = renderToStaticMarkup(<BannerStatsPanel stats={stats} />);
+    expect(html).toContain('Banner stats');
+    expect(html).toMatch(/data-testid="stats-loads">200</);
+    expect(html).toMatch(/data-testid="stats-shown">150</);
+    expect(html).toContain('60% accept · 20% reject · 20% custom (of 100)');
+    expect(html).toMatch(/data-testid="stats-ttd">2–5 s</);
+    expect(html).toContain('US-CA (80), DE (50), Unknown (30), FR (20), GB (10)');
+    expect(html).not.toContain('NL (5)');
+    expect(html).toContain(h1.slice(0, 12));
+    expect(html).toContain('first served 2026-10-01');
+    // A version with no visitor activity gets no block.
+    expect(html).not.toContain(h2.slice(0, 12));
+  });
+
+  it('has a one-line empty state, a loading state and an error state', () => {
+    expect(renderToStaticMarkup(<BannerStatsPanel stats={{ ...stats, configs: [] }} />)).toContain('data-testid="banner-stats-empty"');
+    expect(renderToStaticMarkup(<BannerStatsPanel stats={{ ...stats, configs: [stats.configs[1]] }} />)).toContain('data-testid="banner-stats-empty"');
+    expect(renderToStaticMarkup(<BannerStatsPanel stats={null} />)).toContain('Loading');
+    expect(renderToStaticMarkup(<BannerStatsPanel stats={null} error="boom" />)).toContain('Couldn’t load banner stats: boom');
+  });
+
+  it('is part of the site page when stats are wired, absent when not', () => {
+    const wired = renderToStaticMarkup(<SitePageView workspace={workspace} jobs={null} now={NOW} stats={stats} />);
+    expect(wired).toContain('data-testid="banner-stats"');
+    expect(renderToStaticMarkup(<SitePageView workspace={workspace} jobs={null} now={NOW} />)).not.toContain('data-testid="banner-stats"');
   });
 });

@@ -41,7 +41,7 @@ class FlakyBlobs extends FsBlobs {
 async function splitStorage(): Promise<{ storage: Storage; blobs: FlakyBlobs }> {
   const blobs = new FlakyBlobs(tempDir());
   const records = await mongoRecords({ url: mongo.getUri(), db: `ck_fix_${crypto.randomBytes(4).toString('hex')}` });
-  return { blobs, storage: { kind: 'cloud', blobs, jobs: records.jobs, workspaces: records.workspaces, consentRecords: records.consentRecords, configSnapshots: records.configSnapshots, close: records.close } };
+  return { blobs, storage: { kind: 'cloud', blobs, jobs: records.jobs, workspaces: records.workspaces, consentRecords: records.consentRecords, configSnapshots: records.configSnapshots, consentStats: records.consentStats, close: records.close } };
 }
 
 type S = Awaited<ReturnType<typeof startService>>;

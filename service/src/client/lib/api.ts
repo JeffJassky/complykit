@@ -3,6 +3,7 @@ import type {
   ConsentConfigResponse,
   ConsentSettings,
   ConsentSettingsResponse,
+  ConsentStatsResponse,
   CreateBatchRequest,
   CreateBatchResponse,
   JobDetail,
@@ -86,6 +87,8 @@ export const api = {
 
   sites: () => request<SitesResponse>('GET', '/api/sites'),
   siteWorkspace: (domain: string) => request<SiteWorkspace>('GET', `/api/sites/${encodeURIComponent(domain)}/workspace`),
+  /** Banner analytics per config version (counters only), the last `days` UTC days. */
+  siteStats: (domain: string, days = 30) => request<ConsentStatsResponse>('GET', `/api/sites/${encodeURIComponent(domain)}/stats?days=${days}`),
   generateConsentConfig: (jobId: string, req: ConsentConfigRequest = {}) =>
     request<ConsentConfigResponse>('POST', `/api/jobs/${encodeURIComponent(jobId)}/consent-config`, req),
   patchWorkspace: (domain: string, patch: SiteWorkspacePatch) => request<SiteWorkspacePatchResponse>('PATCH', `/api/sites/${encodeURIComponent(domain)}/workspace`, patch),
