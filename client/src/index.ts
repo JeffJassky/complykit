@@ -1,7 +1,7 @@
 // Entry point. Empty on purpose (D1 scaffold): later tickets add the state
 // store, script gate, vendor adapters, GTM bridge and banner. The IIFE build
 // exposes this module's exports as the global `ComplyKit`.
-export { TOOL_VERSION as version } from './version.js';
+export { TOOL_VERSION as version, BUILD as build } from './version.js';
 // Consent state store + public API (D3): ComplyKit.get / on / open / withdraw.
 export { get, on, open, withdraw, init, sync } from './api.js';
 export { installGtmBridge, consentModeSignals, GTM_CONSENT_EVENT } from './gtm.js';

@@ -47,12 +47,10 @@ export function startEvents(config: ConsentToolConfig, store: ConsentStore): voi
     const body = JSON.stringify({ v: 1, h: config.hash, tv: TOOL_VERSION, r: store.state().regime, ev: queue });
     queue = [];
     try {
-      if (navigator.sendBeacon?.(endpoint, body)) return;
-    } catch {
-      /* fall through to fetch */
-    }
-    try {
-      void fetch(endpoint, { method: 'POST', body, headers: { 'content-type': 'text/plain' }, keepalive: true, credentials: 'omit', mode: 'cors' }).catch(() => {});
+      // fetch+keepalive so the Referer can be withheld (sendBeacon cannot set referrerPolicy); sendBeacon only without keepalive.
+      if (typeof Request !== 'undefined' && 'keepalive' in Request.prototype) {
+        void fetch(endpoint, { method: 'POST', body, headers: { 'content-type': 'text/plain' }, keepalive: true, credentials: 'omit', mode: 'cors', referrerPolicy: 'no-referrer' }).catch(() => {});
+      } else navigator.sendBeacon?.(endpoint, body);
     } catch {
       /* analytics never break the page */
     }

@@ -5,7 +5,7 @@
 import { getConfig, sync } from './api.js';
 import { diagnostics } from './diagnostics.js';
 import { clearStores } from './withdraw.js';
-import { TOOL_VERSION } from './version.js';
+import { BUILD } from './version.js';
 import { COMPANION_ATTR, COMPANION_FILE, type CompanionHost } from './companion/host.js';
 
 const ownScript = typeof document !== 'undefined' ? (document.currentScript as HTMLScriptElement | null) : null;
@@ -18,7 +18,7 @@ export function loadCompanion(cmp: string): void {
   try {
     const a = ownScript?.getAttribute(COMPANION_ATTR);
     if (a) url = new URL(a, location.href).href;
-    else if (ownScript?.src) url = `${new URL(COMPANION_FILE, ownScript.src).href}?v=${encodeURIComponent(TOOL_VERSION)}`;
+    else if (ownScript?.src) url = `${new URL(COMPANION_FILE, ownScript.src).href}?v=${encodeURIComponent(BUILD)}`;
   } catch {
     /* malformed: treated as absent */
   }
@@ -26,6 +26,7 @@ export function loadCompanion(cmp: string): void {
   const s = document.createElement('script');
   s.src = url;
   s.async = true;
+  s.referrerPolicy = 'no-referrer';
   if (ownScript?.nonce) s.nonce = ownScript.nonce;
   s.onerror = () => {
     diagnostics.companion = { cmp, state: 'not-found' };

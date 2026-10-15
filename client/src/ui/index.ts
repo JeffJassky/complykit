@@ -171,7 +171,7 @@ function build(): void {
       // Opt-out regimes: confirm the opt-out was processed (CCPA Regs §7026(g)).
       if (s.state().regime !== 'opt-in') status.textContent = t('optOut.confirmed');
     }
-    H.report({ t: 'decide', action: kind, via, categories: s.state().categories });
+    H.report?.({ t: 'decide', action: kind, via, categories: s.state().categories });
   };
 
   const banner = createBanner(config.layout, {
@@ -189,7 +189,7 @@ function build(): void {
     const s = getStore();
     const from = H.opener;
     if (s) {
-      if (!settings.isOpen()) H.report({ t: 'open', via: from && banner.el.contains(from) ? 'banner' : from === choices ? 'choices' : 'api' });
+      if (!settings.isOpen()) H.report?.({ t: 'open', via: from && banner.el.contains(from) ? 'banner' : from === choices ? 'choices' : 'api' });
       settings.open(s.state().categories, from ?? document.activeElement);
     }
     H.opener = null;
@@ -211,7 +211,7 @@ function build(): void {
     choices.hidden = need || position === 'none';
     if (need) {
       banner.show();
-      H.report({ t: 'shown' }); // the beacon keeps the first
+      H.report?.({ t: 'shown' }); // the beacon keeps the first
     }
     else banner.hide(choicesEl());
     block?.set(need);

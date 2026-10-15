@@ -29,7 +29,7 @@ import { getConfig, getStore, on } from './api.js';
 import { diagnostics } from './diagnostics.js';
 import { report } from './events.js';
 import type { ConsentStore } from './store.js';
-import { TOOL_VERSION } from './version.js';
+import { BUILD } from './version.js';
 import { OPEN_ATTR, UI_ATTR, UI_FILE, type UiHost } from './ui/host.js';
 
 export interface UiDiagnostics {
@@ -63,7 +63,7 @@ export function uiUrl(): string | undefined {
   try {
     if (a) return a === 'none' ? undefined : new URL(a, location.href).href;
     // ?v pins the UI file to this core's release (the host serves it immutable per version).
-    if (ownScript?.src) return `${new URL(UI_FILE, ownScript.src).href}?v=${encodeURIComponent(TOOL_VERSION)}`;
+    if (ownScript?.src) return `${new URL(UI_FILE, ownScript.src).href}?v=${encodeURIComponent(BUILD)}`;
   } catch {
     /* malformed: treated as absent */
   }
@@ -85,6 +85,7 @@ export function loadUi(): void {
   const s = document.createElement('script');
   s.src = url;
   s.async = true;
+  s.referrerPolicy = 'no-referrer';
   if (ownScript?.nonce) s.nonce = ownScript.nonce;
   s.onload = () => {
     if (diagnostics.ui?.state === 'loading') diagnostics.ui.state = 'loaded';

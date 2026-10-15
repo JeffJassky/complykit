@@ -16,9 +16,9 @@ export const COMPANION_ATTR = 'data-complykit-companion';
 
 export interface CompanionHost {
   getConfig(): ConsentToolConfig | undefined;
-  /** ComplyKit.sync: set the store from a mapped choice (reports a 'cmp' decision when the grants changed). */
-  sync(choice: Record<string, boolean>): ConsentState | null;
+  /** ComplyKit.sync: set the store from a mapped choice (a category left out keeps its value; reports a 'cmp' decision when the grants changed, unless `initial`). */
+  sync(choice: Record<string, boolean>, initial?: boolean): ConsentState | null;
   /** The withdrawal cleanup (withdraw.ts clearStores) for these categories; `granted` ones are protected. */
-  clear(categories: string[], granted: string[]): Promise<NonNullable<Diagnostics['withdrawalSweep']>>;
+  clear?(categories: string[], granted: string[]): Promise<NonNullable<Diagnostics['withdrawalSweep']>>;
   diagnostics: Diagnostics;
 }

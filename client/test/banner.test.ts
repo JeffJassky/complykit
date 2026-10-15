@@ -153,7 +153,7 @@ describe('banner (bar layout): markup', () => {
 describe('two-file split: the core loads the UI file', () => {
   it('from the same folder as the core, and records it in diagnostics', async () => {
     const page = await load();
-    expect(await page.evaluate(() => (window as any).ComplyKit.diagnostics.ui)).toEqual({ url: `${server.origin}/complykit-consent-ui.js?v=0.0.0`, state: 'loaded' });
+    expect(await page.evaluate(() => (window as any).ComplyKit.diagnostics.ui)).toEqual({ url: `${server.origin}/complykit-consent-ui.js?v=${await page.evaluate(() => (window as any).ComplyKit.build)}`, state: 'loaded' });
     await page.context().close();
   });
 
