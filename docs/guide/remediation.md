@@ -24,7 +24,7 @@ The steps:
 3. [Classify the tools it does not know](#_3-classify-the-tools-it-does-not-know)
 4. [Your to-do list is made for you](#_4-your-to-do-list-is-made-for-you)
 5. [Read the to-do list](#_5-read-the-to-do-list)
-6. [Download the install bundle and make the changes](#_6-download-the-install-bundle-and-make-the-changes)
+6. [Paste the install line and make the changes](#_6-paste-the-install-line-and-make-the-changes)
 7. [Verify each change](#_7-verify-each-change)
 8. [Follow your progress](#_8-follow-your-progress)
 9. [Run the final scan](#_9-run-the-final-scan)
@@ -57,7 +57,8 @@ Then open `http://localhost:8080`.
 | `COMPLYKIT_BROWSER_CHANNEL=chrome` | Use your installed Google Chrome. Set this when Playwright's own Chromium is not installed (the scans and the **Verify** browser checks both read it). Without either, they fail to start a browser. |
 | `AUTO_CHECKLIST` | `0` turns off making the to-do list automatically when a scan finishes (the report page then offers **Make my to-do list**). Default: on. |
 | `CONSENT_RUNS` | Visits per visitor choice when a scan opts into **Also repeat on a slow connection** (2 to 5, default 2). Other scans visit each choice once. |
-| `COMPLYKIT_CLI`, `COMPLYKIT_CLIENT_DIST` | Only if you built into non-default places: the built `dist/cli.js`, and the `client/dist` folder the install bundle copies from. |
+| `PUBLIC_ORIGIN` | The address visitors' browsers reach this service at. It goes into the install line (`PUBLIC_ORIGIN/s/your-domain.js`). Default `http://localhost:<port>`: fine for trying it out, but a live site needs an address the public can reach. |
+| `COMPLYKIT_CLI`, `COMPLYKIT_CLIENT_DIST` | Only if you built into non-default places: the built `dist/cli.js`, and the `client/dist` folder the service serves the tool files from. |
 
 ## 2. Scan: the report page
 
@@ -166,18 +167,35 @@ on and hides its buttons until you answer it. It still counts toward the total.
 **Only if they apply.** Chat widgets, embeds and fonts sit in a folded list at the
 end. They are not counted in the progress. Each says when it applies.
 
-## 6. Download the install bundle and make the changes
+## 6. Paste the install line and make the changes
 
-On the install item (and on the site page), press **Download install bundle (.zip)**.
-It contains the two tool files, the generated config, the snippet to paste first in
-`<head>`, the change list and the checklist as Markdown. Put the two JavaScript files
-in one folder on your own domain; the snippet's path is the one in the config (by
-default `/complykit/v1/`, see [Installing the consent tool](./consent-tool.md#_1-what-you-get)).
+The install item shows the install settings form and **one line** with a **Copy**
+button (it is also on the site page):
 
-Make the install change and the "remove the existing consent tool" change in the same
-deploy: two tools writing the choice is worse than none. Then make each change in the
-order given. If you are the owner and not the developer, hand over the bundle and the
-checklist; the steps are written to be followed without further explanation.
+```html
+<script src="https://<complykit host>/s/example.com.js" referrerpolicy="no-referrer"></script>
+```
+
+Paste it first in `<head>`, blocking, above every other script, and remove any earlier
+complykit lines from the page. That is the whole install: the tool and your settings
+come from that line, and a later settings change needs no new paste. There is no
+download and no files to host. If your site sends a Content Security Policy, `script-src`
+must allow the complykit host. Details and the trade-off of loading the tool from us:
+[Installing the consent tool](./consent-tool.md#_1-paste-the-line-first-in-head).
+
+**Mode.** The form's first choice is the mode. *Full* makes complykit your consent
+manager. *Add-on* keeps your existing banner and makes complykit follow its choice and
+delete the cookies of whatever the visitor withdraws; pick the banner (the scan
+preselects the one it saw). In add-on mode the install steps change (the line can go
+anywhere in `<head>`, `async` is fine, keep the banner), the "remove the existing
+consent tool" item disappears, and the other items still say what must be held, which
+is then the banner's job. See [Add-on mode](./consent-tool.md#add-on-mode).
+
+In full mode, make the install change and the "remove the existing consent tool" change
+in the same deploy: two tools writing the choice is worse than none. Then make each
+change in the order given. If you are the owner and not the developer, hand over the
+checklist and the line; the steps are written to be followed without further
+explanation.
 
 ## 7. Verify each change
 
@@ -188,9 +206,9 @@ seconds, with no full scan, and records the result with the time and the evidenc
 There are two kinds of check.
 
 **Static checks** fetch the page the change is on (or, for Google Tag Manager, the
-published container file) and read it. They cover installing the tool (one config
-element, valid and matching the latest generated one, the script not async or
-deferred, and first in `<head>`), removing the old tool, holding a tag (no copy runs
+published container file) and read it. They cover installing the tool (the hosted line present
+once, blocking and first in `<head>`, with no earlier complykit copy on the page, and
+the host serving your settings; in add-on mode, present once and serving), removing the old tool, holding a tag (no copy runs
 unheld, and a held copy with the right category), removing a pixel, a consent default,
 and gating a GTM tag.
 
@@ -307,6 +325,9 @@ complykit verify-change --task task.json --json
 # 5. rescan with the workspace so the scan knows your config
 complykit consent --url https://www.example-shop.test --workspace workspace.json
 ```
+
+Step 3 writes the self-hosted install (files plus an inline config). Add `--hosted <url>` (the site's `/s/<domain>.js` address on a complykit host) to get the one-line
+hosted snippet instead; the service always does.
 
 Without the service there are no buttons, so progress is not kept for you: mark things
 off in `checklist.md` yourself. `verify-change` prints `pass`, `fail` or

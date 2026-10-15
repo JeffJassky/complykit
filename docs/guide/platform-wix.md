@@ -11,7 +11,8 @@ on if it finds the Wix API on the page.
 
 1. In the Wix dashboard open **Settings > Custom Code** and choose **Add Custom
    Code**.
-2. Paste the consent tool snippet (the config element and the script).
+2. Paste the consent tool line (the one `<script src>` the install task gives you;
+   [Installing the consent tool](./consent-tool.md)).
 3. Set **Add Code to Pages** to **All pages**, **Load code once** off, and
    **Place Code in** to **Head**.
 4. Save. Put this entry **above** every other custom-code entry (drag it to the
