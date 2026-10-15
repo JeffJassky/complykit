@@ -86,4 +86,11 @@ export function reportChecklistHref(ws: SiteWorkspace, jobs: Record<string, JobS
 /** A task's card in the report (consent-remediation.ts taskAnchor). */
 export const reportTaskHref = (checklistHref: string, id: string): string => checklistHref.replace(/#.*$/, '') + '#task-' + id.replace(/[^a-zA-Z0-9_-]/g, '-');
 
-export const installZipHref = (domain: string): string => `/api/sites/${encodeURIComponent(domain)}/install.zip`;
+/** The one line a site owner pastes first in <head>: the hosted script (plans/hosted-script.md "Paste snippet"). */
+export const installSnippet = (hostedScriptUrl: string): string => `<script src="${hostedScriptUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}" referrerpolicy="no-referrer"></script>`;
+
+/** The hosted script URL stored with the site's generated config, when there is one. */
+export function hostedScriptUrlOf(ws: SiteWorkspace): string | undefined {
+  const v = ws.config?.value as { hostedScriptUrl?: unknown } | null | undefined;
+  return typeof v?.hostedScriptUrl === 'string' && v.hostedScriptUrl ? v.hostedScriptUrl : undefined;
+}

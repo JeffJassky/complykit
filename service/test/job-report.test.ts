@@ -77,7 +77,8 @@ describe('GET /api/jobs/:id/report', () => {
     expect(r.todo.tasks.map((t) => t.id)).toEqual(['classify:aaaaaaaaaaaa', 'install', 'rewrite-tag:0123456789ab']);
     expect(r.todo.tasks[0]).toMatchObject({ kind: 'classify', classKey: 'class:fake-widget', status: 'todo' });
     expect(r.todo).toMatchObject({ fromThisRun: true, progress: { verified: 0, required: 3 } });
-    expect(r.installZipUrl).toBe('/api/sites/example-shop.test/install.zip');
+    expect(r.hostedScriptUrl).toBe('http://localhost:8080/s/example-shop.test.js');
+    expect(JSON.stringify(r)).not.toContain('install.zip');
     expect(r.report!.matrix.tools[1]).toMatchObject({ classified: false, classKey: 'class:fake-widget' });
 
     // The owner decides; the page asks for a re-render (no "Update report" button).

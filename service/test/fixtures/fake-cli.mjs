@@ -427,7 +427,9 @@ async function consentConfig() {
   const ws = opts.workspace ? JSON.parse(fs.readFileSync(opts.workspace, 'utf8')) : { entries: {} };
   const classified = Object.keys(ws.entries ?? {}).filter((k) => k.startsWith('class:')).length;
   const config = { version: '1.0', generatedFrom: { runId: path.basename(runDir), site: ws.domain ?? 'example.com' }, classified, ...(opts['record-endpoint'] ? { record: { endpoint: opts['record-endpoint'] } } : {}), scriptSrc: opts['script-src'] ?? '/complykit/v1/complykit-consent.js' };
-  const snippet = `<script type="application/json" id="complykit-config">${JSON.stringify(config)}</script>\n`;
+  // --hosted <url>: the one-line paste snippet (the real CLI's hosted mode); otherwise the inline config.
+  const hosted = typeof opts.hosted === 'string' ? opts.hosted : undefined;
+  const snippet = hosted ? `<script src="${hosted}" referrerpolicy="no-referrer"></script>\n` : `<script type="application/json" id="complykit-config">${JSON.stringify(config)}</script>\n`;
   const changeList = `# Change list — ${path.basename(runDir)}\n`;
   const notes = [{ code: 'regime-source', level: 'flag', message: 'meta tag needed' }];
   fs.mkdirSync(opts.out, { recursive: true });
@@ -440,8 +442,8 @@ async function consentConfig() {
   const task = (id, kind, order, verify) => ({ id, kind, group: kind === 'install' ? 'install' : 'markup', title: `${kind} task`, summary: 'fake', tools: [], partyIds: [], steps: ['do it'], pages: [page], verify, status: 'todo', optional: false, notes: [], order });
   const tracking = JSON.parse(fs.readFileSync(path.join(runDir, 'tracking.json'), 'utf8'));
   const decision = tracking.unknownTool ? [{ ...task('classify:aaaaaaaaaaaa', 'classify', -1, { check: 'manual', method: 'manual' }), title: `Decide: what is ${tracking.unknownTool}?`, group: 'decide', tools: [tracking.unknownTool], classKey: 'class:fake-widget' }] : [];
-  const tasks = [...decision, task('install', 'install', 0, { check: 'install', method: 'static', page, configHash: 'sha256:fake', scriptSrc: config.scriptSrc, elementId: 'complykit-config' }), task('rewrite-tag:0123456789ab', 'rewrite-tag', 1, { check: 'rewrite-tag', method: 'static', page })];
-  process.stdout.write(JSON.stringify({ config, snippet, changeList, notes, tasks, env: process.env.COMPLYKIT_KB_DIR ?? null }) + '\n');
+  const tasks = [...decision, task('install', 'install', 0, { check: 'install', method: 'static', page, configHash: 'sha256:fake', ...(hosted ? { mode: 'hosted', scriptSrc: hosted } : { scriptSrc: config.scriptSrc, elementId: 'complykit-config' }) }), task('rewrite-tag:0123456789ab', 'rewrite-tag', 1, { check: 'rewrite-tag', method: 'static', page })];
+  process.stdout.write(JSON.stringify({ config, snippet, changeList, notes, tasks, ...(hosted ? { hostedScriptUrl: hosted, scriptSrc: hosted } : {}), env: process.env.COMPLYKIT_KB_DIR ?? null }) + '\n');
 }
 
 // `verify-change --task <file> --site <domain> --json` (R4): the outcome is

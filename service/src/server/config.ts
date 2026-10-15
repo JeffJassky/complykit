@@ -65,6 +65,14 @@ export interface ServiceConfig {
   workerImage?: string;
   /** WORKER_SECRET: shared secret for /internal/* on workers. */
   workerSecret?: string;
+  /** PUBLIC_ORIGIN (trailing '/' trimmed): the origin visitors' browsers reach this host at. Default http://localhost:<port>. */
+  publicOrigin: string;
+  /** CF_ZONE_ID + CF_API_TOKEN (both or neither): Cloudflare in front, so the hosted script is purged on change. Unset = no CDN. */
+  cdn?: { zoneId: string; token: string };
+  /** TRUST_CF_GEO=1: read Cloudflare's country / region headers for banner analytics. Off = geography is always XX. */
+  trustCfGeo: boolean;
+  /** How often banner counters are flushed to storage (STATS_FLUSH_MS, default 30 000). */
+  statsFlushMs: number;
 }
 
 /** The service directory (holds package.json). Same depth from src/server and
@@ -153,8 +161,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
   }
   const dataDir = path.resolve(env.DATA_DIR || (fs.existsSync('/data') ? '/data' : path.join(SERVICE_DIR, '.data')));
   const backend = dataBackend(env);
+  const port = int(env, 'PORT', 8080, 1);
+  const publicOrigin = (env.PUBLIC_ORIGIN || `http://localhost:${port}`).replace(/\/+$/, '');
   return {
-    port: int(env, 'PORT', 8080, 1),
+    port,
     password,
     dataDir,
     dataBackend: backend,
@@ -181,5 +191,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     workersApp: env.WORKERS_APP || 'complykit-workers',
     workerImage: env.WORKER_IMAGE || env.FLY_IMAGE_REF || undefined,
     workerSecret: env.WORKER_SECRET || undefined,
+    publicOrigin,
+    ...(env.CF_ZONE_ID && env.CF_API_TOKEN ? { cdn: { zoneId: env.CF_ZONE_ID, token: env.CF_API_TOKEN } } : {}),
+    trustCfGeo: env.TRUST_CF_GEO === '1',
+    statsFlushMs: int(env, 'STATS_FLUSH_MS', 30_000, 1),
   };
 }

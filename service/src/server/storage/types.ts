@@ -13,7 +13,7 @@
 // answer with a status are WorkspaceError (workspace.ts).
 
 import type { Readable } from 'node:stream';
-import type { JobDetail, SiteWorkspace } from '../../shared/api.js';
+import type { ConfigSnapshot, JobDetail, SiteWorkspace } from '../../shared/api.js';
 import type { ConsentRecord } from '../consent-records.js';
 
 // --- Blobs ------------------------------------------------------------------------
@@ -105,12 +105,21 @@ export interface ConsentRecordRecords {
   prune(cutoffMs: number): Promise<number>;
 }
 
+/** The configs the host has served, by hash (plans/hosted-script.md "Config snapshots"). Kept forever. */
+export interface ConfigSnapshotRecords {
+  /** Store the snapshot unless one with this hash exists (the first `firstServed` wins). */
+  put(snapshot: ConfigSnapshot): Promise<void>;
+  /** undefined = never served. */
+  get(hash: string): Promise<ConfigSnapshot | undefined>;
+}
+
 export interface Storage {
   readonly kind: 'fs' | 'cloud';
   blobs: Blobs;
   jobs: JobRecords;
   workspaces: WorkspaceRecords;
   consentRecords: ConsentRecordRecords;
+  configSnapshots: ConfigSnapshotRecords;
   /** Close connections (shutdown, tests). */
   close(): Promise<void>;
 }

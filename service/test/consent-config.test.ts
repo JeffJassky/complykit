@@ -31,7 +31,8 @@ describe('POST /api/jobs/:id/consent-config', () => {
     expect(body).toMatchObject({ domain: 'example.com', runId, stale: false });
     expect(body.value.config).toMatchObject({ classified: 1 });
     expect(body.value.changeList).toMatch(/^# Change list/);
-    expect(body.value.snippet).toContain('id="complykit-config"');
+    expect(body.value.snippet).toBe('<script src="http://localhost:8080/s/example.com.js" referrerpolicy="no-referrer"></script>\n');
+    expect(body.value.hostedScriptUrl).toBe('http://localhost:8080/s/example.com.js');
 
     const ws = (await request(s.app).get('/api/sites/example.com/workspace').expect(200)).body as SiteWorkspace;
     expect(ws.config).toMatchObject({ by: 'Ann', runId });
@@ -40,17 +41,21 @@ describe('POST /api/jobs/:id/consent-config', () => {
 
     // The files are served with the job's reports.
     const snippet = await request(s.app).get(body.files.snippet).expect(200);
-    expect(snippet.text).toContain('complykit-config');
+    expect(snippet.text).toContain('/s/example.com.js');
     expect(fs.existsSync(path.join(s.store.jobDir(id), 'consent', 'consent-config', 'complykit-config.json'))).toBe(true);
   });
 
-  it('passes the options; recordEndpoint true names this service’s endpoint', async () => {
-    const s = await startService();
+  it('always asks for the hosted install: --hosted and --record-endpoint from the public origin, whatever the request says', async () => {
+    const s = await startService({ publicOrigin: 'https://ck.example-host.test' });
     const id = await scan(s, 'www.example.org');
-    const res = await request(s.app).post(`/api/jobs/${id}/consent-config`).send({ recordEndpoint: true, scriptSrc: '/assets/ck/complykit-consent.js' }).expect(200);
-    const cfg = (res.body as ConsentConfigResponse).value.config as { record?: { endpoint: string }; scriptSrc: string };
-    expect(cfg.record?.endpoint).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/consent-records$/);
-    expect(cfg.scriptSrc).toBe('/assets/ck/complykit-consent.js');
+    const res = await request(s.app).post(`/api/jobs/${id}/consent-config`).send({ recordEndpoint: 'https://elsewhere.test/r', scriptSrc: '/assets/ck/complykit-consent.js' }).expect(200);
+    const body = res.body as ConsentConfigResponse;
+    const cfg = body.value.config as { record?: { endpoint: string } };
+    expect(cfg.record?.endpoint).toBe('https://ck.example-host.test/api/consent-records');
+    expect(body.value.hostedScriptUrl).toBe('https://ck.example-host.test/s/example.org.js');
+    expect(body.value.snippet).toContain('src="https://ck.example-host.test/s/example.org.js"');
+    const install = body.value.tasks!.find((t) => t.kind === 'install')!;
+    expect(install.verify).toMatchObject({ mode: 'hosted', scriptSrc: 'https://ck.example-host.test/s/example.org.js' });
   });
 
   it('refuses a job without a finished consent run, an unknown job, and a bad option', async () => {

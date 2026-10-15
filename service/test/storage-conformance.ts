@@ -286,5 +286,16 @@ export function recordSuite(name: string, make: (opts: { consentMaxBytes?: numbe
         },
         { consentMaxBytes: 1500 },
       ));
+
+    it('config snapshots: put once, get by hash; the first firstServed wins; unknown is undefined', () =>
+      withStorage(async ({ configSnapshots }) => {
+        const hash = 'a'.repeat(64);
+        expect(await configSnapshots.get(hash)).toBeUndefined();
+        const first = { hash, domain: 'shop.example', config: { layout: 'bar', hash }, firstServed: '2026-10-14T10:00:00.000Z' };
+        await configSnapshots.put(first);
+        await configSnapshots.put({ ...first, firstServed: '2026-10-15T10:00:00.000Z', config: { other: true } });
+        expect(await configSnapshots.get(hash)).toEqual(first);
+        expect(await configSnapshots.get('b'.repeat(64))).toBeUndefined();
+      }));
   });
 }

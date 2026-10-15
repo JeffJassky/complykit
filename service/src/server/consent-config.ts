@@ -34,8 +34,6 @@ export interface ConsentConfigDeps {
   workspaces: WorkspaceStore;
   /** The job's files: the CLI runs in its scratch; the generated files are put into blobs after. */
   files: JobFiles;
-  /** This service's own origin, for `recordEndpoint: true`. */
-  origin: string;
 }
 
 /**
@@ -71,9 +69,12 @@ export async function generateStagedConsentConfig(job: JobDetail, body: ConsentC
   if (!fs.existsSync(path.join(runDir, 'tracking.json'))) throw new WorkspaceError(409, 'the consent run’s evaluation is no longer on disk');
 
   const by = text(body.by, 'by', 80);
-  const scriptSrc = text(body.scriptSrc, 'scriptSrc', 500);
+  text(body.scriptSrc, 'scriptSrc', 500); // still validated; the service always generates the hosted install
+  text(body.recordEndpoint === true ? undefined : body.recordEndpoint, 'recordEndpoint', 500);
   const privacyPolicyUrl = text(body.privacyPolicyUrl, 'privacyPolicyUrl', 500);
-  const recordEndpoint = body.recordEndpoint === true ? `${deps.origin}/api/consent-records` : text(body.recordEndpoint, 'recordEndpoint', 500);
+  // The service always generates the hosted install: one script URL per site that never changes (B1).
+  const hostedUrl = `${deps.config.publicOrigin}/s/${deps.workspaces.domain(new URL(job.url).hostname)}.js`;
+  const recordEndpoint = `${deps.config.publicOrigin}/api/consent-records`;
 
   const domain = deps.workspaces.domain(new URL(job.url).hostname);
   const ws = await deps.workspaces.get(domain);
@@ -83,17 +84,16 @@ export async function generateStagedConsentConfig(job: JobDetail, body: ConsentC
   await fsp.writeFile(wsFile, JSON.stringify(ws, null, 2) + '\n');
 
   const args = ['consent-config', runDir, '--workspace', wsFile, '--out', outDir, '--json'];
-  if (scriptSrc) args.push('--script-src', scriptSrc);
-  if (recordEndpoint) args.push('--record-endpoint', recordEndpoint);
+  args.push('--hosted', hostedUrl, '--record-endpoint', recordEndpoint);
   if (privacyPolicyUrl) args.push('--privacy-policy', privacyPolicyUrl);
   const stdout = await runCli(deps.config, args);
-  let printed: { config: Record<string, unknown>; snippet: string; changeList: string; notes: ConsentConfigValue['notes']; scriptSrc?: string; tasks?: ConsentConfigValue['tasks'] };
+  let printed: { config: Record<string, unknown>; snippet: string; changeList: string; notes: ConsentConfigValue['notes']; scriptSrc?: string; hostedScriptUrl?: string; detectedCmp?: ConsentConfigValue['detectedCmp']; tasks?: ConsentConfigValue['tasks'] };
   try {
     printed = JSON.parse(stdout);
   } catch {
     throw new WorkspaceError(500, 'complykit consent-config printed something other than JSON');
   }
-  const value: ConsentConfigValue = { config: printed.config, snippet: printed.snippet, changeList: printed.changeList, notes: printed.notes, ...(printed.scriptSrc ? { scriptSrc: printed.scriptSrc } : {}), ...(Array.isArray(printed.tasks) ? { tasks: printed.tasks } : {}) };
+  const value: ConsentConfigValue = { config: printed.config, snippet: printed.snippet, changeList: printed.changeList, notes: printed.notes, ...(printed.scriptSrc ? { scriptSrc: printed.scriptSrc } : {}), ...(printed.hostedScriptUrl ? { hostedScriptUrl: printed.hostedScriptUrl } : {}), ...(printed.detectedCmp ? { detectedCmp: printed.detectedCmp } : {}), ...(Array.isArray(printed.tasks) ? { tasks: printed.tasks } : {}) };
   const res = await deps.workspaces.patch(domain, { ...(by ? { by } : {}), config: { value, runId } });
   // The config itself goes last: it is what readers open, and what says the other files are current.
   const outFiles = (await walkLocal(outDir)).sort((a, b) => Number(a === 'complykit-config.json') - Number(b === 'complykit-config.json'));

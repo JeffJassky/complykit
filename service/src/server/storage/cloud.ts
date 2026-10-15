@@ -12,6 +12,7 @@ export async function cloudStorage(cfg: CloudStorageConfig, opts: { consentMaxBy
     jobs: records.jobs,
     workspaces: records.workspaces,
     consentRecords: records.consentRecords,
+    configSnapshots: records.configSnapshots,
     close: records.close,
   };
 }

@@ -219,6 +219,14 @@ export function mergeWorkspace(current: SiteWorkspace, patch: NormalizedPatch, n
 
 // --- Store ---------------------------------------------------------------------------
 
+/** The workspace entry holding the owner's consent settings (plans/hosted-script.md "Owner settings"). */
+export const CONSENT_SETTINGS_ENTRY = 'consent-settings';
+
+export interface WorkspaceStoreOptions {
+  /** Called once after a write that replaced `config` or changed the `consent-settings` entry (never for a stale write): what the hosted script serves changed. Errors are logged. */
+  onConfigChange?: (domain: string) => void;
+}
+
 export class WorkspaceStore {
   private readonly chains = new Map<string, Promise<unknown>>();
 
@@ -226,6 +234,7 @@ export class WorkspaceStore {
   constructor(
     private readonly records: WorkspaceRecords,
     private readonly progress?: (ws: SiteWorkspace) => SiteSummary['checklist'],
+    private readonly options: WorkspaceStoreOptions = {},
   ) {}
 
   /** Registrable domain for :domain, or a 400. */
@@ -248,11 +257,23 @@ export class WorkspaceStore {
         const current = await this.records.read(domain);
         const { changed, ...result } = mergeWorkspace(current?.ws ?? emptyWorkspace(domain), normalized, now?.() ?? Date.now());
         if (!changed) return result;
-        if ((await this.records.write(domain, result.workspace, current?.rev)) !== null) return result;
+        if ((await this.records.write(domain, result.workspace, current?.rev)) !== null) {
+          const configChanged = (normalized.config !== undefined && !result.stale.config) || (normalized.entries.some(([k]) => k === CONSENT_SETTINGS_ENTRY) && !result.stale.entries.includes(CONSENT_SETTINGS_ENTRY));
+          if (configChanged) this.configChanged(domain);
+          return result;
+        }
         // Someone else wrote between our read and write: merge again onto theirs.
       }
       throw new WorkspaceError(503, `the workspace for ${domain} is being written by others; try again`);
     });
+  }
+
+  private configChanged(domain: string): void {
+    try {
+      this.options.onConfigChange?.(domain);
+    } catch (err) {
+      console.warn(`[workspace] onConfigChange ${domain}: ${(err as Error).message}`);
+    }
   }
 
   /** Every site with a workspace, most recently updated first. */

@@ -161,7 +161,7 @@ describe('workspace API', () => {
     await request(s.app).patch('/api/sites/example.com/workspace').send({}).expect(400);
     await request(s.app).patch('/api/sites/example.com/workspace').send({ entries: { k: { value: 1, at: 'nope' } } }).expect(400);
     expect(fs.existsSync(path.join(s.config.dataDir, 'sites'))).toBe(false);
-    expect(fs.readdirSync(s.config.dataDir).sort()).toEqual(['jobs']);
+    expect(fs.readdirSync(s.config.dataDir).sort()).toEqual(['jobs', 'meta']); // meta/: the hosted-bundle hash written at boot
   });
 
   it('an unreadable workspace is a 500 and is left untouched, never reset', async () => {
@@ -253,5 +253,30 @@ describe('retention', () => {
     expect(removed).toBeGreaterThanOrEqual(1);
     expect(s.store.get(jobId)).toBeUndefined();
     expect(((await request(s.app).get('/api/sites/example.com/workspace').expect(200)).body as SiteWorkspace).entries.k.value).toBe('team work');
+  });
+});
+
+describe('onConfigChange', () => {
+  const cfg = (at: string) => ({ config: { value: { config: {} }, at } });
+  it('fires once per write that replaced the config or changed consent-settings; never for a stale or unrelated write', async () => {
+    const calls: string[] = [];
+    const store = new WorkspaceStore(fsStorage(tempDir()).workspaces, undefined, { onConfigChange: (d) => calls.push(d) });
+    await store.patch('example.com', cfg(T(10)));
+    expect(calls).toEqual(['example.com']);
+    await store.patch('example.com', cfg(T(5))); // stale
+    await store.patch('example.com', { entries: { 'class:x': { value: 1, at: T(11) } } }); // unrelated
+    expect(calls).toHaveLength(1);
+    await store.patch('example.com', { entries: { 'consent-settings': { value: { mode: 'full' }, at: T(12) } } });
+    expect(calls).toHaveLength(2);
+    await store.patch('example.com', { entries: { 'consent-settings': { value: { mode: 'full' }, at: T(3) } } }); // stale
+    expect(calls).toHaveLength(2);
+  });
+  it('a throwing hook never fails the write', async () => {
+    const store = new WorkspaceStore(fsStorage(tempDir()).workspaces, undefined, {
+      onConfigChange: () => {
+        throw new Error('x');
+      },
+    });
+    await expect(store.patch('example.com', cfg(T(10)))).resolves.toBeDefined();
   });
 });

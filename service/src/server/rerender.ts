@@ -36,8 +36,6 @@ import { RUN_ID_RE, type JobFiles } from './job-files.js';
 import { WorkspaceError, type WorkspaceStore } from './workspace.js';
 
 const CLI_TIMEOUT_MS = 120_000;
-/** The generator's placeholder path: passing it explicitly would change the snippet's note, so it is never carried over. */
-const DEFAULT_SCRIPT_SRC = '/complykit/v1/complykit-consent.js';
 const REPORT = 'consent-report.html';
 const SIBLINGS = ['consent-report.json', 'change-list.md', 'owner-report.json'];
 
@@ -46,7 +44,6 @@ export interface RerenderDeps {
   workspaces: WorkspaceStore;
   /** The job's files: the CLI runs in its scratch; a finished job's evaluation is fetched from blobs and the changed files are put back. */
   files: JobFiles;
-  origin: string;
 }
 
 /** Upload order: previous copies first, then the side files, the data, and the pages readers open last (the owner report is the final switch). */
@@ -100,7 +97,7 @@ async function rerender(job: JobDetail, body: RerenderRequest, deps: RerenderDep
       const fromThisRun = ws.config?.runId === runId && isObj(ws.config.value);
       if (fromThisRun || body.generate === true) {
         const options = isObj(ws.config?.value) ? storedOptions(ws.config.value, by ?? (fromThisRun ? ws.config.by : undefined)) : by ? { by } : {};
-        const out = await generateStagedConsentConfig(job, options, { config: deps.config, workspaces: deps.workspaces, files, origin: deps.origin });
+        const out = await generateStagedConsentConfig(job, options, { config: deps.config, workspaces: deps.workspaces, files });
         config = { regenerated: true, stale: out.stale };
         ws = await deps.workspaces.get(domain);
         if (!out.stale) storedAt = ws.config?.at;
@@ -163,15 +160,12 @@ async function renderReport(job: JobDetail, runId: string, ws: SiteWorkspace, de
   };
 }
 
-/** The options the stored config was generated with, read back from it. */
+/** The options the stored config was generated with, read back from it (the privacy policy link). */
 function storedOptions(value: Record<string, unknown>, by: string | undefined): ConsentConfigRequest {
   const cfg = isObj(value.config) ? value.config : {};
-  const record = isObj(cfg.record) && typeof cfg.record.endpoint === 'string' ? cfg.record.endpoint : undefined;
-  const scriptSrc = typeof value.scriptSrc === 'string' && value.scriptSrc !== DEFAULT_SCRIPT_SRC ? value.scriptSrc : undefined;
+  // The script URL and record endpoint are the service's own (config.publicOrigin), never carried over.
   return {
     ...(by ? { by } : {}),
-    ...(scriptSrc ? { scriptSrc } : {}),
-    ...(record ? { recordEndpoint: record } : {}),
     ...(typeof cfg.privacyPolicyUrl === 'string' ? { privacyPolicyUrl: cfg.privacyPolicyUrl } : {}),
   };
 }
