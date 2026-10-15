@@ -354,7 +354,7 @@ describe('consent tool config: emitted artifacts are fresh', () => {
     expect(s.required).not.toContain('layout'); // has a default
     expect(s.required).not.toContain('blockPage'); // has a default
     expect(Object.keys(s.properties).sort()).toEqual(
-      ['blockPage', 'categories', 'consent', 'gate', 'generatedFrom', 'gtm', 'hash', 'layout', 'platform', 'privacyPolicyUrl', 'record', 'regimeSource', 'strings', 'theme', 'vendors', 'version'].sort(),
+      ['analytics', 'blockPage', 'categories', 'companion', 'consent', 'gate', 'generatedFrom', 'gtm', 'hash', 'layout', 'mode', 'platform', 'privacyPolicyUrl', 'record', 'regimeSource', 'strings', 'theme', 'vendors', 'version'].sort(),
     );
   });
 
