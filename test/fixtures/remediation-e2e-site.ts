@@ -49,7 +49,7 @@ export const EMBED_SRC = 'https://www.youtube.com/embed/e2evideo001';
 export interface SiteState {
   /** Part 1 of the generated snippet, pasted first in <head>. */
   head?: string;
-  /** The client files from the install zip, served at /complykit/v1/. */
+  /** The self-hosted install's client files, served at /complykit/v1/ (empty for the hosted install). */
   clientFiles: Record<string, string>;
   oldToolRemoved: boolean;
   /** Held (rewritten) tags: script src (or 'inline:gtag' for the inline gtag config) → the data-category the checklist asks for. */

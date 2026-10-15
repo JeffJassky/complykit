@@ -7,7 +7,7 @@
 //
 //   scan → classify the unknown widget (PATCH) → re-render → generate the config
 //   → the checklist (install first, remove the old consent tool, rewrite the
-//   tags, remove the leak) → Verify install fails → apply the zip's snippet and
+//   tags, remove the leak) → Verify install fails → apply the install snippet and
 //   client files, remove the old tool, rewrite the tags, remove the leak, Verify
 //   each → pass (statuses persisted) → rescan → the report's proof section says
 //   the gated vendors are controlled, with its scope, and nothing is "not
@@ -209,20 +209,26 @@ suite('remediation flow, end to end (real CLI, service, browser, fixture site)',
       expect(before.outcome.result).toBe('fail');
       expect(before.task.status).toBe('failed');
 
-      // --- 7. Install: the zip's snippet first in <head>, its client files at /complykit/v1/ ---
-      const zipRes = await fetch(`${base}/api/sites/${SITE}/install.zip`);
-      expect(zipRes.status).toBe(200);
-      const zipFile = path.join(tmp, 'install.zip');
-      fs.writeFileSync(zipFile, Buffer.from(await zipRes.arrayBuffer()));
-      const unzipped = path.join(tmp, 'install');
-      execFileSync('unzip', ['-o', '-q', zipFile, '-d', unzipped]);
-      const files = fs.readdirSync(unzipped, { recursive: true }).map(String);
-      for (const f of ['complykit-consent.js', 'complykit-consent-ui.js']) {
-        const rel = files.find((x) => path.basename(x) === f);
-        expect(rel, `${f} in the zip (${files.join(', ')})`).toBeDefined();
-        site.state.clientFiles[f] = fs.readFileSync(path.join(unzipped, rel!), 'utf8');
+      // --- 7. Install: the generated snippet first in <head>. Hosted (the service's install): the one
+      // line loads the tool from the service itself, so there are no files to put on the site. Self-hosted
+      // (a service that still offers the bundle): its client files go at /complykit/v1/. ---
+      if (install.verify.check === 'install' && install.verify.mode === 'self') {
+        const zipRes = await fetch(`${base}/api/sites/${SITE}/install.zip`);
+        expect(zipRes.status).toBe(200);
+        const zipFile = path.join(tmp, 'install.zip');
+        fs.writeFileSync(zipFile, Buffer.from(await zipRes.arrayBuffer()));
+        const unzipped = path.join(tmp, 'install');
+        execFileSync('unzip', ['-o', '-q', zipFile, '-d', unzipped]);
+        const files = fs.readdirSync(unzipped, { recursive: true }).map(String);
+        for (const f of ['complykit-consent.js', 'complykit-consent-ui.js']) {
+          const rel = files.find((x) => path.basename(x) === f);
+          expect(rel, `${f} in the zip (${files.join(', ')})`).toBeDefined();
+          site.state.clientFiles[f] = fs.readFileSync(path.join(unzipped, rel!), 'utf8');
+        }
+        expect(fs.readFileSync(path.join(unzipped, 'snippet.html'), 'utf8')).toContain(install.snippet!.after!);
+      } else {
+        expect(install.snippet!.after).toBe(`<script src="${install.verify.check === 'install' ? install.verify.scriptSrc : ''}" referrerpolicy="no-referrer"></script>`);
       }
-      expect(fs.readFileSync(path.join(unzipped, 'snippet.html'), 'utf8')).toContain(install.snippet!.after!);
       site.state.head = install.snippet!.after!;
       await expectPass(install);
 

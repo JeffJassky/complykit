@@ -7,7 +7,7 @@ import {
   type VerifyOutcome,
 } from './record/index.js';
 import type { KnowledgeBase } from './registry/index.js';
-import { runVerify } from './rules/remediation/verify.js';
+import { runVerify, type HostedScriptFetch } from './rules/remediation/verify.js';
 import { detectBotChallenge, type BotChallenge } from './rules/remediation/challenge.js';
 import type { VerifyBrowser, VerifyBrowserOptions } from './collect/browser/evaluation/verify-change.js';
 
@@ -147,8 +147,25 @@ export async function verifyChange(spec: RemediationVerifySpec, opts: VerifyChan
     const challenge = got.text !== undefined || got.headers ? detectBotChallenge(got.text ?? '', got.headers ?? {}, got.status) : undefined;
     if (challenge) return done(challenged(challenge, got.url, got.status), { fetched: { url: got.url, status: got.status, ...(got.ok ? { via: got.via } : { error: got.error }) } });
     if (!got.ok) return done(cannot(`${page} could not be fetched (${got.error}): nothing is established about its markup`), { fetched: { url: got.url, status: got.status, error: got.error } });
-    const out = runVerify(spec, { html: got.text }, vopts);
-    return done({ ...out, evidence: [`served HTML of ${got.url} (HTTP ${got.status})`, ...out.evidence] }, { fetched: { url: got.url, status: got.status, via: got.via } });
+    // Hosted mode: the hosted script is fetched too (through the same browser context, the same request path as a container file). No answer at all (network error) stays unfetched → cannot-verify; an HTTP error is an answer the checker judges.
+    const hostedUrl = spec.check === 'install' ? (spec.mode === 'hosted' ? spec.scriptSrc : undefined) : spec.check === 'consent-default' ? spec.scriptSrc : undefined;
+    let hostedScript: HostedScriptFetch | undefined;
+    const hostedNote: string[] = [];
+    if (hostedUrl) {
+      opts.trace?.(`fetching hosted script ${hostedUrl}`);
+      const h = await browser.fetchContainer(hostedUrl);
+      if (h.ok) {
+        hostedScript = { status: h.status, text: h.text };
+        hostedNote.push(`fetched ${hostedUrl} (HTTP ${h.status})`);
+      } else if (h.status !== undefined) {
+        hostedScript = { status: h.status };
+        hostedNote.push(`fetched ${hostedUrl} (HTTP ${h.status})`);
+      } else {
+        hostedNote.push(`${hostedUrl} could not be fetched (${h.error})`);
+      }
+    }
+    const out = runVerify(spec, { html: got.text, ...(hostedScript ? { hostedScript } : {}) }, vopts);
+    return done({ ...out, evidence: [`served HTML of ${got.url} (HTTP ${got.status})`, ...hostedNote, ...out.evidence] }, { fetched: { url: got.url, status: got.status, via: got.via } });
   };
   const running = work();
   let late = false;

@@ -35,6 +35,9 @@ category and control the way the report does, and writes:
                            (default COMPLYKIT_KB_DIR or ~/.complykit/kb)
   --script-src <path>      where the snippet loads the tool from (default
                            /complykit/v1/complykit-consent.js, a placeholder)
+  --hosted <url>           the hosted install: the snippet is one line loading the tool and
+                           its config from this URL (the complykit host's /s/<domain>.js);
+                           no client files are copied (--script-src is ignored)
   --record-endpoint <path> include a consent-record endpoint (omitted by default)
   --privacy-policy <url>   https URL linked from the banner
   --regime-source <s>      meta | platform | fixed:<opt-in|opt-out-signal|opt-out> |
@@ -101,6 +104,7 @@ export async function cmdConsentConfig(argv: string[]): Promise<number> {
       'kb-dir': { type: 'string' },
       'client-dist': { type: 'string' },
       'script-src': { type: 'string' },
+      hosted: { type: 'string' },
       'record-endpoint': { type: 'string' },
       'privacy-policy': { type: 'string' },
       'regime-source': { type: 'string' },
@@ -138,6 +142,10 @@ export async function cmdConsentConfig(argv: string[]): Promise<number> {
       return 2;
     }
   }
+  if (values.hosted !== undefined && !/^https?:\/\/[^\s"'<>]+$/i.test(values.hosted)) {
+    process.stderr.write(`--hosted: expected an http(s) URL, got: ${values.hosted}\n`);
+    return 2;
+  }
   let regimeSource: RegimeSource | undefined;
   if (values['regime-source']) {
     regimeSource = parseRegimeSource(values['regime-source']);
@@ -165,6 +173,7 @@ export async function cmdConsentConfig(argv: string[]): Promise<number> {
       findings: run.findings,
       complykitVersion: packageVersion(),
       scriptSrc: values['script-src'],
+      hostedScriptUrl: values.hosted,
       recordEndpoint: values['record-endpoint'],
       privacyPolicyUrl: values['privacy-policy'],
       regimeSource,
@@ -191,10 +200,10 @@ export async function cmdConsentConfig(argv: string[]): Promise<number> {
   const tasksFile = path.join(out, REMEDIATION_TASKS_FILE);
   fs.writeFileSync(tasksFile, JSON.stringify({ version: 1, at: result.config.generatedFrom.at, runId: result.config.generatedFrom.runId, tasks: result.tasks } satisfies RemediationTasksFile, null, 2) + '\n');
 
-  const client = copyClientFiles(out, result.scriptSrc, values['client-dist']);
+  const client: { written: string[]; note?: string } = result.hostedScriptUrl ? { written: [] } : copyClientFiles(out, result.scriptSrc, values['client-dist']);
 
   if (values.json) {
-    process.stdout.write(JSON.stringify({ clientFiles: client.written, ...(client.note ? { clientNote: client.note } : {}), runId: result.config.generatedFrom.runId, site: result.config.generatedFrom.site, config: result.config, snippet: result.snippet, changeList: result.changeList, notes: result.notes, tasks: result.tasks, scriptSrc: result.scriptSrc, files }) + '\n');
+    process.stdout.write(JSON.stringify({ clientFiles: client.written, ...(client.note ? { clientNote: client.note } : {}), runId: result.config.generatedFrom.runId, site: result.config.generatedFrom.site, config: result.config, snippet: result.snippet, changeList: result.changeList, notes: result.notes, tasks: result.tasks, scriptSrc: result.scriptSrc, ...(result.hostedScriptUrl ? { hostedScriptUrl: result.hostedScriptUrl } : {}), ...(result.detectedCmp ? { detectedCmp: result.detectedCmp } : {}), files }) + '\n');
     return 0;
   }
   const c = result.config;
