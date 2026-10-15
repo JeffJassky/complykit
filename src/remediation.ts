@@ -9,7 +9,7 @@ import {
   type RemediationVerifySpec,
   type TrackingEvaluation,
 } from './record/index.js';
-import { consentPluginPathPattern, DEFAULT_KB, type KnowledgeBase } from './registry/index.js';
+import { COMPLYKIT_PARTY_ID, consentPluginPathPattern, DEFAULT_KB, type KnowledgeBase } from './registry/index.js';
 import { buildConsentReportModel, DOCS_BASE, GTM_GUIDE, platformGuide, shortPage, type ChangeItem, type CompatibilityReport } from './report/index.js';
 import { reconcileRecord } from './consent-compatibility.js';
 import { toolConsentDefault } from './rules/remediation/verify.js';
@@ -368,6 +368,7 @@ export function removeExistingToolTasks(ev: TrackingEvaluation, notes: Remediati
     if (n.code !== 'existing-consent-tool') continue;
     if (n.partyIds?.length) {
       for (const id of n.partyIds) {
+        if (id === COMPLYKIT_PARTY_ID) continue;
         const p = ev.inventory.find((x) => x.partyId === id);
         const label = p?.label ?? id;
         out.push({

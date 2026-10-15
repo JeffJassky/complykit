@@ -238,7 +238,8 @@ function workspaceHeader(ws: ConsentToolProofInput['workspaceConfig']): { hash?:
 function configContent(raw: unknown): string | undefined {
   const parsed = parseConsentToolConfig(raw);
   if (!parsed.ok) return undefined;
-  const { hash: _h, generatedFrom: _g, ...rest } = parsed.config;
+  // record and analytics are filled by the host at serve time (plans/hosted-script.md): not content.
+  const { hash: _h, generatedFrom: _g, record: _r, analytics: _a, ...rest } = parsed.config as ConsentToolConfig & { analytics?: unknown };
   return canonicalJson(rest);
 }
 
@@ -274,7 +275,7 @@ export function evaluateConsentToolProof(ev: TrackingEvaluation, input: ConsentT
   const cfgOut: ConsentToolProof['config'] = { status: 'missing', issues: [], ...(header.version ? { version: header.version } : {}), ...(header.hash ? { hash: header.hash } : {}), ...(header.generatedFrom ? { generatedFrom: header.generatedFrom } : {}) };
   if (!dep) {
     cfgOut.status = 'missing';
-    findings.push({ code: 'config-missing', message: 'complykit’s script is on the page but no config element (<script type="application/json" id="complykit-config">) was found: the tool starts nothing without one.', refs: [`/locations/${seen[0].li}/scenarios/${seen[0].si}/complykit`] });
+    findings.push({ code: 'config-missing', message: 'complykit’s script is on the page but no config was found: neither the inline element (<script type="application/json" id="complykit-config">) nor window.ComplyKitConfig, which the hosted script sets. The tool starts nothing without one.', refs: [`/locations/${seen[0].li}/scenarios/${seen[0].si}/complykit`] });
   } else if (!dep.json) {
     cfgOut.status = 'not-json';
     findings.push({ code: 'config-refused', message: 'the config element’s text is not JSON: the tool refuses it and does nothing (gated scripts stay inert, no banner).', refs: dep.ref ? [dep.ref] : [] });
