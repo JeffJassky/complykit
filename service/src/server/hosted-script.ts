@@ -14,6 +14,7 @@ import path from 'node:path';
 import express, { type Request, type Response } from 'express';
 import type { ConsentSettings } from '../shared/api.js';
 import { configHash } from './config-hash.js';
+import { applyConsentSettings, storedConsentSettings } from './consent-settings.js';
 import { siteDomain } from './domains.js';
 import type { ServiceConfig } from './config.js';
 import type { ConfigSnapshotRecords } from './storage/types.js';
@@ -30,15 +31,17 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
  * The config a visitor's browser runs: the stored config with the record and
  * analytics endpoints pointing at this host, re-hashed (identical to the
  * package's hashConsentToolConfig). Deterministic. `settings` (the owner's
- * install form) is applied by a later ticket; it is accepted and ignored here.
+ * install form) is applied first, then the endpoints (add-on mode keeps no
+ * `record`: the banner holds its own proof), then the hash.
  */
-export function hostedConfig(stored: Record<string, unknown>, publicOrigin: string, _settings?: ConsentSettings): Record<string, unknown> & { hash: string } {
+export function hostedConfig(stored: Record<string, unknown>, publicOrigin: string, settings?: ConsentSettings): Record<string, unknown> & { hash: string } {
   const out: Record<string, unknown> = {
-    ...stored,
-    record: { endpoint: `${publicOrigin}/api/consent-records` },
+    ...applyConsentSettings(stored, settings),
     analytics: { endpoint: `${publicOrigin}/e` },
     hash: '',
   };
+  if (settings?.mode === 'companion') delete out.record;
+  else out.record = { endpoint: `${publicOrigin}/api/consent-records` };
   const hash = configHash(out);
   out.hash = hash;
   return out as Record<string, unknown> & { hash: string };
@@ -200,10 +203,11 @@ export function hostedScript(deps: HostedScriptDeps): HostedScript {
     const bundle = core.read();
     if (!bundle) return unavailable(res);
 
-    const key = `${ws.config.at}|${bundle.stamp}|${config.publicOrigin}`;
+    const settings = storedConsentSettings(ws);
+    const key = `${ws.config.at}|${bundle.stamp}|${config.publicOrigin}|${settings ? JSON.stringify(settings) : ''}`;
     let hit = rendered.get(domain);
     if (!hit || hit.key !== key) {
-      const served = hostedConfig(stored, config.publicOrigin);
+      const served = hostedConfig(stored, config.publicOrigin, settings);
       const head = Buffer.from(`/*! complykit ${config.version} | ${domain} | config ${served.hash.slice(0, 12)} */\nwindow.ComplyKitConfig=${JSON.stringify(served)};\n`);
       const body = Buffer.concat([head, bundle.body]);
       hit = { key, body, etag: etagOf(body), config: served };

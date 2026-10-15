@@ -8,6 +8,7 @@ import {
   parseUrlList,
   type CheckKind,
   type ConsentConfigRequest,
+  type ConsentSettingsResponse,
   type CreateBatchRequest,
   type CreateBatchResponse,
   type JobDetail,
@@ -29,6 +30,7 @@ import { Runner, type RunnerOptions } from './runner.js';
 import { isJobId, JobStore, newId, toSummary } from './store.js';
 import { StreamHub } from './stream.js';
 import { cloudflarePurger, noopPurger, type CdnPurger } from './cdn.js';
+import { CONSENT_SETTINGS_KEY, normalizeConsentSettings, storedConsentSettings } from './consent-settings.js';
 import { hostedBundleHash, hostedScript } from './hosted-script.js';
 import { WorkspaceError, WorkspaceStore } from './workspace.js';
 import { serveReports } from './report-config.js';
@@ -488,6 +490,29 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     '/api/sites/:domain/workspace',
     siteRoute(async (req, res) => {
       res.json(await workspaces.patch(req.params.domain, req.body));
+    }),
+  );
+
+  // The owner's consent settings (the install task's form). Saving is a workspace write: it re-renders and purges the script.
+  const consentSettings = async (domain: string): Promise<ConsentSettingsResponse> => {
+    const ws = await workspaces.get(domain);
+    const v = ws.config?.value;
+    const detected = typeof v === 'object' && v !== null ? (v as { detectedCmp?: unknown }).detectedCmp : undefined;
+    return { settings: storedConsentSettings(ws) ?? { mode: 'full' }, ...(typeof detected === 'string' ? { detectedCmp: detected as ConsentSettingsResponse['detectedCmp'] } : {}) };
+  };
+  app.get(
+    '/api/sites/:domain/consent-settings',
+    siteRoute(async (req, res) => {
+      res.json(await consentSettings(workspaces.domain(req.params.domain)));
+    }),
+  );
+  app.put(
+    '/api/sites/:domain/consent-settings',
+    siteRoute(async (req, res) => {
+      const domain = workspaces.domain(req.params.domain);
+      const settings = normalizeConsentSettings(req.body);
+      await workspaces.patch(domain, { entries: { [CONSENT_SETTINGS_KEY]: { value: settings } } });
+      res.json(await consentSettings(domain));
     }),
   );
 
