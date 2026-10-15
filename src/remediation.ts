@@ -9,7 +9,7 @@ import {
   type RemediationVerifySpec,
   type TrackingEvaluation,
 } from './record/index.js';
-import { consentPluginPathPattern, DEFAULT_KB, type KnowledgeBase } from './registry/index.js';
+import { COMPLYKIT_PARTY_ID, consentPluginPathPattern, DEFAULT_KB, type KnowledgeBase } from './registry/index.js';
 import { buildConsentReportModel, DOCS_BASE, GTM_GUIDE, platformGuide, shortPage, type ChangeItem, type CompatibilityReport } from './report/index.js';
 import { reconcileRecord } from './consent-compatibility.js';
 import { toolConsentDefault } from './rules/remediation/verify.js';
@@ -69,6 +69,8 @@ export interface RemediationSource {
   notes?: RemediationSourceNote[];
   compatibility?: CompatibilityReport;
   scriptSrc?: string;
+  /** Set when the install is hosted (plans/hosted-script.md): the hosted script URL. */
+  hostedScriptUrl?: string;
   snippet?: string;
 }
 
@@ -148,7 +150,7 @@ interface Shaped {
   noSnippet?: boolean;
 }
 
-function shape(ev: TrackingEvaluation, it: ChangeItem, pages: string[], config: ConsentToolConfig): Shaped {
+function shape(ev: TrackingEvaluation, it: ChangeItem, pages: string[], config: ConsentToolConfig, hostedScriptUrl?: string): Shaped {
   const page = pages[0];
   const tools = list(it.tools);
   const cat = it.category ?? 'advertising';
@@ -217,7 +219,7 @@ function shape(ev: TrackingEvaluation, it: ChangeItem, pages: string[], config: 
       const types = it.consentTypes ?? [];
       const google = types.length > 0 && !it.api;
       if (google) {
-        const verify: RemediationVerifySpec = { check: 'consent-default', method: 'static', page, consentTypes: types };
+        const verify: RemediationVerifySpec = { check: 'consent-default', method: 'static', page, consentTypes: types, ...(hostedScriptUrl ? { scriptSrc: hostedScriptUrl } : {}) };
         if (toolConsentDefault(config, types)) {
           return {
             title: 'Start Google’s consent signals as “denied”',
@@ -351,7 +353,43 @@ export function installTask(config: ConsentToolConfig, scriptSrc: string, page: 
     ],
     snippet: { after: renderHeadSnippet(config, scriptSrc) },
     pages: [page],
-    verify: { check: 'install', method: 'static', page, configHash: config.hash, scriptSrc, elementId: CONSENT_CONFIG_ELEMENT_ID },
+    verify: { check: 'install', method: 'static', mode: 'self', page, configHash: config.hash, scriptSrc, elementId: CONSENT_CONFIG_ELEMENT_ID },
+    optional: false,
+    notes: ['Every other task assumes the tool is installed and first: holding tags, the Google Tag Manager bridge, the vendor signals and the platform bridges all live in it.'],
+    guide: { label: 'Installing the consent tool', href: INSTALL_GUIDE },
+    order: 0,
+  };
+}
+
+/** One line, as pasted: the hosted script tag. referrerpolicy keeps the page URL from reaching the host (plans/hosted-script.md P7). */
+export function renderHostedSnippet(hostedScriptUrl: string): string {
+  return `<script src="${attrEsc(hostedScriptUrl)}" referrerpolicy="no-referrer"></script>`;
+}
+
+/** The hosted install task (plans/hosted-script.md): one line served by the complykit host, first in <head>, blocking. companionSteps are the add-on mode's steps. */
+export function hostedInstallTask(hostedScriptUrl: string, page: string): Omit<RemediationTask, 'status' | 'lastVerify'> {
+  return {
+    id: INSTALL_TASK_ID,
+    kind: 'install',
+    group: 'install',
+    title: 'Install the complykit consent tool',
+    summary: 'One line, first in <head>, above every other script. Your settings and the tool itself come from that line.',
+    tools: [],
+    partyIds: [],
+    steps: [
+      'Paste the line below first in <head>, right after <meta charset>: above the Google Tag Manager snippet and above every other script.',
+      'Keep the script blocking: no async, no defer, no type="module". If a speed plugin delays or combines JavaScript, exclude this line from it.',
+      'Remove any earlier complykit lines from the page: an inline <script id="complykit-config"> and a self-hosted complykit-consent.js. Two copies of the tool fight over the same choice.',
+      'Publish, then press Verify: it loads the page, checks the line is there once, first and blocking, and that the host serves your settings.',
+    ],
+    companionSteps: [
+      'Keep your current consent banner: complykit follows its choice and deletes the cookies of whatever the visitor withdraws.',
+      'Paste the line below anywhere in <head>, after the banner’s own script if possible. It may be async; it does not need to be first.',
+      'Publish, then press Verify: it loads the page, checks the line is there once and that the host serves your settings.',
+    ],
+    snippet: { after: renderHostedSnippet(hostedScriptUrl) },
+    pages: [page],
+    verify: { check: 'install', method: 'static', mode: 'hosted', page, scriptSrc: hostedScriptUrl },
     optional: false,
     notes: ['Every other task assumes the tool is installed and first: holding tags, the Google Tag Manager bridge, the vendor signals and the platform bridges all live in it.'],
     guide: { label: 'Installing the consent tool', href: INSTALL_GUIDE },
@@ -366,6 +404,7 @@ export function removeExistingToolTasks(ev: TrackingEvaluation, notes: Remediati
     if (n.code !== 'existing-consent-tool') continue;
     if (n.partyIds?.length) {
       for (const id of n.partyIds) {
+        if (id === COMPLYKIT_PARTY_ID) continue;
         const p = ev.inventory.find((x) => x.partyId === id);
         const label = p?.label ?? id;
         out.push({
@@ -573,7 +612,7 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
   // A server-set cookie is the server's to clear: installing the complykit tool does not touch it.
   const hasChanges = report.groups.some((g) => g.id !== 'server-cookies' && g.items.length > 0) || report.otherChanges.length > 0;
   if (hasChanges) {
-    const { order: _o, ...install } = installTask(config, scriptSrc, page);
+    const { order: _o, ...install } = generated.hostedScriptUrl ? hostedInstallTask(generated.hostedScriptUrl, page) : installTask(config, scriptSrc, page);
     slots.push({ task: draft(install), seq: 0 });
     for (const t of removeExistingToolTasks(evaluation, generated.notes ?? [], page)) slots.push({ task: draft(t), seq: slots.length });
   }
@@ -583,7 +622,7 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
     if (seen.has(it.id)) return; // the same change listed under two tools (merge keys differ, ids agree)
     seen.add(it.id);
     const pages = pagesOf(evaluation, it);
-    const s = shape(evaluation, it, pages, config);
+    const s = shape(evaluation, it, pages, config, generated.hostedScriptUrl);
     const guide = it.guide ?? (it.kind === 'gate-gtm-tag' || (it.kind === 'set-consent-default' && !it.api) ? { label: 'Setting up Google Tag Manager', href: GTM_GUIDE } : it.kind === 'rewrite-tag' ? { label: 'Consent tool config: categories', href: CONFIG_GUIDE } : it.kind === 'use-platform-api' ? (platformGuide(it.platform) ? { label: `Installing on ${cap(it.platform!)}`, href: platformGuide(it.platform)! } : undefined) : it.kind === 'call-consent-api' ? { label: 'Vendor consent APIs', href: VENDOR_GUIDE } : undefined);
     const notes = [...(it.notes ?? []), ...(it.categoryNote ? [`data-category “${it.category}”: ${it.categoryNote}.`] : []), ...(it.hint && it.kind !== 'needs-a-look' ? [it.hint] : [])];
     const snippet = !s.noSnippet && (it.before || it.after) ? { snippet: { ...(it.before ? { before: it.before } : {}), ...(it.after ? { after: it.after } : {}) } } : {};

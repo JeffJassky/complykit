@@ -68,7 +68,7 @@ const finalOwner = owner({
 const done = (over: Partial<JobReportResponse> = {}): JobReportResponse => ({
   job: job({ status: 'done', finishedAt: '2026-10-07T12:00:00Z' }), domain: 'shop.example', report: finalOwner,
   todo: { state: 'ready', tasks: [decision, install, task('meta')], progress: { verified: 0, required: 3, doneUnverified: 0, failed: 0 }, fromThisRun: true },
-  updating: false, technicalReportUrl: '/reports/job1/consent/.comply/runs/r/consent-report.html', installZipUrl: '/api/sites/shop.example/install.zip', history: [], ...over,
+  updating: false, technicalReportUrl: '/reports/job1/consent/.comply/runs/r/consent-report.html', hostedScriptUrl: 'https://ck.example-host.test/s/shop.example.js', history: [], ...over,
 });
 
 const html = (el: ReactElement) => renderToStaticMarkup(el);
@@ -241,7 +241,8 @@ describe('d. the to-do list', () => {
     expect(t.indexOf('What is widgets.test for?')).toBeLessThan(t.indexOf('Install the complykit consent tool'));
     expect(t.indexOf('Install the complykit consent tool')).toBeLessThan(t.indexOf('Hold the meta tag until consent'));
     expect(t.indexOf('Hold the meta tag until consent')).toBeLessThan(t.indexOf('Run the final scan'));
-    expect(out).toContain('href="/api/sites/shop.example/install.zip"');
+    expect(out).not.toContain('install.zip');
+    expect(out).toContain('&lt;script src=&quot;https://ck.example-host.test/s/shop.example.js&quot; referrerpolicy=&quot;no-referrer&quot;&gt;&lt;/script&gt;');
     expect(t).toContain('Paste first in &lt;head&gt;');
     expect(t).toContain('Copy');
     expect(t).toContain('Open the page template');

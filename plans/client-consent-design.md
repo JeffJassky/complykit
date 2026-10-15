@@ -177,7 +177,7 @@ scenario, field-kind detection (`page-title`, `search-term`).
 ## 6. The client package
 
 `@jeffjassky/complykit-consent` (name open). Vanilla JS, no dependencies, under 15 KB.
-Configured from a scan. The four jobs from the consent plan §5 still hold (ask and remember,
+Configured from a scan (since 2026-10-14 the tool and config can be served from our host: §10). The four jobs from the consent plan §5 still hold (ask and remember,
 hold back, tell loaded scripts, withdraw); the pieces:
 
 - **Consent state store** — first-party cookie + `localStorage`, versioned, with a consent
@@ -275,7 +275,7 @@ complykit's tool if installed, and never needs the previous run to produce a ver
 |---|---|---|---|
 | Shared knowledge base | Vendor facts: "Judge.me is reviews," consent APIs, cookie patterns | Ours — the store today, shipped as seed entries (issue #2) | Universal; once anyone confirms it, every site's next scan recognizes it. Covers most of what ever gets classified. |
 | **Site workspace** | Site-specific classifications and overrides; task status and notes; the latest generated tool config; pointers to runs | The service's volume, `/data/sites/<registrable-domain>/workspace.json` (same JSON + lock pattern as the KB store) | A team reads and edits the same report; exported reports get shared. Browser `localStorage` is per viewer and carries nothing to a teammate or an export, so it is demoted to an offline fallback. |
-| Deployed config | The config inside the snippet pasted on the site | The site itself | The site carries what it runs. The rescan reads it back and compares it with the workspace: "deployed config is behind the workspace." |
+| Deployed config | The config inside the snippet pasted on the site (self-hosted), or served by the host from the workspace (hosted; reversed 2026-10-14, see below) | The site itself, or our host | Self-hosted: the site carries what it runs; the rescan reads it back and compares it with the workspace: "deployed config is behind the workspace." |
 
 Fly supports the workspace with what the service already has: the `complykit_data` volume at
 `/data`, daily snapshots kept five days, one machine in one region. If replication ever
@@ -294,10 +294,38 @@ measure, and the service stays open by decision.
 present (from the scan, so a site with no advertising tools shows no advertising toggle),
 the vendor list per category for the second layer (from observation, so it is accurate by
 construction), gated-tag and GTM-tag lists, the platform bridge required, theme tokens,
-strings, location source, `version`, `generatedFrom` (run id) and a hash. No runtime fetch
-from us. The script is **self-hosted by default**; a CDN URL is the lazy option, and the
-scan notes it, since a request to our CDN before consent is the kind of thing we police.
-The config schema is versioned separately from the package.
+strings, location source, `version`, `generatedFrom` (run id) and a hash. The config
+schema is versioned separately from the package.
+
+> **Reversed 2026-10-14: "No runtime fetch from us" no longer holds.** The original
+> position was: no runtime fetch from us; the script **self-hosted by default**; a CDN
+> URL the lazy option, since a request to our CDN before consent is the kind of thing
+> we police. The service now generates a **hosted install**: one
+> `<script src=".../s/<domain>.js" referrerpolicy="no-referrer">` line, served by the
+> complykit host (behind Cloudflare when switched on), carrying the tool and the site's
+> config. A config change reaches the site without a re-paste, and the banner can report
+> counters. Reason and design: [hosted-script.md](hosted-script.md). The reversal is
+> acceptable only with the invariants there, which are not optional: **P1** the script
+> and `/e` never set or read a cookie; **P2** no visitor IP written anywhere; **P3** `/e`
+> stores counters only, no event log; **P4** no page URL, path, referrer, title or user
+> agent sent or stored; **P5** no identifier or fingerprint input in the beacon; **P6**
+> region from Cloudflare headers only, when trusted; **P7** the paste line carries
+> `referrerpolicy="no-referrer"`; **P8** the beacon is sent only on `pagehide` /
+> `visibilitychange: hidden`, without credentials. The **self-hosted install stays supported** for CLI
+> users (B5): `consent-config` without `--hosted` writes the files and inline config,
+> with no request to us. The scanner treats the complykit host as the site's own consent
+> tool (B4), so the request is not a finding; user-facing wording of the trade-off is in
+> `docs/guide/consent-tool.md` and `docs/guide/analytics.md`.
+>
+> Consequences for earlier sections: in §6 the "first-party endpoint" for consent
+> records is, for hosted installs, the host's `/api/consent-records` (§9 open 2 is
+> resolved that way for hosted; self-hosted stays per client), and "Location" still
+> never comes from a client-side third-party lookup (the host reads the CDN's headers).
+> In §10 the "Deployed config" layer is, for hosted installs, derived at request time
+> from the workspace, so "the deployed config is behind the workspace" cannot occur
+> there; the rescan reads `window.ComplyKitConfig` instead of the config element.
+> Add-on mode (plans/hosted-script.md) is a further change to §6: the tool can follow
+> an existing banner instead of showing its own.
 
 **Theming is tokens, not an engine.** `font: inherit` by default; a handful of CSS custom
 properties (`--ck-bg`, `--ck-fg`, `--ck-accent`, `--ck-border`); three layouts (bottom bar,

@@ -1,13 +1,16 @@
 # Consent tool config
 
 The consent tool is configured from a scan. The generator writes one JSON object,
-the owner pastes it inline in the snippet, the tool reads it at load, and the next
-scan reads it back from the page and compares it with the workspace. This page is
-the contract between those three.
+the tool reads it at load, and the next scan reads it back from the page and compares
+it with the workspace. This page is the contract between those three.
 
-Nothing here is fetched at runtime. The script is self-hosted and the config is in
-the page; a request to us before consent would be exactly the kind of thing the scan
-polices.
+There are two ways the config reaches the page. **Hosted** (what the service
+generates): the host serves one script that sets `window.ComplyKitConfig` to the config
+and then runs the tool; the owner pastes one `<script src>` line, and the host fills in
+the `record` and `analytics` endpoints ([Installing the consent tool](./consent-tool.md)).
+**Self-hosted** (the CLI without `--hosted`): the config is inline in the page and the
+script is on the owner's origin, so nothing is fetched from us. The fields mean the
+same either way. The example below is the self-hosted form.
 
 ```html
 <script type="application/json" id="complykit-config">
@@ -105,8 +108,8 @@ up on the rescan as "deployed config was edited since it was generated".
 
 Every field below is in the parsed form. In the written form, `vendors`, `gate`,
 `platform`, `theme`, `strings`, `consent` and `layout` may be omitted (defaults: `[]`,
-`[]`, `"none"`, `{}`, `{}`, `{ "lifetimeDays": 365 }`, `"bar"`); `gtm`, `record` and
-`privacyPolicyUrl` are optional and stay optional.
+`[]`, `"none"`, `{}`, `{}`, `{ "lifetimeDays": 365 }`, `"bar"`); `gtm`, `record`,
+`analytics`, `mode`, `companion` and `privacyPolicyUrl` are optional and stay optional.
 
 ### `version`, `generatedFrom`, `hash`
 
@@ -389,7 +392,42 @@ from the banner and the settings layer, after the buttons (label: `privacyPolicy
 Optional. Where the tool POSTs the consent record (categories, timestamp, tool
 version, config `hash`) for proof. A same-origin path, or an absolute URL if the
 owner routes it to the complykit service's optional endpoint. Without it, the record
-stays in the browser.
+stays in the browser. The hosted script sets this to the host's own endpoint; in
+add-on mode it is removed.
+
+### `analytics`
+
+```json
+"analytics": { "endpoint": "https://<complykit host>/e" }
+```
+
+Optional. Where the tool posts the banner beacon: counts of loads, banner shows,
+settings opens and choices, with the time to choose. No cookie, identifier, page
+address or typed text. Absent means no beacon and no listeners. The hosted script sets
+it; a self-hosted config does not have it unless you add one. What is sent and stored:
+[Banner analytics](./analytics.md).
+
+### `mode` and `companion`
+
+```json
+"mode": "companion",
+"companion": { "cmp": "onetrust" }
+```
+
+`mode` is `full` (absent means full) or `companion`. In `full` complykit is the consent
+manager: banner, gate, signals. In `companion` the site keeps its own banner; complykit
+follows the banner's choice and deletes the cookies of whatever is withdrawn. It shows
+no banner and turns off the Google Tag Manager bridge, the vendor adapters, the
+platform bridges and consent records.
+
+`companion` is required when `mode` is `companion`. `companion.cmp` is the banner to
+follow: `onetrust`, `cookiebot`, `usercentrics`, `didomi`, `trustarc`, `shopify`,
+`wordpress`, `tcf`, `consent-mode`, or `manual` (your own code calls
+`ComplyKit.sync({...})`). `companion.map` optionally replaces the built-in map from the
+banner's purpose or group ids to your category ids; category ids the config does not
+have are ignored, and `necessary` is always on. The service sets both from the owner's
+settings form ([Add-on mode](./consent-tool.md#add-on-mode)); `consent-config` records
+the banner it saw as `detectedCmp` in its result, but does not set `mode`.
 
 ## Programmatic use
 

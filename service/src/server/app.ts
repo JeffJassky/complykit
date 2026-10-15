@@ -8,6 +8,7 @@ import {
   parseUrlList,
   type CheckKind,
   type ConsentConfigRequest,
+  type ConsentSettingsResponse,
   type CreateBatchRequest,
   type CreateBatchResponse,
   type JobDetail,
@@ -16,6 +17,7 @@ import {
   type KbDismissRequest,
   type KbRejectRequest,
   type KbResearchRequest,
+  type RemediationTask,
   type RerenderRequest,
   type RescanRequest,
   type SitesResponse,
@@ -28,12 +30,15 @@ import { recoverJobs, sweepRetention } from './lifecycle.js';
 import { Runner, type RunnerOptions } from './runner.js';
 import { isJobId, JobStore, newId, toSummary } from './store.js';
 import { StreamHub } from './stream.js';
-import { sendInstallZip } from './install-zip.js';
+import { cloudflarePurger, noopPurger, type CdnPurger } from './cdn.js';
+import { CONSENT_SETTINGS_KEY, normalizeConsentSettings, storedConsentSettings } from './consent-settings.js';
+import { hostedBundleHash, hostedScript } from './hosted-script.js';
+import { ConsentStats, MAX_BEACON_BYTES, readStats } from './consent-stats.js';
 import { WorkspaceError, WorkspaceStore } from './workspace.js';
 import { serveReports } from './report-config.js';
 import { assertCanGenerate } from './history.js';
 import { generateConsentConfigForJob } from './consent-config.js';
-import { checklistProgress, RemediationVerifier, remediationView } from './remediation.js';
+import { checklistProgress, RemediationVerifier, rehomeHostedUrl, rehomeTasks, remediationView } from './remediation.js';
 import { rescanSite } from './rescan.js';
 import { parseLaws } from './law-input.js';
 import { rerenderJob } from './rerender.js';
@@ -53,6 +58,8 @@ export interface Service {
   workspaces: WorkspaceStore;
   /** Consent records (pruned by CONSENT_RECORD_RETENTION_DAYS, not by retentionDays). */
   consentRecords: ConsentRecordStore;
+  /** Banner analytics counters (POST /e): held in memory, flushed every STATS_FLUSH_MS and on stop. */
+  stats: { flush(): Promise<void> };
   /** Epoch ms of the last request that counts as activity (see lifecycle.idleReason). */
   lastActivity(): number;
   /** Makes the to-do list after a consent scan (config.autoChecklist). */
@@ -68,6 +75,8 @@ export interface Service {
 export interface AppDeps {
   /** Where records and files live. Absent: opened from the config (DATA_BACKEND), and closed by `stop`. */
   storage?: Storage;
+  /** Purges the CDN in front of the hosted script. Absent: Cloudflare when the config has `cdn`, else nothing. */
+  purger?: CdnPurger;
 }
 
 const RETENTION_SWEEP_MS = 60 * 60_000;
@@ -83,10 +92,28 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
   const touch = () => (lastActivity = Date.now());
   const hub = new StreamHub(store);
   // A job finishing counts as activity, and a consent check feeds the KB queue.
-  const workspaces = new WorkspaceStore(storage.workspaces, checklistProgress);
+  const purger = deps.purger ?? (config.cdn ? cloudflarePurger(config.cdn) : noopPurger);
+  // Rebinds once the hosted script exists (it needs the workspaces); a change only ever arrives after boot.
+  let onConfigChange: (domain: string) => void = () => undefined;
+  const workspaces = new WorkspaceStore(storage.workspaces, checklistProgress, { onConfigChange: (domain) => onConfigChange(domain) });
+  const hosted = hostedScript({ config, workspaces, snapshots: storage.configSnapshots });
+  onConfigChange = (domain) => {
+    // B2: drop the rendered copy and purge the CDN, without making the write wait for Cloudflare.
+    hosted.invalidate(domain);
+    void purger.purgeUrls([`${config.publicOrigin}/s/${domain}.js`]).catch((err: Error) => console.warn(`[cdn] purge ${domain}: ${err.message}`));
+  };
+  // A new bundle or origin makes every cached copy at the edge wrong: purge it all, once.
+  const bootPurge = (async () => {
+    const BUNDLE_HASH_KEY = 'meta/hosted-bundle.sha256';
+    const now = hostedBundleHash(config.consentClientDist, config.publicOrigin);
+    const before = (await storage.blobs.get(BUNDLE_HASH_KEY))?.toString('utf8').trim();
+    if (before === now) return;
+    await purger.purgeAll();
+    await storage.blobs.put(BUNDLE_HASH_KEY, now + '\n', { contentType: 'text/plain' });
+  })().catch((err: Error) => console.warn(`[cdn] boot purge: ${err.message}`));
   // A consent job applies its site's workspace and records itself as a run (C3).
   // The to-do list is made when a consent scan finishes (plans/simple-report.md).
-  const checklists = new ChecklistMaker({ config, workspaces, files: store.files, origin: `http://localhost:${config.port}` });
+  const checklists = new ChecklistMaker({ config, workspaces, files: store.files });
   const runner = new Runner(
     store,
     config,
@@ -124,7 +151,17 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
 
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', true);
+  // One hop: the platform's proxy. `true` would trust the leftmost, client-supplied
+  // X-Forwarded-For entry, which resets any per-IP limit by changing a header.
+  app.set('trust proxy', 1);
+  // The per-IP limiters' key (memory only). Behind Cloudflare the edge sets cf-connecting-ip itself.
+  const limiterIp = (req: express.Request): string => {
+    if (config.trustCfGeo) {
+      const cfIp = req.get('cf-connecting-ip');
+      if (cfIp) return cfIp.slice(0, 64);
+    }
+    return req.ip ?? '';
+  };
 
   // Activity for idle shutdown: everything except the health check. The SSE
   // connect counts once; the open stream and its pings don't.
@@ -196,7 +233,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
         res.status(403).json({ error: 'this service does not accept consent records for that site' });
         return;
       }
-      const wait = Math.max(consentLimitIp.hit(req.ip ?? ''), consentLimitSite.hit(domain));
+      const wait = Math.max(consentLimitIp.hit(limiterIp(req)), consentLimitSite.hit(domain));
       if (wait) {
         res.set('Retry-After', String(wait)).status(429).json({ error: 'too many consent records; slow down' });
         return;
@@ -206,6 +243,73 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
       res.status(204).end();
     }),
   );
+
+  // --- Banner analytics beacon (public by design) -------------------------------------
+  // POST /e: counters only (plans/hosted-script.md). The body is parsed, turned into
+  // increments and dropped; the IP feeds the in-memory rate limiter and nothing else;
+  // user agent, referrer and URL are never read. Always 204 except 413 and 429.
+  const stats = new ConsentStats(storage.configSnapshots, storage.consentStats, { flushMs: config.statsFlushMs, trustCfGeo: config.trustCfGeo });
+  const beaconLimitIp = new RateLimiter(120);
+  const beaconLimitSite = new RateLimiter(20_000);
+
+  app.options('/e', (req, res) => {
+    if (consentCors(req, res)) {
+      res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.set('Access-Control-Allow-Headers', 'Content-Type');
+      res.set('Access-Control-Max-Age', '86400');
+    }
+    res.status(204).end();
+  });
+
+  app.post(
+    '/e',
+    (req, res, next) => {
+      consentCors(req, res);
+      const wait = beaconLimitIp.hit(limiterIp(req));
+      if (wait) {
+        res.set('Retry-After', String(wait)).status(429).end();
+        return;
+      }
+      // Any content type (sendBeacon's text/plain needs no preflight); the limit applies while streaming.
+      express.text({ limit: MAX_BEACON_BYTES, type: () => true })(req, res, (err?: unknown) => {
+        if (err) {
+          // Too large: 413. Anything else unreadable (bad charset, aborted): nothing to count.
+          res.status((err as { status?: number }).status === 413 ? 413 : 204).end();
+          return;
+        }
+        next();
+      });
+    },
+    async (req, res, next) => {
+      try {
+        let body: unknown;
+        try {
+          body = JSON.parse(typeof req.body === 'string' ? req.body : '');
+        } catch {
+          res.status(204).end();
+          return;
+        }
+        const cf = (name: string): string | undefined => {
+          const v = req.get(name);
+          return v === undefined ? undefined : v.slice(0, 16);
+        };
+        let waitSite = 0;
+        const outcome = await stats.ingest(body, originDomain(req.get('origin')), config.trustCfGeo ? { country: cf('cf-ipcountry'), region: cf('cf-region-code') } : {}, (domain) => (waitSite = beaconLimitSite.hit(domain)) === 0);
+        if (outcome === 'limited') {
+          res.set('Retry-After', String(waitSite)).status(429).end();
+          return;
+        }
+        res.status(204).end();
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // --- Hosted consent script (public by design) --------------------------------------
+  // /s/<domain>.js and the UI bundle: a visitor's browser on a client's site loads
+  // them, so they sit before basic auth. No cookies, ever (P1).
+  app.use(hosted.router);
 
   app.use(basicAuth(config.password));
   app.use(express.json({ limit: '256kb' }));
@@ -308,7 +412,6 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
         config,
         workspaces,
         files: store.files,
-        origin: `${req.protocol}://${req.get('host') ?? 'localhost'}`,
       });
       res.json(out);
     }),
@@ -321,7 +424,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     siteRoute(async (_req, res) => {
       const job = res.locals.job as JobDetail;
       res.set('Cache-Control', 'no-store');
-      res.json(await jobReport(job, { files: store.files, workspaces, maker: checklists, jobs: store.list() }));
+      res.json(await jobReport(job, { files: store.files, workspaces, maker: checklists, jobs: store.list(), publicOrigin: config.publicOrigin }));
     }),
   );
 
@@ -337,7 +440,6 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
         config,
         workspaces,
         files: store.files,
-        origin: `${req.protocol}://${req.get('host') ?? 'localhost'}`,
       });
       res.json(out);
     }),
@@ -456,7 +558,17 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
   app.get(
     '/api/sites/:domain/workspace',
     siteRoute(async (req, res) => {
-      res.json(await workspaces.get(req.params.domain));
+      const ws = await workspaces.get(req.params.domain);
+      // The stored hosted URL (and the install task's snippet and verify spec) follow a changed PUBLIC_ORIGIN.
+      const v = ws.config?.value;
+      if (ws.config && v && typeof v === 'object' && !Array.isArray(v)) {
+        const value: Record<string, unknown> = { ...(v as Record<string, unknown>) };
+        if (typeof value.hostedScriptUrl === 'string') value.hostedScriptUrl = rehomeHostedUrl(value.hostedScriptUrl, config.publicOrigin);
+        if (Array.isArray(value.tasks)) value.tasks = rehomeTasks(value.tasks as RemediationTask[], config.publicOrigin);
+        res.json({ ...ws, config: { ...ws.config, value } });
+        return;
+      }
+      res.json(ws);
     }),
   );
 
@@ -467,12 +579,35 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     }),
   );
 
+  // The owner's consent settings (the install task's form). Saving is a workspace write: it re-renders and purges the script.
+  const consentSettings = async (domain: string): Promise<ConsentSettingsResponse> => {
+    const ws = await workspaces.get(domain);
+    const v = ws.config?.value;
+    const detected = typeof v === 'object' && v !== null ? (v as { detectedCmp?: unknown }).detectedCmp : undefined;
+    return { settings: storedConsentSettings(ws) ?? { mode: 'full' }, ...(typeof detected === 'string' ? { detectedCmp: detected as ConsentSettingsResponse['detectedCmp'] } : {}) };
+  };
+  app.get(
+    '/api/sites/:domain/consent-settings',
+    siteRoute(async (req, res) => {
+      res.json(await consentSettings(workspaces.domain(req.params.domain)));
+    }),
+  );
+  app.put(
+    '/api/sites/:domain/consent-settings',
+    siteRoute(async (req, res) => {
+      const domain = workspaces.domain(req.params.domain);
+      const settings = normalizeConsentSettings(req.body);
+      await workspaces.patch(domain, { entries: { [CONSENT_SETTINGS_KEY]: { value: settings } } });
+      res.json(await consentSettings(domain));
+    }),
+  );
+
   // The guided remediation checklist (R4): the stored tasks with their status, and Verify.
   const verifier = new RemediationVerifier({ config, workspaces, fleet: runner.workerFleet, locks: runner.regionLocks });
   app.get(
     '/api/sites/:domain/remediation',
     siteRoute(async (req, res) => {
-      res.json(remediationView(await workspaces.get(req.params.domain)));
+      res.json(remediationView(await workspaces.get(req.params.domain), config.publicOrigin));
     }),
   );
 
@@ -491,15 +626,6 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     }),
   );
 
-  // The install bundle (R5): the two client files, the snippet and the change list.
-  app.get(
-    '/api/sites/:domain/install.zip',
-    siteRoute(async (req, res) => {
-      const domain = workspaces.domain(req.params.domain);
-      await sendInstallZip(res, domain, (await workspaces.get(domain)).config?.value, config.consentClientDist);
-    }),
-  );
-
   app.get(
     '/api/sites/:domain/consent-records',
     siteRoute(async (req, res) => {
@@ -513,6 +639,28 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
         if (!res.write(chunk)) await new Promise((r) => res.once('drain', r));
       }
       res.end();
+    }),
+  );
+
+  // Banner analytics, read back per config version (plans/hosted-script.md "Stats API").
+  app.get(
+    '/api/sites/:domain/stats',
+    siteRoute(async (req, res) => {
+      const domain = workspaces.domain(req.params.domain);
+      const raw = req.query.days;
+      const days = raw === undefined ? 30 : typeof raw === 'string' && /^\d{1,3}$/.test(raw) ? Number(raw) : 0;
+      if (days < 1 || days > 366) throw new WorkspaceError(400, '`days` must be a whole number from 1 to 366');
+      res.json(await readStats(domain, days, { stats: storage.consentStats, snapshots: storage.configSnapshots }));
+    }),
+  );
+
+  app.get(
+    '/api/sites/:domain/configs/:hash',
+    siteRoute(async (req, res) => {
+      const domain = workspaces.domain(req.params.domain);
+      const snap = await storage.configSnapshots.get(String(req.params.hash));
+      if (!snap || snap.domain !== domain) throw new WorkspaceError(404, 'no such config version for this site');
+      res.json(snap);
     }),
   );
 
@@ -560,6 +708,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     kb,
     workspaces,
     consentRecords,
+    stats: { flush: () => stats.flush() },
     checklists,
     lastActivity: () => lastActivity,
     async settled() {
@@ -572,12 +721,12 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     async stop(killGraceMs?: number) {
       clearInterval(sweep);
       clearInterval(consentSweep);
-      await Promise.all([runner.shutdown(killGraceMs), kb.stop(killGraceMs)]);
+      await Promise.all([runner.shutdown(killGraceMs), kb.stop(killGraceMs), bootPurge]);
       // Stopped jobs are failed ("server stopped"); their partial files are published too.
       await store.files.settled();
       await checklists.settled();
       hub.closeAll();
-      await Promise.all([store.flush(), workspaces.flush(), consentRecords.flush(), kbSync.settled()]);
+      await Promise.all([store.flush(), workspaces.flush(), consentRecords.flush(), stats.stop(), kbSync.settled()]);
       if (ownsStorage) await storage.close();
     },
   };

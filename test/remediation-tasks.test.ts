@@ -32,7 +32,7 @@ describe('buildRemediationTasks', () => {
     expect(t.id).toBe('install');
     expect(t.kind).toBe('install');
     expect(t.status).toBe('todo');
-    expect(t.verify).toEqual({ check: 'install', method: 'static', page: PAGE, configHash: r.config.hash, scriptSrc: r.scriptSrc, elementId: CONSENT_CONFIG_ELEMENT_ID });
+    expect(t.verify).toEqual({ check: 'install', method: 'static', mode: 'self', page: PAGE, configHash: r.config.hash, scriptSrc: r.scriptSrc, elementId: CONSENT_CONFIG_ELEMENT_ID });
     expect(t.snippet?.after).toBe(renderHeadSnippet(r.config, r.scriptSrc));
     expect(r.snippet).toContain(t.snippet!.after);
     expect(t.steps.join(' ')).toMatch(/first in <head>/);

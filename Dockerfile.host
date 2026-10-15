@@ -40,7 +40,7 @@ COPY --from=build /app/dist ./dist
 COPY service/package.json service/package-lock.json ./service/
 RUN cd service && npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 COPY --from=build /app/service/dist ./service/dist
-COPY --from=build /app/client/dist/complykit-consent.js /app/client/dist/complykit-consent-ui.js ./client/dist/
+COPY --from=build /app/client/dist/complykit-consent.js /app/client/dist/complykit-consent-ui.js /app/client/dist/complykit-consent-companion.js /app/client/dist/complykit-build.json ./client/dist/
 
 # Scratch only: App Platform's disk is ephemeral; files and records live in Spaces and Mongo.
 RUN mkdir -p /data && chown node:node /data

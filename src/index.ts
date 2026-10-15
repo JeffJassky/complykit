@@ -150,6 +150,8 @@ export {
   classifyCookie,
   requiresConsent,
   KB_VERSION,
+  COMPLYKIT_PARTY_ID,
+  COMPLYKIT_HOSTS,
   KB_ENTRIES,
   DEFAULT_KB,
   CONSENT_CATEGORIES,
@@ -311,7 +313,7 @@ export type { RemediationSource, RemediationSourceNote, BuildRemediationTasksOpt
 export { renderRemediationHtml, remediationFromWorkspace, parseRemediationTasks } from './report/consent-remediation.js';
 export type { RemediationSection, RemediationWorkspaceLike } from './report/consent-remediation.js';
 export { verifyInstall, verifyRewriteTag, verifyRemoveLeak, verifyGtmTagConsent, verifyConsentDefault, verifyRemoveExistingTool, judgeSpotCheck, judgeServerCookie, runVerify, elementMatches } from './rules/remediation/verify.js';
-export type { VerifyOptions, StaticVerifyInput, InstallExpectation, SpotCheckSpec, RemoveExistingToolExpectation } from './rules/remediation/verify.js';
+export type { VerifyOptions, StaticVerifyInput, InstallExpectation, HostedScriptFetch, SpotCheckSpec, RemoveExistingToolExpectation } from './rules/remediation/verify.js';
 export type {
   ReportFormat,
   HtmlOptions,
@@ -340,6 +342,7 @@ export {
   CONSENT_CONFIG_MAJOR,
   CONSENT_CONFIG_VERSION,
   CONSENT_CONFIG_ELEMENT_ID,
+  COMPANION_CMPS,
   NECESSARY_CATEGORY,
   REGIMES,
   FALLBACK_REGIME,
@@ -361,6 +364,8 @@ export {
   DO_NOT_SELL_OR_SHARE,
 } from './record/index.js';
 export type {
+  CompanionCmp,
+  CompanionConfig,
   Regime,
   RegimeSource,
   ConsentCategory,
@@ -393,3 +398,6 @@ export { addFinding } from './finding.js';
 export type { AddFindingOptions } from './finding.js';
 
 export type { BehaviorObservation, BehaviorMatrix, BehaviorMatrixCell } from '../types/index.js';
+
+// Hosted consent script (plans/hosted-script.md).
+export { HOSTED_CONFIG_PREFIX, hostedScriptPath, parseHostedScript } from './record/index.js';

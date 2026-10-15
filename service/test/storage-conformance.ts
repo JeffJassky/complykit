@@ -286,5 +286,43 @@ export function recordSuite(name: string, make: (opts: { consentMaxBytes?: numbe
         },
         { consentMaxBytes: 1500 },
       ));
+
+    it('config snapshots: put once, get by hash; the first firstServed wins; unknown is undefined', () =>
+      withStorage(async ({ configSnapshots }) => {
+        const hash = 'a'.repeat(64);
+        expect(await configSnapshots.get(hash)).toBeUndefined();
+        const first = { hash, domain: 'shop.example', config: { layout: 'bar', hash }, firstServed: '2026-10-14T10:00:00.000Z' };
+        await configSnapshots.put(first);
+        await configSnapshots.put({ ...first, firstServed: '2026-10-15T10:00:00.000Z', config: { other: true } });
+        expect(await configSnapshots.get(hash)).toEqual(first);
+        expect(await configSnapshots.get('b'.repeat(64))).toBeUndefined();
+      }));
+
+    it('consent stats: add accumulates per (domain, day, hash); read filters by domain and day range', () =>
+      withStorage(async ({ consentStats }) => {
+        const h1 = 'a'.repeat(64);
+        const h2 = 'b'.repeat(64);
+        const byKey = (l: Array<{ day: string; hash: string }>) => [...l].sort((x, y) => (x.day + x.hash).localeCompare(y.day + y.hash));
+        expect(await consentStats.read('shop.example', '2026-10-01', '2026-10-31')).toEqual([]);
+        await consentStats.add([
+          { domain: 'shop.example', day: '2026-10-14', hash: h1, n: { load: 1, 'geo:US-CA:load': 1 } },
+          { domain: 'shop.example', day: '2026-10-14', hash: h2, n: { shown: 2 } },
+          { domain: 'other.example', day: '2026-10-14', hash: h1, n: { load: 9 } },
+        ]);
+        await consentStats.add([
+          { domain: 'shop.example', day: '2026-10-14', hash: h1, n: { load: 2, 'decide:accept:banner': 1 } },
+          { domain: 'shop.example', day: '2026-10-16', hash: h1, n: { load: 5 } },
+        ]);
+        expect(byKey(await consentStats.read('shop.example', '2026-10-01', '2026-10-31'))).toEqual([
+          { domain: 'shop.example', day: '2026-10-14', hash: h1, n: { load: 3, 'geo:US-CA:load': 1, 'decide:accept:banner': 1 } },
+          { domain: 'shop.example', day: '2026-10-14', hash: h2, n: { shown: 2 } },
+          { domain: 'shop.example', day: '2026-10-16', hash: h1, n: { load: 5 } },
+        ]);
+        expect((await consentStats.read('shop.example', '2026-10-15', '2026-10-16')).map((d) => d.day)).toEqual(['2026-10-16']);
+        expect((await consentStats.read('other.example', '2026-10-14', '2026-10-14')).map((d) => d.n)).toEqual([{ load: 9 }]);
+        // concurrent adds do not lose counts
+        await Promise.all(Array.from({ length: 10 }, () => consentStats.add([{ domain: 'shop.example', day: '2026-10-20', hash: h1, n: { load: 1 } }])));
+        expect((await consentStats.read('shop.example', '2026-10-20', '2026-10-20'))[0].n).toEqual({ load: 10 });
+      }));
   });
 }

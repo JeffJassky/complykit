@@ -12,8 +12,10 @@ export * from './domains.js';
 export * from './signatures.js';
 import { entriesMatchingInline } from './signatures.js';
 
+export { COMPLYKIT_PARTY_ID, COMPLYKIT_HOSTS } from './entries.js';
+
 /** Bump on any entry change; stamped into every evaluation. */
-export const KB_VERSION = '0.1.5';
+export const KB_VERSION = '0.1.6';
 
 export const KB_ENTRIES: KnowledgeEntry[] = SEED_ENTRIES.map((e) => KnowledgeEntry.parse(e));
 

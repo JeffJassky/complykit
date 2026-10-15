@@ -46,7 +46,7 @@ RUN cd service && npm ci --omit=dev --no-audit --no-fund && npm cache clean --fo
 COPY --from=build /app/service/dist ./service/dist
 # The two consent-tool files the install bundle zips (service default:
 # ../client/dist relative to service/).
-COPY --from=build /app/client/dist/complykit-consent.js /app/client/dist/complykit-consent-ui.js ./client/dist/
+COPY --from=build /app/client/dist/complykit-consent.js /app/client/dist/complykit-consent-ui.js /app/client/dist/complykit-consent-companion.js /app/client/dist/complykit-build.json ./client/dist/
 COPY service/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN mkdir -p /data && chown pwuser:pwuser /data

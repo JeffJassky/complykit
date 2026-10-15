@@ -22,7 +22,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Browser, Page } from 'playwright';
 import { startE2eSite, opensslAvailable, type E2eSite } from './fixtures/remediation-e2e-site.js';
 import { clientBuilt } from './fixtures/proof-site.js';
-import { startService, stopAll } from '../service/test/helpers.js';
+import { freePort, startService, stopAll } from '../service/test/helpers.js';
 import type { Service } from '../service/src/server/app.js';
 import type { JobReportResponse } from '../service/src/shared/api.js';
 
@@ -63,8 +63,10 @@ suite('the report page, end to end (real CLI, service, browser, fixture site)', 
     site = await startE2eSite();
     prevArgs = process.env.COMPLYKIT_BROWSER_ARGS;
     process.env.COMPLYKIT_BROWSER_ARGS = site.launchArgs.join(' ');
-    service = await startService({ cliPath: CLI, consentRuns: 1, pollMs: 250, concurrency: 1, killGraceMs: 2000, autoChecklist: true, clientDir: SERVICE_CLIENT });
-    server = service.app.listen(0, '127.0.0.1');
+    // The hosted script URL the service hands out must be this listener: pick the port first.
+    const port = await freePort();
+    service = await startService({ publicOrigin: `http://127.0.0.1:${port}`, cliPath: CLI, consentRuns: 1, pollMs: 250, concurrency: 1, killGraceMs: 2000, autoChecklist: true, clientDir: SERVICE_CLIENT });
+    server = service.app.listen(port, '127.0.0.1');
     await new Promise((r) => server.once('listening', r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const { chromium } = await import('playwright');
@@ -142,10 +144,13 @@ suite('the report page, end to end (real CLI, service, browser, fixture site)', 
       expect(await page.getByTestId('cell-detail').textContent()).toMatch(/Problem/);
 
       // --- 1. The decision, first in the list; answering it re-renders by itself ---
-      const todos = page.locator('[data-testid="todo"] > ol > li');
+      // The list is folded under its progress summary: open it.
+      await page.getByTestId('todo-summary').click();
+      const todos = page.locator('[data-testid="todo"] ol.rp-todos > li');
       expect(await todos.first().textContent()).toContain('What is e2e-widgets.test for?');
       await todos.first().locator('[data-purpose="analytics"]').click();
-      await page.waitForFunction(() => document.querySelector('[data-testid="todo"] > ol > li')?.getAttribute('data-status') === 'verified');
+      // Decided: it moves to the completed tasks.
+      await page.waitForFunction(() => Boolean(document.querySelector('[data-testid="todo"] li[data-kind="classify"][data-status="verified"]')));
       // The re-render lands: the widget's row is classified in the matrix, no "?" left on it.
       for (const start = Date.now(); ; ) {
         const r = await report(jobId);
@@ -164,16 +169,24 @@ suite('the report page, end to end (real CLI, service, browser, fixture site)', 
       for (const f of ['complykit-consent.js', 'complykit-consent-ui.js']) site.state.clientFiles[f] = fs.readFileSync(path.join(ROOT, 'client', 'dist', f), 'utf8');
       const installItem = page.locator('li[data-task-id="install"]');
       await installItem.getByRole('button', { name: 'Verify' }).click();
-      await installItem.locator('.rp-last').waitFor({ timeout: 90_000 });
+      await installItem.locator('.rp-last').waitFor({ state: 'attached', timeout: 90_000 });
       expect(await installItem.getAttribute('data-status'), (await installItem.locator('.rp-last').textContent()) ?? '').toBe('verified');
 
       // --- 3. The final scan opens up when everything above is done ---------------
       const final = page.getByTestId('final-scan').getByRole('button', { name: 'Run the final scan' });
       expect(await final.isDisabled()).toBe(true);
+      const openFold = async () => {
+        if ((await page.getByTestId('todo-fold').getAttribute('open')) === null) await page.getByTestId('todo-summary').click();
+      };
       for (;;) {
-        const btn = page.locator('[data-testid="todo"] > ol > li.rp-todo[data-status="todo"] button', { hasText: /Mark done without checking|I’ve done this/ }).first();
+        await openFold();
+        const btn = page.locator('[data-testid="todo"] ol.rp-todos > li.rp-todo[data-status="todo"] button', { hasText: /Mark done without checking|I’ve done this/ }).first();
         if (!(await btn.count())) break;
         const id = await btn.locator('xpath=ancestor::li[1]').getAttribute('data-task-id');
+        // Optional tasks sit in their own fold: open every fold around the button first.
+        await btn.evaluate((b) => {
+          for (let d = b.closest('details'); d; d = d.parentElement?.closest('details') ?? null) d.open = true;
+        });
         await btn.click();
         await page.waitForFunction((tid) => document.querySelector(`li[data-task-id="${tid}"]`)?.getAttribute('data-status') !== 'todo', id);
       }

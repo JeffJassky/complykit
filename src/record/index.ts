@@ -14,6 +14,7 @@ export * from './consent-tool.js';
 export * from './consent-tool-proof.js';
 export * from './consent-config-guard.js';
 export * from './consent-config.js';
+export * from './hosted-script.js';
 export * from './consent-strings-guard.js';
 export * from './banner-design.js';
 export * from './remediation.js';

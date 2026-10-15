@@ -15,9 +15,10 @@ import path from 'node:path';
 import { RUN_ID_RE, isFinal, type JobFiles } from './job-files.js';
 import { firstScan, newerScan, siteHistory } from './history.js';
 import { scoreReport } from '../shared/score.js';
-import type { JobDetail, JobReportResponse, OwnerReport, SiteWorkspace } from '../shared/api.js';
+import type { CompanionCmp, JobDetail, JobReportResponse, OwnerReport, SiteWorkspace } from '../shared/api.js';
 import { toSummary } from './store.js';
-import { checklistProgress, mergeTaskStatus, storedTasks } from './remediation.js';
+import { storedConsentSettings } from './consent-settings.js';
+import { checklistProgress, mergeTaskStatus, rehomeHostedUrl, storedTasks } from './remediation.js';
 import { rerenderJob, rerenderRunning, type RerenderDeps } from './rerender.js';
 import type { WorkspaceStore } from './workspace.js';
 
@@ -169,7 +170,7 @@ async function baselineScore(job: JobDetail, files: JobFiles): Promise<number | 
   return score;
 }
 
-export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspaces: WorkspaceStore; maker?: ChecklistMaker; jobs?: JobDetail[] }): Promise<JobReportResponse> {
+export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspaces: WorkspaceStore; maker?: ChecklistMaker; jobs?: JobDetail[]; publicOrigin?: string }): Promise<JobReportResponse> {
   const consent = job.checks.includes('consent');
   const domain = deps.workspaces.domain(new URL(job.url).hostname);
   const report = consent ? await readOwnerReport(job, deps.files, await ownerReportRel(job, deps.files)) : null;
@@ -185,7 +186,7 @@ export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspa
         )
       : undefined;
   const ws = await deps.workspaces.get(domain);
-  const tasks = mergeTaskStatus(storedTasks(ws), ws).sort((a, b) => a.order - b.order);
+  const tasks = mergeTaskStatus(storedTasks(ws, deps.publicOrigin), ws).sort((a, b) => a.order - b.order);
   const runId = job.result?.consent?.runId;
   const auto = deps.maker?.state(job.id);
 
@@ -199,6 +200,8 @@ export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspa
   else state = 'none';
 
   const ready = state === 'ready';
+  const storedValue = ws.config?.value as { hostedScriptUrl?: unknown } | null | undefined;
+  const hostedScriptUrl = typeof storedValue?.hostedScriptUrl === 'string' ? (deps.publicOrigin ? rehomeHostedUrl(storedValue.hostedScriptUrl, deps.publicOrigin) : storedValue.hostedScriptUrl) : undefined;
   const jobs = deps.jobs ?? [job];
   const domainOf = (host: string) => deps.workspaces.domain(host);
   const newer = newerScan(job, jobs, domainOf);
@@ -223,9 +226,26 @@ export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspa
     ...(job.result?.accessibility?.reportUrl ? { accessibilityReportUrl: job.result.accessibility.reportUrl } : {}),
     ...((await jsonReportExists(job, deps.files)) && job.result?.consent ? { jsonReportUrl: job.result.consent.reportUrl.replace(/\.html$/, '.json') } : {}),
     ...(job.result?.downloadUrl ? { downloadUrl: job.result.downloadUrl } : {}),
-    ...(ready ? { installZipUrl: `/api/sites/${encodeURIComponent(domain)}/install.zip` } : {}),
+    ...(ready && hostedScriptUrl ? { hostedScriptUrl } : {}),
+    ...(ready ? { consentSettings: consentSettingsView(ws) } : {}),
     history: siteHistory(domain, jobs, ws, domainOf, job.id),
     ...(newer ? { newerScan: { jobId: newer.id, at: newer.createdAt } } : {}),
     ...(first ? { firstScan: { jobId: first.id, at: first.createdAt, ...(first.id === job.id ? { current: true as const } : {}), ...(firstScore !== undefined ? { score: firstScore } : {}) } } : {}),
+  };
+}
+
+const isRec = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** What the install task's form needs: the settings, the banner the scan saw, and the site's own category ids and defaults. */
+function consentSettingsView(ws: SiteWorkspace): NonNullable<JobReportResponse['consentSettings']> {
+  const v = ws.config?.value;
+  const cfg = isRec(v) && isRec(v.config) ? v.config : {};
+  const detected = isRec(v) && typeof v.detectedCmp === 'string' ? (v.detectedCmp as CompanionCmp) : undefined;
+  const categoryIds = Array.isArray(cfg.categories) ? cfg.categories.filter((c): c is { id: string } => isRec(c) && typeof c.id === 'string').map((c) => c.id) : [];
+  return {
+    settings: storedConsentSettings(ws) ?? { mode: 'full' },
+    ...(detected ? { detectedCmp: detected } : {}),
+    categoryIds,
+    defaults: { ...(typeof cfg.layout === 'string' ? { layout: cfg.layout } : {}), ...(typeof cfg.blockPage === 'boolean' ? { blockPage: cfg.blockPage } : {}), ...(typeof cfg.privacyPolicyUrl === 'string' ? { privacyPolicyUrl: cfg.privacyPolicyUrl } : {}) },
   };
 }

@@ -171,6 +171,16 @@ export const ConsentStateConfigSchema = z.object({
   cookieDomain: z.string().min(1).optional().describe('Cookie domain, e.g. ".example.test"; default: the current host.'),
 });
 
+/**
+ * The visitor's existing consent banner, in add-on mode (plans/hosted-script.md, "Add-on mode").
+ * Each id is a source the client reads the choice from and follows:
+ * onetrust · cookiebot · usercentrics · didomi · trustarc — the vendor's own JS API and events;
+ * shopify — the Customer Privacy API; wordpress — the WP Consent API;
+ * tcf — IAB TCF v2 (__tcfapi); consent-mode — Google Consent Mode updates on the dataLayer (any banner that sets them);
+ * manual — the site calls ComplyKit.sync({...}) itself.
+ */
+export const CompanionCmpSchema = z.enum(['onetrust', 'cookiebot', 'usercentrics', 'didomi', 'trustarc', 'shopify', 'wordpress', 'tcf', 'consent-mode', 'manual']);
+
 export const ConsentToolConfigSchema = z
   .object({
     version: z.string().regex(/^\d+\.\d+$/).describe('Config schema version "<major>.<minor>".'),
@@ -196,6 +206,25 @@ export const ConsentToolConfigSchema = z
     consent: ConsentStateConfigSchema.default({ lifetimeDays: 365 }),
     privacyPolicyUrl: z.string().regex(/^https:\/\/[^\s]+$/, 'https URL').optional().describe('Linked from the banner.'),
     record: z.object({ endpoint: z.string().min(1) }).optional(),
+    analytics: z
+      .object({ endpoint: z.string().min(1) })
+      .optional()
+      .describe('Where the banner beacon (counters only: shown, choice, time to choose) is posted. Absent = no beacon. Set by the complykit host when it serves the script.'),
+    // No defaults on mode/companion/analytics: a config generated before them must hash the same (hashes are over the parsed form).
+    mode: z
+      .enum(['full', 'companion'])
+      .optional()
+      .describe('full (absent): complykit is the consent manager — banner, gate, signals. companion: the site keeps its own banner; complykit follows its choice and deletes the cookies of revoked categories.'),
+    companion: z
+      .object({
+        cmp: CompanionCmpSchema,
+        map: z
+          .record(z.string().min(1).max(64), z.array(CategoryId))
+          .optional()
+          .describe("The banner's purpose/group id → complykit category ids. Absent = the built-in map for that banner."),
+      })
+      .optional()
+      .describe('Add-on mode: which banner to follow. Required when mode is companion.'),
     layout: ConsentLayoutSchema.default('bar'),
     blockPage: z
       .boolean()
@@ -204,6 +233,7 @@ export const ConsentToolConfigSchema = z
   })
   .superRefine((cfg, ctx) => {
     const issue = (path: (string | number)[], message: string) => ctx.addIssue({ code: 'custom', path, message });
+    if (cfg.mode === 'companion' && !cfg.companion) issue(['companion'], 'mode "companion" needs companion.cmp: which banner to follow');
     const ids = new Set<string>();
     cfg.categories.forEach((c, i) => {
       if (ids.has(c.id)) issue(['categories', i, 'id'], `duplicate category "${c.id}"`);

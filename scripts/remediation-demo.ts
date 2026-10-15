@@ -60,7 +60,7 @@ interface Task {
   kind: string;
   optional?: boolean;
   snippet?: { after?: string };
-  verify: { check?: string; category?: string; element?: { host?: string; path?: string; inline?: unknown } };
+  verify: { check?: string; mode?: string; category?: string; element?: { host?: string; path?: string; inline?: unknown } };
 }
 
 function die(msg: string): never {
@@ -121,21 +121,24 @@ async function tasks(): Promise<Task[]> {
 async function applyInstall(s: E2eSite): Promise<string> {
   const install = (await tasks()).find((t) => t.id === 'install');
   if (!install?.snippet?.after) throw new Error('no install snippet yet (config not generated?)');
-  const res = await fetch(`${BASE}/api/sites/${SITE}/install.zip`);
-  if (res.status !== 200) throw new Error(`install.zip answered ${res.status}`);
-  const dir = path.join(tmp!, 'install');
-  fs.rmSync(dir, { recursive: true, force: true });
-  const zip = path.join(tmp!, 'install.zip');
-  fs.writeFileSync(zip, Buffer.from(await res.arrayBuffer()));
-  execFileSync('unzip', ['-o', '-q', zip, '-d', dir]);
-  const files = fs.readdirSync(dir, { recursive: true }).map(String);
-  for (const f of ['complykit-consent.js', 'complykit-consent-ui.js']) {
-    const rel = files.find((x) => path.basename(x) === f);
-    if (!rel) throw new Error(`${f} not in the zip`);
-    s.state.clientFiles[f] = fs.readFileSync(path.join(dir, rel), 'utf8');
+  // Hosted install: the one line loads the tool from the service. Self-hosted (a service that still has the bundle): put its client files at /complykit/v1/.
+  if (install.verify.mode !== 'hosted') {
+    const res = await fetch(`${BASE}/api/sites/${SITE}/install.zip`);
+    if (res.status !== 200) throw new Error(`install.zip answered ${res.status}`);
+    const dir = path.join(tmp!, 'install');
+    fs.rmSync(dir, { recursive: true, force: true });
+    const zip = path.join(tmp!, 'install.zip');
+    fs.writeFileSync(zip, Buffer.from(await res.arrayBuffer()));
+    execFileSync('unzip', ['-o', '-q', zip, '-d', dir]);
+    const files = fs.readdirSync(dir, { recursive: true }).map(String);
+    for (const f of ['complykit-consent.js', 'complykit-consent-ui.js']) {
+      const rel = files.find((x) => path.basename(x) === f);
+      if (!rel) throw new Error(`${f} not in the zip`);
+      s.state.clientFiles[f] = fs.readFileSync(path.join(dir, rel), 'utf8');
+    }
   }
   s.state.head = install.snippet.after;
-  return 'snippet placed first in <head>; client files served at /complykit/v1/';
+  return install.verify.mode === 'hosted' ? 'the hosted line placed first in <head>' : 'snippet placed first in <head>; client files served at /complykit/v1/';
 }
 async function applyRewrites(s: E2eSite): Promise<string> {
   const rewrites = (await tasks()).filter((t) => t.verify.check === 'rewrite-tag');

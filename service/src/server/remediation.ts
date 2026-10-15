@@ -31,6 +31,7 @@ import type {
   VerifyTaskResponse,
 } from '../shared/api.js';
 import type { ServiceConfig } from './config.js';
+import { isCompanion, storedConsentSettings } from './consent-settings.js';
 import type { Fleet, WorkerHandle } from './fleet.js';
 import type { RegionLocks } from './region-lock.js';
 import { DEFAULT_WORKER_REGION, WORKER_SECRET_HEADER, type VerifyRequest } from './worker-protocol.js';
@@ -69,12 +70,47 @@ export function readTaskValue(value: unknown): RemediationTaskValue | undefined 
   return out;
 }
 
-/** The stored checklist (config.value.tasks), or [] before a config with tasks exists. */
-export function storedTasks(ws: SiteWorkspace): RemediationTask[] {
+const HOSTED_PATH_RE = /^\/s\/([a-z0-9.-]+)\.js$/;
+
+/**
+ * A stored hosted-script URL carries the origin it was made under. When the service's
+ * PUBLIC_ORIGIN changes (a domain arrives) the path `/s/<domain>.js` is still right, so a URL
+ * of that shape is rewritten to the current origin when it is shown or verified. Anything else is returned as it was.
+ */
+export function rehomeHostedUrl(url: string, publicOrigin: string): string {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return url;
+  }
+  if (!HOSTED_PATH_RE.test(u.pathname) || u.search || u.hash) return url;
+  return `${publicOrigin.replace(/\/+$/, '')}${u.pathname}`;
+}
+
+/** The tasks with the hosted URL in the install snippet and the verify spec on the current origin. */
+export function rehomeTasks(tasks: RemediationTask[], publicOrigin: string): RemediationTask[] {
+  return tasks.map((t) => {
+    const old = t.verify?.scriptSrc;
+    if (typeof old !== 'string') return t;
+    const now = rehomeHostedUrl(old, publicOrigin);
+    if (now === old) return t;
+    const swap = (text: string | undefined): string | undefined => text?.split(old).join(now);
+    const out: RemediationTask = { ...t, verify: { ...t.verify, scriptSrc: now } };
+    if (t.snippet) out.snippet = { ...t.snippet, ...(t.snippet.before !== undefined ? { before: swap(t.snippet.before) } : {}), ...(t.snippet.after !== undefined ? { after: swap(t.snippet.after) } : {}) };
+    return out;
+  });
+}
+
+/** The stored checklist (config.value.tasks), or [] before a config with tasks exists. `publicOrigin`: show hosted URLs on the current origin. */
+export function storedTasks(ws: SiteWorkspace, publicOrigin?: string): RemediationTask[] {
   const v = ws.config?.value;
   const tasks = isObject(v) ? v.tasks : undefined;
   if (!Array.isArray(tasks)) return [];
-  return tasks.filter((t): t is RemediationTask => isObject(t) && typeof t.id === 'string' && isObject(t.verify));
+  const companion = isCompanion(storedConsentSettings(ws));
+  // Add-on mode: the existing banner stays, so there is nothing to remove.
+  const kept = tasks.filter((t): t is RemediationTask => isObject(t) && typeof t.id === 'string' && isObject(t.verify) && !(companion && t.kind === 'remove-existing-tool'));
+  return publicOrigin ? rehomeTasks(kept, publicOrigin) : kept;
 }
 
 /**
@@ -121,8 +157,8 @@ export function checklistProgress(ws: SiteWorkspace): { verified: number; requir
   return { verified: count('verified'), required: tasks.length, doneUnverified: count('done-unverified'), failed: count('failed') };
 }
 
-export function remediationView(ws: SiteWorkspace): RemediationResponse {
-  const tasks = mergeTaskStatus(storedTasks(ws), ws);
+export function remediationView(ws: SiteWorkspace, publicOrigin?: string): RemediationResponse {
+  const tasks = mergeTaskStatus(storedTasks(ws, publicOrigin), ws);
   return { domain: ws.domain, tasks, totals: remediationTotals(tasks), ...(ws.config ? { configAt: ws.config.at } : {}), ...(ws.config?.runId ? { runId: ws.config.runId } : {}) };
 }
 
@@ -158,7 +194,7 @@ export class RemediationVerifier {
     const domain = workspaces.domain(rawDomain);
     const id = typeof rawId === 'string' ? rawId : '';
     if (!id || id.length > MAX_TASK_ID || /[\u0000-\u001f]/.test(id)) throw new WorkspaceError(404, 'no such task');
-    const task = storedTasks(await workspaces.get(domain)).find((t) => t.id === id);
+    const task = storedTasks(await workspaces.get(domain), this.deps.config.publicOrigin).find((t) => t.id === id);
     if (!task) throw new WorkspaceError(404, 'no such task in the site’s current checklist (generate the config first)');
     if (task.classKey) throw new WorkspaceError(409, 'this is a decision, not a change: classify the tool in the report; it is done once the site’s workspace holds its purpose');
     if (task.verify.method === 'manual') throw new WorkspaceError(409, 'this change cannot be checked from outside: mark it done (the rescan decides)');

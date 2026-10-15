@@ -815,6 +815,68 @@
         "endpoint"
       ]
     },
+    "analytics": {
+      "description": "Where the banner beacon (counters only: shown, choice, time to choose) is posted. Absent = no beacon. Set by the complykit host when it serves the script.",
+      "type": "object",
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "endpoint"
+      ]
+    },
+    "mode": {
+      "description": "full (absent): complykit is the consent manager — banner, gate, signals. companion: the site keeps its own banner; complykit follows its choice and deletes the cookies of revoked categories.",
+      "type": "string",
+      "enum": [
+        "full",
+        "companion"
+      ]
+    },
+    "companion": {
+      "description": "Add-on mode: which banner to follow. Required when mode is companion.",
+      "type": "object",
+      "properties": {
+        "cmp": {
+          "type": "string",
+          "enum": [
+            "onetrust",
+            "cookiebot",
+            "usercentrics",
+            "didomi",
+            "trustarc",
+            "shopify",
+            "wordpress",
+            "tcf",
+            "consent-mode",
+            "manual"
+          ]
+        },
+        "map": {
+          "description": "The banner's purpose/group id → complykit category ids. Absent = the built-in map for that banner.",
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "description": "Category id, as used in data-category and the consent record.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$"
+            }
+          }
+        }
+      },
+      "required": [
+        "cmp"
+      ]
+    },
     "layout": {
       "default": "bar",
       "type": "string",

@@ -13,7 +13,7 @@
 // answer with a status are WorkspaceError (workspace.ts).
 
 import type { Readable } from 'node:stream';
-import type { JobDetail, SiteWorkspace } from '../../shared/api.js';
+import type { ConfigSnapshot, JobDetail, SiteWorkspace } from '../../shared/api.js';
 import type { ConsentRecord } from '../consent-records.js';
 
 // --- Blobs ------------------------------------------------------------------------
@@ -105,12 +105,39 @@ export interface ConsentRecordRecords {
   prune(cutoffMs: number): Promise<number>;
 }
 
+/** The configs the host has served, by hash (plans/hosted-script.md "Config snapshots"). Kept forever. */
+export interface ConfigSnapshotRecords {
+  /** Store the snapshot unless one with this hash exists (the first `firstServed` wins). */
+  put(snapshot: ConfigSnapshot): Promise<void>;
+  /** undefined = never served. */
+  get(hash: string): Promise<ConfigSnapshot | undefined>;
+}
+
+/** One (domain, day, config hash) document of banner counters (plans/hosted-script.md "Counters"). Counters only. */
+export interface ConsentStatsDoc {
+  domain: string;
+  /** UTC YYYY-MM-DD. */
+  day: string;
+  hash: string;
+  /** Flat counter map; keys contain letters, digits, `:`, `-`, `_` only. */
+  n: Record<string, number>;
+}
+
+export interface ConsentStatsRecords {
+  /** Add each doc's counts to the stored document for its (domain, day, hash), creating it when absent. */
+  add(docs: ConsentStatsDoc[]): Promise<void>;
+  /** Every document of the site with fromDay <= day <= toDay (UTC YYYY-MM-DD, inclusive), any order. */
+  read(domain: string, fromDay: string, toDay: string): Promise<ConsentStatsDoc[]>;
+}
+
 export interface Storage {
   readonly kind: 'fs' | 'cloud';
   blobs: Blobs;
   jobs: JobRecords;
   workspaces: WorkspaceRecords;
   consentRecords: ConsentRecordRecords;
+  configSnapshots: ConfigSnapshotRecords;
+  consentStats: ConsentStatsRecords;
   /** Close connections (shutdown, tests). */
   close(): Promise<void>;
 }

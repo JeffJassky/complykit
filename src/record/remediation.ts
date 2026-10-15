@@ -74,10 +74,14 @@ export const RemediationVerifySpec = z.discriminatedUnion('check', [
     check: z.literal('install'),
     method: z.literal('static'),
     page: z.string(),
-    /** sha-256 of the latest generated config: the deployed one must equal it. */
-    configHash: z.string(),
+    /** 'self': the owner hosts the two files and pastes the inline config. 'hosted': one script tag served by the complykit host (plans/hosted-script.md). Absent = 'self' (tasks stored before hosting). */
+    mode: z.enum(['self', 'hosted']).default('self'),
+    /** sha-256 of the latest generated config: the deployed one must equal it. Self mode only (required there). */
+    configHash: z.string().optional(),
+    /** Self: the core's src. Hosted: the full hosted script URL. */
     scriptSrc: z.string(),
-    elementId: z.string(),
+    /** Self mode only (required there). */
+    elementId: z.string().optional(),
   }),
   z.object({ check: z.literal('rewrite-tag'), method: z.literal('static'), page: z.string(), element: ElementSignature, category: z.string() }),
   z.object({ check: z.literal('remove-leak'), method: z.literal('static'), page: z.string(), element: ElementSignature }),
@@ -90,7 +94,14 @@ export const RemediationVerifySpec = z.discriminatedUnion('check', [
     tagId: z.number().int(),
     consentTypes: z.array(z.string()),
   }),
-  z.object({ check: z.literal('consent-default'), method: z.literal('static'), page: z.string(), consentTypes: z.array(z.string()) }),
+  z.object({
+    check: z.literal('consent-default'),
+    method: z.literal('static'),
+    page: z.string(),
+    consentTypes: z.array(z.string()),
+    /** Hosted mode: the hosted script URL (the core, and where the config is read from). */
+    scriptSrc: z.string().optional(),
+  }),
   z.object({
     check: z.literal('remove-existing-tool'),
     method: z.literal('static'),
@@ -160,6 +171,8 @@ export const RemediationTask = z.object({
   steps: z.array(z.string()),
   /** Steps whose wording depends on where the checklist is shown: `service` (the complykit service: its buttons) or `offline` (a report file / the CLI: its commands and folders). Each replaces steps[step] on that surface; steps[step] stays the neutral text for anything else. */
   stepVariants: z.array(z.object({ step: z.number().int().nonnegative(), service: z.string(), offline: z.string() })).optional(),
+  /** Install task, hosted: the steps when the owner picks add-on mode (plans/hosted-script.md "Add-on mode"); `steps` are the full-mode steps. */
+  companionSteps: z.array(z.string()).optional(),
   snippet: z.object({ before: z.string().optional(), after: z.string().optional() }).optional(),
   /** Pages the change applies to (the page it was seen on, then the others with the same tag). */
   pages: z.array(z.string()),

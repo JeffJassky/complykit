@@ -3,11 +3,11 @@
 
 import crypto from 'node:crypto';
 import { MongoClient, type Collection, type Db } from 'mongodb';
-import type { JobDetail, SiteWorkspace } from '../../shared/api.js';
+import type { ConfigSnapshot, JobDetail, SiteWorkspace } from '../../shared/api.js';
 import { MAX_FILE_BYTES, type ConsentRecord } from '../consent-records.js';
 import { siteDomain } from '../domains.js';
 import { WorkspaceError } from '../workspace.js';
-import type { ConsentRecordRecords, JobRecords, StoredWorkspace, WorkspaceRecords } from './types.js';
+import type { ConfigSnapshotRecords, ConsentRecordRecords, ConsentStatsDoc, ConsentStatsRecords, JobRecords, StoredWorkspace, WorkspaceRecords } from './types.js';
 
 type JobDoc = { _id: string } & Record<string, unknown>;
 interface WorkspaceDoc {
@@ -41,6 +41,8 @@ export interface MongoRecords {
   jobs: JobRecords;
   workspaces: WorkspaceRecords;
   consentRecords: ConsentRecordRecords;
+  configSnapshots: ConfigSnapshotRecords;
+  consentStats: ConsentStatsRecords;
   close(): Promise<void>;
   dropDatabase(): Promise<void>;
   corruptWorkspaceForTest(domain: string): Promise<void>;
@@ -54,6 +56,8 @@ export async function mongoRecords(opts: { url: string; db: string; consentMaxBy
   const wsC: Collection<WorkspaceDoc> = db.collection('workspaces');
   const recC: Collection<ConsentDoc> = db.collection('consentRecords');
   const totalsC: Collection<TotalsDoc> = db.collection('consentTotals');
+  const snapC: Collection<{ _id: string; domain: string; config: Record<string, unknown>; firstServed: string }> = db.collection('configSnapshots');
+  const statsC: Collection<{ _id: string; domain: string; day: string; hash: string; n?: Record<string, number> }> = db.collection('consentStats');
   const maxBytes = opts.consentMaxBytes ?? MAX_FILE_BYTES;
 
   await recC.createIndex({ domain: 1, seq: 1 }, { unique: true });
@@ -175,10 +179,44 @@ export async function mongoRecords(opts: { url: string; db: string; consentMaxBy
     },
   };
 
+  const configSnapshots: ConfigSnapshotRecords = {
+    async put(s) {
+      await snapC.updateOne({ _id: s.hash }, { $setOnInsert: { domain: s.domain, config: s.config, firstServed: s.firstServed } }, { upsert: true });
+    },
+    async get(hash) {
+      const d = await snapC.findOne({ _id: hash });
+      return d ? { hash: d._id, domain: d.domain, config: d.config, firstServed: d.firstServed } : undefined;
+    },
+  };
+
+  // One document per (domain, day, hash), _id `${domain}|${day}|${hash}`; counts are $inc upserts on `n.<key>`.
+  // Keys hold letters, digits, ':', '-' and '_' only, so a field name never has a '.' or '$'.
+  const consentStats: ConsentStatsRecords = {
+    async add(docs) {
+      const ops = [];
+      for (const d of docs) {
+        const inc: Record<string, number> = {};
+        for (const [k, v] of Object.entries(d.n)) if (/^[A-Za-z0-9:_-]+$/.test(k) && Number.isFinite(v)) inc[`n.${k}`] = v;
+        if (!Object.keys(inc).length) continue;
+        dom(d.domain);
+        ops.push({ updateOne: { filter: { _id: `${d.domain}|${d.day}|${d.hash}` }, update: { $inc: inc, $setOnInsert: { domain: d.domain, day: d.day, hash: d.hash } }, upsert: true } });
+      }
+      if (ops.length) await statsC.bulkWrite(ops, { ordered: false });
+    },
+    async read(domain, fromDay, toDay) {
+      dom(domain);
+      const out: ConsentStatsDoc[] = [];
+      for await (const d of statsC.find({ domain, day: { $gte: fromDay, $lte: toDay } })) out.push({ domain: d.domain, day: d.day, hash: d.hash, n: d.n ?? {} });
+      return out;
+    },
+  };
+
   return {
     jobs,
     workspaces,
     consentRecords,
+    configSnapshots,
+    consentStats,
     close: () => client.close(),
     dropDatabase: async () => void (await db.dropDatabase()),
     corruptWorkspaceForTest: async (domain) => void (await wsC.replaceOne({ _id: domain }, { ws: 'garbage', rev: 'x' }, { upsert: true })),

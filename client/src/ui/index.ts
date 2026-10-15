@@ -155,7 +155,7 @@ function build(): void {
 
   // Every choice goes through here. Reject after a choice that granted
   // something is a withdrawal (design §6: as easy as giving consent).
-  const choose = (kind: 'accept' | 'reject' | 'save', choice?: Record<string, boolean>): void => {
+  const choose = (kind: 'accept' | 'reject' | 'save', via: 'banner' | 'settings', choice?: Record<string, boolean>): void => {
     const s = getStore();
     if (!s) return;
     settings.close();
@@ -171,22 +171,27 @@ function build(): void {
       // Opt-out regimes: confirm the opt-out was processed (CCPA Regs §7026(g)).
       if (s.state().regime !== 'opt-in') status.textContent = t('optOut.confirmed');
     }
+    H.report?.({ t: 'decide', action: kind, via, categories: s.state().categories });
   };
 
   const banner = createBanner(config.layout, {
-    accept: () => choose('accept'),
-    reject: () => choose('reject'),
+    accept: () => choose('accept', 'banner'),
+    reject: () => choose('reject', 'banner'),
     manage: requestOpen,
   });
   const settings = createSettings(
     config,
-    { acceptAll: () => choose('accept'), rejectAll: () => choose('reject'), save: (c) => choose('save', c) },
+    { acceptAll: () => choose('accept', 'settings'), rejectAll: () => choose('reject', 'settings'), save: (c) => choose('save', 'settings', c) },
     () => choicesEl() ?? (banner.visible() ? (banner.el.querySelector('[data-ck-action=manage]') as HTMLElement) : undefined),
   );
 
   const openSettings = (): void => {
     const s = getStore();
-    if (s) settings.open(s.state().categories, H.opener ?? document.activeElement);
+    const from = H.opener;
+    if (s) {
+      if (!settings.isOpen()) H.report?.({ t: 'open', via: from && banner.el.contains(from) ? 'banner' : from === choices ? 'choices' : 'api' });
+      settings.open(s.state().categories, from ?? document.activeElement);
+    }
     H.opener = null;
   };
 
@@ -204,7 +209,10 @@ function build(): void {
       banner.refresh();
     }
     choices.hidden = need || position === 'none';
-    if (need) banner.show();
+    if (need) {
+      banner.show();
+      H.report?.({ t: 'shown' }); // the beacon keeps the first
+    }
     else banner.hide(choicesEl());
     block?.set(need);
   };

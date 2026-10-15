@@ -2,17 +2,20 @@ import { useEffect, useId, useState } from 'react';
 import type { LawId } from '../../shared/laws';
 import { orderLaws, scanBlockedReason } from '../lib/laws';
 import { AuthorizedBox, JobLaws, LawPicker } from './Laws';
-import type { JobSummary, RemediationStatus, RemediationTask, SiteSummary, SiteWorkspace, WorkspaceRun } from '../../shared/api';
+import type { ConsentSettings, ConsentStatsResponse, JobSummary, RemediationStatus, RemediationTask, SiteSummary, SiteWorkspace, WorkspaceRun } from '../../shared/api';
 import { formatAbsolute, formatRelative } from '../lib/format';
 import { api } from '../lib/api';
 import { notifyJobsChanged } from '../lib/useJobs';
 import { configDownloads, configStoredOf, generatableRuns, siteRuns, generateErrorText, REPORT_REFRESH_FAILED, summarizeWorkspace } from '../lib/sites';
 import { PHASE_LABEL } from '../lib/format';
-import { checklistFromWorkspace, checklistProgress, installZipHref, openDecisions, reportChecklistHref, reportTaskHref, taskStatusLabel, TASK_CHANGE_PREFIX } from '../lib/checklist';
+import { COMPANION_INSTALL_SUMMARY, checklistFromWorkspace, checklistProgress, hostedScriptUrlOf, installSnippet, openDecisions, reportChecklistHref, reportTaskHref, taskStatusLabel, TASK_CHANGE_PREFIX } from '../lib/checklist';
+import { COMPANION_LIST_NOTE, categoryIdsOf, consentSettingsOf, detectedCmpOf, settingsDefaultsOf } from '../lib/consentSettings';
+import { ConsentSettingsForm } from './ConsentSettingsForm';
 import { reportHref, siteHref } from '../lib/useHashView';
 import { useNow } from '../lib/useNow';
-import { useReviewer } from '../lib/useKb';
-import { useLiveRefresh, useSites, useSiteWorkspace } from '../lib/useSites';
+import { copyText, useReviewer } from '../lib/useKb';
+import { useLiveRefresh, useSites, useSiteStats, useSiteWorkspace } from '../lib/useSites';
+import { hasActivity, summarizeStats } from '../lib/stats';
 
 function When({ iso, now }: { iso: string | undefined; now: number }) {
   if (!iso) return <span className="muted">—</span>;
@@ -211,7 +214,26 @@ function DecisionItem({ task, tasks, report }: { task: RemediationTask; tasks: R
   );
 }
 
-function ChecklistItem({ task, tasks, domain, state, onVerify, onMarkDone }: { task: RemediationTask; tasks: RemediationTask[]; domain: string; state: ChecklistState; onVerify: (t: RemediationTask) => void; onMarkDone: (t: RemediationTask) => void }) {
+/** The install line with a Copy button: all a site owner pastes (first in <head>). */
+function InstallLine({ hostedScriptUrl, companion }: { hostedScriptUrl: string; companion?: boolean }) {
+  const text = installSnippet(hostedScriptUrl);
+  const [copied, setCopied] = useState<boolean | null>(null);
+  return (
+    <div className="checklist-snippet" data-testid="install-snippet">
+      <div className="site-downloads">
+        <span>{companion ? 'Paste in <head>' : 'Paste first in <head>'}</span>
+        <button type="button" className="btn btn-sm btn-secondary" onClick={() => void copyText(text).then(setCopied)}>
+          {copied === true ? 'Copied ✓' : copied === false ? 'Copy failed' : 'Copy'}
+        </button>
+      </div>
+      <pre>
+        <code>{text}</code>
+      </pre>
+    </div>
+  );
+}
+
+function ChecklistItem({ task, tasks, hostedScriptUrl, state, onVerify, onMarkDone, workspace, onSaveSettings }: { task: RemediationTask; tasks: RemediationTask[]; hostedScriptUrl?: string; state: ChecklistState; onVerify: (t: RemediationTask) => void; onMarkDone: (t: RemediationTask) => void; workspace?: SiteWorkspace; onSaveSettings?: (s: ConsentSettings) => Promise<void> }) {
   const busy = state.verifying === task.id;
   const error = state.errors?.[task.id];
   const waiting = openDecisions(task, tasks);
@@ -221,7 +243,7 @@ function ChecklistItem({ task, tasks, domain, state, onVerify, onMarkDone }: { t
         <strong className="checklist-title">{task.title}</strong>
         <span className={`pill ${STATUS_PILL[task.status]}`}>{taskStatusLabel(task)}</span>
       </div>
-      <p className="muted">{task.summary}</p>
+      <p className="muted">{task.kind === 'install' && workspace && consentSettingsOf(workspace).mode === 'companion' ? COMPANION_INSTALL_SUMMARY : task.summary}</p>
       {waiting.length ? (
         <p className="checklist-waiting" data-testid="waiting-on">
           <strong>Waiting on:</strong> your decision on what {waiting.map((d) => d.tools[0] ?? d.title).join(', ')} {waiting.length === 1 ? 'is' : 'are'} (above). This change applies only if {waiting.length === 1 ? 'it tracks' : 'they track'} visitors.
@@ -254,12 +276,26 @@ function ChecklistItem({ task, tasks, domain, state, onVerify, onMarkDone }: { t
         ) : (
           <span className="muted">Can’t be checked automatically — mark it done when it’s made.</span>
         )}
-        {task.kind === 'install' ? (
-          <a className="btn btn-sm btn-secondary" href={installZipHref(domain)} download>
-            Download install bundle (.zip)
-          </a>
-        ) : null}
       </div>}
+      {task.kind === 'install' && workspace && consentSettingsOf(workspace).mode === 'companion' && task.companionSteps?.length ? (
+        <ol className="checklist-steps" data-testid="companion-steps">
+          {task.companionSteps.map((s, i) => (
+            <li key={i}>{s}</li>
+          ))}
+        </ol>
+      ) : null}
+      {task.kind === 'install' && hostedScriptUrl ? <InstallLine hostedScriptUrl={hostedScriptUrl} companion={!!workspace && consentSettingsOf(workspace).mode === 'companion'} /> : null}
+      {task.kind === 'install' && workspace && onSaveSettings ? (
+        <ConsentSettingsForm
+          // The form restarts from what is stored whenever that changes.
+          key={JSON.stringify(consentSettingsOf(workspace))}
+          settings={consentSettingsOf(workspace)}
+          defaults={settingsDefaultsOf(workspace)}
+          detectedCmp={detectedCmpOf(workspace)}
+          categoryIds={categoryIdsOf(workspace)}
+          onSave={onSaveSettings}
+        />
+      ) : null}
       {busy ? (
         <p className="muted" role="status">
           Checking the live page… a browser check can take up to a minute.
@@ -430,9 +466,11 @@ export function ChecklistPanel({
   onMarkDone = () => {},
   rescan,
   onRescan,
+  onSaveSettings,
 }: {
   workspace: SiteWorkspace;
   jobs: Record<string, JobSummary> | null;
+  onSaveSettings?: (s: ConsentSettings) => Promise<void>;
   state?: ChecklistState;
   onVerify?: (t: RemediationTask) => void;
   onMarkDone?: (t: RemediationTask) => void;
@@ -446,7 +484,7 @@ export function ChecklistPanel({
   const required = tasks.filter((t) => !t.optional);
   const later = tasks.filter((t) => t.optional);
   const item = (t: RemediationTask) =>
-    t.kind === 'classify' ? <DecisionItem key={t.id} task={t} tasks={tasks} report={report} /> : <ChecklistItem key={t.id} task={t} tasks={tasks} domain={workspace.domain} state={state} onVerify={onVerify} onMarkDone={onMarkDone} />;
+    t.kind === 'classify' ? <DecisionItem key={t.id} task={t} tasks={tasks} report={report} /> : <ChecklistItem key={t.id} task={t} tasks={tasks} hostedScriptUrl={hostedScriptUrlOf(workspace)} state={state} onVerify={onVerify} onMarkDone={onMarkDone} workspace={workspace} onSaveSettings={onSaveSettings} />;
   return (
     <section className="panel" aria-labelledby="site-checklist">
       <h2 id="site-checklist" className="section-title">
@@ -462,6 +500,11 @@ export function ChecklistPanel({
             {p.doneUnverified ? ` · ${p.doneUnverified} more marked done, not verified yet` : ''}
             {p.failed ? ` · ${p.failed} failed` : ''}
           </p>
+          {consentSettingsOf(workspace).mode === 'companion' ? (
+            <p className="hint" data-testid="companion-note">
+              {COMPANION_LIST_NOTE}
+            </p>
+          ) : null}
           {report ? (
             <p>
               <a href={report}>Open the to-do list in the report</a> for the steps, the markup to paste and the classify controls.
@@ -492,6 +535,67 @@ export function ChecklistPanel({
   );
 }
 
+/** Banner analytics per config version: counters from visitors' browsers, never individuals. */
+export function BannerStatsPanel({ stats, error }: { stats?: ConsentStatsResponse | null; error?: string | null }) {
+  const versions = (stats?.configs ?? []).map((c) => ({ config: c, summary: summarizeStats(c) })).filter((v) => hasActivity(v.summary));
+  return (
+    <section className="panel" aria-labelledby="site-banner-stats" data-testid="banner-stats">
+      <h2 id="site-banner-stats" className="section-title">
+        Banner stats
+      </h2>
+      {error ? (
+        <p className="muted" role="alert">
+          Couldn’t load banner stats: {error}
+        </p>
+      ) : !stats ? (
+        <p className="muted">Loading…</p>
+      ) : !versions.length ? (
+        <p className="muted" data-testid="banner-stats-empty">
+          No visitor data yet: counts appear once visitors load a page that carries the hosted script.
+        </p>
+      ) : (
+        <>
+          <p className="muted">
+            Last 30 days ({stats.from} to {stats.to}, UTC), per config version, newest first. Counts only: no visitor is identified.
+          </p>
+          {versions.map(({ config, summary: s }) => (
+            <div key={config.hash} className="banner-stats-version" data-testid="banner-stats-version" data-hash={config.hash}>
+              <h3 className="section-subtitle">
+                Config <span className="mono">{config.hash.slice(0, 12)}</span>
+                {config.firstServed ? <span className="muted"> · first served {config.firstServed.slice(0, 10)}</span> : null}
+              </h3>
+              <dl className="kb-facts">
+                <div className="fact">
+                  <dt>Page loads</dt>
+                  <dd data-testid="stats-loads">{s.loads}</dd>
+                </div>
+                <div className="fact">
+                  <dt>Banner shown</dt>
+                  <dd data-testid="stats-shown">{s.shown}</dd>
+                </div>
+                <div className="fact">
+                  <dt>Decisions</dt>
+                  <dd data-testid="stats-decisions">
+                    {s.decisions ? `${s.percent.accept}% accept · ${s.percent.reject}% reject · ${s.percent.custom}% custom (of ${s.decisions})` : <span className="muted">none yet</span>}
+                  </dd>
+                </div>
+                <div className="fact">
+                  <dt>Most common time to decide</dt>
+                  <dd data-testid="stats-ttd">{s.commonTtd ?? <span className="muted">no timed decisions</span>}</dd>
+                </div>
+                <div className="fact">
+                  <dt>Top regions</dt>
+                  <dd data-testid="stats-regions">{s.regions.length ? s.regions.map((r) => `${r.label} (${r.loads})`).join(', ') : <span className="muted">none</span>}</dd>
+                </div>
+              </dl>
+            </div>
+          ))}
+        </>
+      )}
+    </section>
+  );
+}
+
 export function SitePageView({
   workspace,
   jobs,
@@ -504,10 +608,17 @@ export function SitePageView({
   onMarkDone,
   rescan,
   onRescan,
+  onSaveSettings,
+  stats,
+  statsError,
 }: {
+  /** Banner stats (undefined = the panel isn't wired, e.g. a static render). */
+  stats?: ConsentStatsResponse | null;
+  statsError?: string | null;
   workspace: SiteWorkspace;
   jobs: Record<string, JobSummary> | null;
   now: number;
+  onSaveSettings?: (s: ConsentSettings) => Promise<void>;
   generate?: GenerateState;
   onGenerate?: (run: WorkspaceRun) => void;
   /** Retry the report re-render after a generate whose report step failed. */
@@ -580,7 +691,7 @@ export function SitePageView({
         </dl>
       </section>
 
-      <ChecklistPanel workspace={workspace} jobs={jobs} state={checklist} onVerify={onVerify} onMarkDone={onMarkDone} rescan={rescan} onRescan={onRescan} />
+      <ChecklistPanel workspace={workspace} jobs={jobs} state={checklist} onVerify={onVerify} onMarkDone={onMarkDone} rescan={rescan} onRescan={onRescan} onSaveSettings={onSaveSettings} />
 
       <section className="panel" aria-labelledby="site-config">
         <h2 id="site-config" className="section-title">
@@ -639,6 +750,8 @@ export function SitePageView({
         ) : null}
       </section>
 
+      {stats !== undefined || statsError ? <BannerStatsPanel stats={stats} error={statsError} /> : null}
+
       <section className="panel" aria-labelledby="site-runs">
         <h2 id="site-runs" className="section-title">
           Runs
@@ -674,6 +787,7 @@ export function SitePageView({
 
 export function SitePage({ domain, jobs }: { domain: string; jobs: Record<string, JobSummary> | null }) {
   const { data, error, refresh } = useSiteWorkspace(domain);
+  const { data: stats, error: statsError } = useSiteStats(domain);
   // The checklist changes elsewhere too (a Verify in the report, the API, another tab):
   // re-read on focus / visibility and every 30 s while visible.
   useLiveRefresh(refresh);
@@ -754,6 +868,10 @@ export function SitePage({ domain, jobs }: { domain: string; jobs: Record<string
       setChecklist((c) => ({ ...c, saving: undefined }));
     }
   };
+  const onSaveSettings = async (settings: ConsentSettings) => {
+    await api.saveConsentSettings(domain, settings);
+    await refresh();
+  };
   return (
     <>
       {error ? (
@@ -761,7 +879,7 @@ export function SitePage({ domain, jobs }: { domain: string; jobs: Record<string
           Couldn’t load {domain}: {error}
         </div>
       ) : null}
-      {data ? <SitePageView workspace={data} jobs={jobs} now={now} generate={generate} onGenerate={onGenerate} onUpdateReport={onUpdateReport} checklist={checklist} onVerify={onVerify} onMarkDone={onMarkDone} rescan={rescan} onRescan={onRescan} /> : error ? null : <div className="skeleton" aria-busy="true" aria-label="Loading site"><div className="skeleton-card" /></div>}
+      {data ? <SitePageView workspace={data} jobs={jobs} now={now} generate={generate} onGenerate={onGenerate} onUpdateReport={onUpdateReport} checklist={checklist} onVerify={onVerify} onMarkDone={onMarkDone} rescan={rescan} onRescan={onRescan} onSaveSettings={onSaveSettings} stats={stats} statsError={statsError} /> : error ? null : <div className="skeleton" aria-busy="true" aria-label="Loading site"><div className="skeleton-card" /></div>}
     </>
   );
 }

@@ -216,3 +216,51 @@ describe('redaction', () => {
     expect(e.request.postData.text).toMatch(/redacted/);
   });
 });
+
+describe('the complykit host is the site’s own consent tool (plans/hosted-script.md, B4)', () => {
+  const PLACES = {
+    de: { id: 'de', country: 'DE', jurisdictions: ['eu', 'eu-de'] },
+    ca: { id: 'us-ca', country: 'US', region: 'CA', jurisdictions: ['us', 'us-ca'] },
+  } as const;
+  const req = (id: string, url: string, method = 'GET') => ({
+    type: 'request', t: 500, id, url, method, resourceType: 'script', origin: 'page', pageUrl: 'https://example-shop.test/', pageIndex: 0,
+    initiator: { type: 'parser', chain: [] }, status: 200, setCookies: [],
+  });
+  const artifact = (place: keyof typeof PLACES, urls: string[]) => {
+    const p = PLACES[place] as { id: string; country: string; region?: string; jurisdictions: readonly string[] };
+    return {
+      kind: 'consent-timeline',
+      subject: { property: 'shop', routePattern: '*', instanceUrl: 'https://example-shop.test/' },
+      capturedAt: '2026-10-08T00:00:00.000Z',
+      scenario: 'browse',
+      location: { id: p.id, label: p.id, country: p.country, ...(p.region ? { region: p.region } : {}) },
+      verification: { verdict: 'verified', expected: { country: p.country }, observed: { country: p.country, region: p.region }, sources: [], siteReported: [], jurisdictions: p.jurisdictions, checkedAt: '2026-10-08T00:00:00.000Z' },
+      events: urls.map((u, i) => req(`r${i}`, u, u.includes('/e') || u.includes('/api/') ? 'POST' : 'GET')),
+      snapshot: {
+        site: { url: 'https://example-shop.test/', host: 'example-shop.test', registrableDomain: 'example-shop.test' },
+        scenario: 'browse', locationId: p.id, startedAt: '2026-10-08T00:00:00.000Z', durationMs: 3000, gpc: false,
+        browser: { name: 'chromium' }, pages: [{ url: 'https://example-shop.test/' }], cookies: [], storage: [], frames: [], dns: [], notTested: [], evidence: {},
+      },
+    } as never;
+  };
+  const findings = (art: unknown) => {
+    const out: Array<{ rule: string; text: string }> = [];
+    for (const rule of tracking.TRACKING_RULES) {
+      for (const f of rule.evaluate({ 'consent-timeline': [art] } as never, { property: 'shop' })) out.push({ rule: String(rule.id), text: JSON.stringify(f.details ?? '') + String(f.message) });
+    }
+    return out;
+  };
+  const host = DEFAULT_KB.entries.find((e) => e.id === 'consent.complykit')!.match.hosts![0];
+
+  it('script, beacon and record requests before any choice produce no tracking finding, in the EU or in a wiretap state', () => {
+    const urls = [`https://${host}/s/example-shop.test.js`, `https://${host}/e`, `https://${host}/api/consent-records`];
+    for (const place of ['de', 'ca'] as const) expect(findings(artifact(place, urls)), place).toEqual([]);
+  });
+
+  it('control: a real ad pixel in the same harness is still found', () => {
+    const urls = [`https://${host}/s/example-shop.test.js`, 'https://www.facebook.com/tr/?id=1&ev=PageView&dl=https%3A%2F%2Fexample-shop.test%2F'];
+    const out = findings(artifact('de', urls));
+    expect(out.length).toBeGreaterThan(0);
+    expect(out.every((f) => !f.text.includes(host))).toBe(true);
+  });
+});

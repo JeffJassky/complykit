@@ -55,14 +55,14 @@ describe('POST /api/jobs/:id/rerender', () => {
     const s = await startService();
     const first = await scan(s, 'shop.example.com');
     const second = await scan(s, 'www.example.com');
-    await request(s.app).post(`/api/jobs/${second}/consent-config`).send({ by: 'Ann', recordEndpoint: '/consent-record' }).expect(200);
+    await request(s.app).post(`/api/jobs/${second}/consent-config`).send({ by: 'Ann' }).expect(200);
     await request(s.app).patch('/api/sites/example.com/workspace').send({ entries: { 'class:tool-1': { value: { category: 'advertising', categoryChosen: true } }, 'class:tool-2': { value: { category: 'analytics', categoryChosen: true } } } }).expect(200);
 
     const body = (await request(s.app).post(`/api/jobs/${second}/rerender`).send({ by: 'Bo' }).expect(200)).body as RerenderResponse;
     expect(body.config).toEqual({ regenerated: true, stale: false });
     const ws = (await request(s.app).get('/api/sites/example.com/workspace').expect(200)).body as SiteWorkspace;
     expect(ws.config).toMatchObject({ by: 'Bo', runId: s.store.get(second)!.result!.consent!.runId });
-    expect((ws.config!.value as { config: { classified: number; record?: { endpoint: string } } }).config).toMatchObject({ classified: 2, record: { endpoint: '/consent-record' } });
+    expect((ws.config!.value as { config: { classified: number; record?: { endpoint: string } } }).config).toMatchObject({ classified: 2, record: { endpoint: 'http://localhost:8080/api/consent-records' } });
 
     const firstRun = path.join(s.store.jobDir(first), 'consent', '.comply', 'runs', s.store.get(first)!.result!.consent!.runId);
     const argv = calls(s, second).at(-1)!;

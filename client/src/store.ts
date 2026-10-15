@@ -225,6 +225,8 @@ export function parseStored(raw: string | undefined): StoredConsent | undefined 
 export function createStore(config: ConsentToolConfig, regime: Regime, opts: StoreOptions = {}): ConsentStore {
   const now = opts.now ?? Date.now;
   const ids = config.categories.map((c) => c.id);
+  // Add-on mode (T6): the site's banner owns the choice and its proof; we keep it in memory only (no cookie, mirror or record).
+  const persist = config.mode !== 'companion';
   const { ttlMs, cookieDomain } = consentSettings(config);
   const forget = (): void => {
     clearCookie(cookieDomain);
@@ -243,6 +245,7 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
 
   /** Decide the state from what is stored. Clears storage that no longer counts. */
   const load = (): ConsentState => {
+    if (!persist) return unset('none');
     const fromCookie = readCookie();
     const fromMirror = readMirror();
     const c = parseStored(fromCookie);
@@ -307,9 +310,11 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
     for (const id of ids) categories[id] = isNecessaryCategory(id) || choice[id] === true;
     const stored: StoredConsent = { v: 1, id: randomId(), at: new Date(now()).toISOString(), configHash: config.hash, regime, gpc, categories };
     const json = JSON.stringify(stored);
-    writeCookie(json, Math.floor(ttlMs / 1000), cookieDomain);
-    writeMirror(json);
-    if (config.record?.endpoint) {
+    if (persist) {
+      writeCookie(json, Math.floor(ttlMs / 1000), cookieDomain);
+      writeMirror(json);
+    }
+    if (persist && config.record?.endpoint) {
       const body = buildRecord(stored, opts.toolVersion ?? '0.0.0');
       try {
         (opts.send ?? sendRecord)(config.record.endpoint, body);

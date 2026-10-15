@@ -22,6 +22,7 @@ import { CONSENT_CONFIG_ELEMENT_ID, guardConsentToolConfig, type ConsentToolConf
 import { createStore, type ConsentState, type ConsentStore, type Listener, type StoreEvent, type StoreOptions } from './store.js';
 import { TOOL_VERSION } from './version.js';
 import { resolveLocation } from './location.js';
+import { report } from './events.js';
 
 let store: ConsentStore | undefined;
 let config: ConsentToolConfig | undefined;
@@ -125,4 +126,18 @@ export function open(): void {
 
 export function withdraw(): ConsentState | null {
   return store ? store.withdraw() : null;
+}
+
+/**
+ * Add-on mode: set the store from the site's own banner choice (`{ categoryId: granted }`; a category left
+ * out keeps its current value). A change of grants is reported as a decision `via: 'cmp'`, unless `initial` (the
+ * first state learned from the banner on a page is applied, not a decision). Returns null (and does
+ * nothing) when the tool is not running in add-on mode: in full mode the visitor's choice is complykit's own.
+ */
+export function sync(choice: Record<string, boolean>, initial?: boolean): ConsentState | null {
+  if (!store || config?.mode !== 'companion') return null;
+  const before = store.state().categories;
+  const s = store.set({ ...before, ...choice });
+  if (!initial && Object.keys(before).some((k) => before[k] !== s.categories[k])) report({ t: 'decide', action: 'save', via: 'cmp', categories: s.categories });
+  return s;
 }

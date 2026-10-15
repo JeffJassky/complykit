@@ -1,3 +1,4 @@
+import { consentSettingsOf } from './consentSettings';
 import { classificationDecided, type JobSummary, type RemediationStatus, type RemediationTask, type RemediationTaskValue, type SiteWorkspace } from '../../shared/api';
 
 // The site page's checklist (R3): the latest generated config's tasks
@@ -30,7 +31,9 @@ export function readTaskValue(value: unknown): RemediationTaskValue | undefined 
 export function checklistFromWorkspace(ws: SiteWorkspace): RemediationTask[] {
   const value = ws.config?.value;
   const raw = isObject(value) && Array.isArray(value.tasks) ? (value.tasks as unknown[]) : [];
-  const tasks = raw.filter((t): t is RemediationTask => isObject(t) && typeof t.id === 'string' && typeof t.title === 'string' && isObject(t.verify));
+  // Add-on mode keeps the site's banner: nothing to remove (the service hides these too).
+  const companion = consentSettingsOf(ws).mode === 'companion';
+  const tasks = raw.filter((t): t is RemediationTask => isObject(t) && typeof t.id === 'string' && typeof t.title === 'string' && isObject(t.verify) && !(companion && t.kind === 'remove-existing-tool'));
   return tasks
     .map((t) => {
       // A decision: decided when the workspace holds a purpose for the tool (its class: entry), nothing else.
@@ -86,4 +89,14 @@ export function reportChecklistHref(ws: SiteWorkspace, jobs: Record<string, JobS
 /** A task's card in the report (consent-remediation.ts taskAnchor). */
 export const reportTaskHref = (checklistHref: string, id: string): string => checklistHref.replace(/#.*$/, '') + '#task-' + id.replace(/[^a-zA-Z0-9_-]/g, '-');
 
-export const installZipHref = (domain: string): string => `/api/sites/${encodeURIComponent(domain)}/install.zip`;
+/** The one line a site owner pastes first in <head>: the hosted script (plans/hosted-script.md "Paste snippet"). */
+export const installSnippet = (hostedScriptUrl: string): string => `<script src="${hostedScriptUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}" referrerpolicy="no-referrer"></script>`;
+
+/** The hosted script URL stored with the site's generated config, when there is one. */
+export function hostedScriptUrlOf(ws: SiteWorkspace): string | undefined {
+  const v = ws.config?.value as { hostedScriptUrl?: unknown } | null | undefined;
+  return typeof v?.hostedScriptUrl === 'string' && v.hostedScriptUrl ? v.hostedScriptUrl : undefined;
+}
+
+/** The install task's summary in add-on mode (the task's own summary is the full-mode text). */
+export const COMPANION_INSTALL_SUMMARY = 'One line in <head>. Your banner keeps the choice; complykit deletes the cookies of whatever the visitor withdraws.';

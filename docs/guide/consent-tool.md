@@ -1,9 +1,10 @@
 # Installing the consent tool
 
-This is the whole install, start to finish, for a developer working without us. The
-consent tool is two small JavaScript files plus a block of JSON that you generate
-from a scan of your own site. You put them first in `<head>`, make the changes the
-scan listed, and rescan to check that it worked.
+This is the install, start to finish. You paste one line first in `<head>`, make the
+changes the scan listed, and rescan to check that it worked. The tool and your settings
+are served from the complykit host, so a settings change reaches your site without you
+touching the page again. If you would rather host everything yourself, see
+[Self-hosting](#_9-self-hosting).
 
 ::: warning Status
 The tool is built and tested, and the steps below were exercised on local copies of
@@ -21,119 +22,169 @@ install](./remediation.md).
 
 The steps, in order:
 
-1. [What you get](#_1-what-you-get)
-2. [Generate the config, snippet and change list](#_2-generate-the-config-snippet-and-change-list)
-3. [Paste the snippet first in `<head>`](#_3-paste-the-snippet-first-in-head)
-4. [Apply the change list](#_4-apply-the-change-list)
-5. [Script attributes](#_5-script-attributes)
-6. [Look and words](#_6-look-and-words)
-7. [Location and regime](#_7-location-and-regime)
-8. [Consent records](#_8-consent-records)
-9. [Verify by rescan](#_9-verify-by-rescan)
+1. [Paste the line first in `<head>`](#_1-paste-the-line-first-in-head)
+2. [Choose your settings](#_2-choose-your-settings)
+3. [Apply the change list](#_3-apply-the-change-list)
+4. [Script attributes](#_4-script-attributes)
+5. [Look and words](#_5-look-and-words)
+6. [Location and regime](#_6-location-and-regime)
+7. [Consent records](#_7-consent-records)
+8. [Verify by rescan](#_8-verify-by-rescan)
+9. [Self-hosting](#_9-self-hosting) (for CLI users who want no request to us)
 
-## 1. What you get
+## 1. Paste the line first in `<head>`
 
-Two files, built from `client/` in this repository (`cd client && npm run build`; the
-output is in `client/dist/`):
-
-| File | What it does | Size budget (gzip) |
-|---|---|---|
-| `complykit-consent.js` | The core: consent store, script gate, vendor adapters, Google Tag Manager bridge, location, platform bridges, the `ComplyKit` API. Blocking, first in `<head>`. | 15 KB |
-| `complykit-consent-ui.js` | The banner, the settings layer and the Privacy choices control. Loaded by the core, asynchronously. | 12 KB |
-
-(`client/dist/` also has an ES-module build and a source map for bundlers. The snippet
-uses the two plain files.)
-
-Put both in **one folder** on your own domain, under a versioned path. The generator's
-default is `/complykit/v1/`, so the snippet loads `/complykit/v1/complykit-consent.js`
-and the core finds `complykit-consent-ui.js` next to it. The `v1` is the config schema
-major version: a 1.x config keeps a 1.x tool until you reinstall from a new scan
-([Versioning](./config.md#versioning-and-migration)).
-
-**Why self-hosted.** A request to a third party before the visitor has chosen is
-exactly the thing the scan reports as a finding. The tool and its config therefore
-make no network request of their own before consent: the config is in the page, the
-script is on your origin, and nothing is fetched from us at runtime. Do not put the
-files on a public CDN.
-
-**Distribution.** There is no npm package yet, and none is published. Until there is,
-you copy the two files out of a build of this repository into your own static assets.
-The `client` package is private. The files are plain browser scripts with no
-dependencies.
-
-## 2. Generate the config, snippet and change list
-
-Run a consent scan of your site first ([Consent & tracking by location](./consent.md)).
-It records which tools load, how, and what ran with consent denied. Then generate
-the install material from that run.
-
-**CLI.**
-
-```sh
-complykit consent --url https://www.example-shop.test
-complykit consent-config .comply/runs/<run-id>
-```
-
-`consent-config <run-dir>` writes four files to `<run-dir>/consent-config/`:
-
-| File | What it is |
-|---|---|
-| `complykit-config.json` | The config: categories, vendors, gate rules, GTM, platform, location source. Validated against the schema and hashed. |
-| `snippet.html` | What to paste in `<head>` (step 3), followed by each tag to rewrite as before and after markup. |
-| `change-list.md` | The same change list as the report: everything in step 4. |
-| `generator-notes.md` | What the generator refused or could not decide, and what to check before deploying. **Read this before you deploy.** |
-
-Useful options: `--workspace <file>` (your classifications override the scan's),
-`--script-src <path>` (where you will host the files, if not `/complykit/v1/`),
-`--privacy-policy <url>`, `--record-endpoint <path>`, and `--regime-source`
-(`meta`, `platform`, `fixed:opt-in`, or `header:<header>:<path>`). Full option list:
-`complykit consent-config --help`, and [How the generator decides](./config.md#generating-it).
-
-**The service.** If you run the complykit service, `POST /api/jobs/<id>/consent-config`
-does the same for a finished consent job, using the site's workspace, and stores the
-result as the site's latest config. The Sites page then offers the config, the snippet
-and the change list as downloads. On a site's page in the service UI, press **Generate
-consent tool config** next to a finished consent run (the primary button uses the latest
-run); the downloads appear when it finishes. The endpoint's body is optional: `by`, `scriptSrc`,
-`recordEndpoint` (a path, or `true` for this service's own endpoint),
-`privacyPolicyUrl`.
-
-The config's fields are listed in [Config reference](/reference/config-schema) and
-explained in [Consent tool config](./config.md). You should not need to hand-edit it;
-if you do, the hash will no longer match and the rescan will say so.
-
-## 3. Paste the snippet first in `<head>`
-
-`snippet.html` starts with this block (the JSON is your generated config):
+The install task in the service gives you one line, with your site's address in it:
 
 ```html
-<script type="application/json" id="complykit-config">{ "version": "1.0", … }</script>
-<script src="/complykit/v1/complykit-consent.js"></script>
+<script src="https://<complykit host>/s/example.com.js" referrerpolicy="no-referrer"></script>
 ```
 
-Both elements go **first in `<head>`**, as the first things after `<meta charset>`:
+That one file is the consent tool **and** your settings (categories, vendors, gate
+rules, words). Its address never changes: a new config or a new tool version reaches
+your visitors through the same line.
+
+Put it **first in `<head>`**, right after `<meta charset>`:
 
 - **Above Google Tag Manager** and every other script or tag. The tool sets Consent
   Mode defaults and starts holding tags only from the point it runs. Anything above it
   can run before it does.
 - **Blocking.** No `async`, no `defer`, no `type="module"`. A deferred tool is a late
-  tool.
+  tool. (In [add-on mode](#add-on-mode) the line may be `async` and need not be first.)
+- **Keep `referrerpolicy="no-referrer"`.** It stops the browser telling our host which
+  page the visitor is on. Verify passes without it but tells you to add it.
 - **Not inside a performance plugin's reach.** Page optimizers that combine, delay or
-  defer JavaScript can reorder or wrap the tool. Exclude both elements from them. If
-  an optimizer delays the tool, it also delays the thing that holds everything else
-  back.
+  defer JavaScript can reorder or wrap the tool. Exclude the line from them. If an
+  optimizer delays the tool, it also delays the thing that holds everything else back.
+- **Once.** If an earlier install left an inline `<script id="complykit-config">` or a
+  self-hosted `complykit-consent.js` on the page, remove it. Two copies of the tool
+  fight over the same choice, and Verify fails when it sees both.
+
+**Content Security Policy.** If your site sends a CSP, `script-src` must allow the
+complykit host (the origin in the line above), or the browser refuses the script and
+the tool does nothing. If you use the banner beacon or consent records, `connect-src`
+needs the same origin. The banner file and the add-on file come from that host too.
 
 Server-rendered pages: put it in the shared layout, so it covers every template.
 Several layouts (a checkout, a password page, a landing-page builder): each layout
 with its own `<head>` needs it. Platform sites have their own place to paste it; see
 [platform bridges](#platform-bridges) below.
 
-If the tool loads but the config is missing, malformed, or from a newer major version,
-the tool does nothing and gated scripts stay inert. That fails closed, but it also
-means a broken snippet looks like "the site stopped tracking". The rescan reports it
-([Verify](#_9-verify-by-rescan)).
+If the script cannot be loaded, or the config is missing, malformed, or from a newer
+major version, the tool does nothing and gated scripts stay inert. That fails closed,
+but it also means a broken line looks like "the site stopped tracking". The rescan
+reports it ([Verify](#_8-verify-by-rescan)).
 
-## 4. Apply the change list
+### What hosting it means
+
+Every page view loads a file from our host, **before the visitor has chosen anything**.
+That is the trade, and you should know it before you paste the line.
+
+- The request reaches us with what any request carries: the visitor's IP address and
+  browser headers. We do not log the IP, do not set or read a cookie on this host, and
+  the line tells the browser not to send the page address. You are relying on us doing
+  that. Self-hosting needs no such trust.
+- We control code that runs on your pages. A bad release from us would run on your
+  site. The file is a plain script with no dependencies, and its address is fixed.
+- If our host is down, a CDN in front of it (when switched on) keeps serving the last
+  copy. Browsers cache the file for about a minute.
+- The scanner treats the complykit host as your consent tool, not as a tracker, so its
+  request is not a finding. That is a statement about what the file is for. It does not
+  mean the request does not happen.
+
+The precautions we hold ourselves to, in plain words:
+
+1. The script and the beacon endpoints never set or read a cookie.
+2. We never write a visitor IP anywhere: not in logs, not in records, not in counters.
+   (An in-memory rate limit by IP is allowed; it is never saved.)
+3. The banner beacon stores counters only. There is no table of individual events, and
+   the request body is never logged.
+4. The beacon carries no page address, path, query, referrer, title or user agent, and
+   nothing the visitor typed.
+5. It carries no identifier: no visitor id, no session id, none of the inputs used to
+   fingerprint a browser (screen size, language, timezone). The one measured number is
+   how long the visitor took to choose.
+6. Region comes only from the CDN's country and region headers, and only when that is
+   switched on. Otherwise it is "unknown". We never work it out from the IP ourselves.
+7. The paste line carries `referrerpolicy="no-referrer"`.
+8. The beacon is sent when the page is hidden or closed, never on a timer, and without
+   cookies.
+
+Exactly what is sent and stored: [Banner analytics](./analytics.md).
+
+## 2. Choose your settings
+
+The install task in the service has a short form. Saving it changes the served config
+for your site. It reaches visitors within about a minute, with no change to your page.
+
+The main setting is the **mode**.
+
+**Full (the default).** complykit is your whole consent manager: the banner, the
+settings layer, the script gate, the Google Consent Mode signals, the vendor signals,
+the platform bridges and the consent record. Then:
+
+| Setting | Values | Effect |
+|---|---|---|
+| Layout | bar, box, modal | Shape of the banner ([theme and layout](./config.md#theme-and-layout)) |
+| Block the page | on / off | Blocks the page until a choice is made, in any layout |
+| Privacy policy link | an `https` URL | Linked from the banner and the settings layer |
+
+If the site already runs a banner, remove it ([below](#remove-the-existing-consent-tool)).
+
+### Add-on mode
+
+**Add-on.** You keep your existing banner. complykit shows none of its own. It reads
+the banner's choice, treats that as the visitor's choice, and **deletes the cookies of
+whatever the visitor withdraws**. On load it also cleans up after any category the
+banner already reports as denied. The banner stays in charge of asking; complykit adds
+the part many banners lack, which is cleaning up after a withdrawal.
+
+Pick which banner to follow. The scan tells us which one it saw and the form
+preselects it.
+
+| Banner | How complykit reads it | Maps to |
+|---|---|---|
+| OneTrust | active groups; the group-change event | C0002 analytics, C0003 functional, C0004 and C0005 advertising |
+| Cookiebot | `Cookiebot.consent`; its accept and decline events | statistics analytics, marketing advertising, preferences functional |
+| Usercentrics | its UI API and events | by category: functional, and marketing as advertising and analytics |
+| Didomi | the current user status; `consent.changed` | measurement and analytics purposes as analytics, advertising and personalised as advertising |
+| TrustArc | its consent decision call and messages | level 2 functional, level 3 advertising and analytics |
+| Shopify | Customer Privacy API | analytics, marketing as advertising, preferences as functional |
+| WordPress | WP Consent API | statistics as analytics, marketing as advertising, preferences as functional |
+| IAB TCF | a `__tcfapi` listener | purposes 7, 8, 9 analytics; 2, 3, 4 advertising |
+| Google Consent Mode | `consent` `default` and `update` pushes on `dataLayer` | `analytics_storage` analytics, `ad_storage` advertising |
+| Manual | `ComplyKit.sync()`, called by your own code | as you pass it |
+
+`necessary` is always on. A banner category the table does not cover is ignored, and
+so is a mapped category your config does not have, so check the mapping against your
+own banner's categories. The config can override the map per site
+([`companion`](./config.md#mode-and-companion)).
+
+**Manual** is the fallback for any banner not listed. In the callback your banner runs
+when the visitor chooses, call:
+
+```js
+ComplyKit.sync({ analytics: true, advertising: false, functional: true });
+```
+
+The keys are your config's category ids. A change from true to false runs the same
+cookie cleanup as every other source.
+
+What add-on mode switches off, because the banner owns it: complykit's banner, the
+Google Tag Manager bridge, the vendor signals, the platform bridges and consent
+records (the banner keeps its own proof). The to-do list also hides "remove the
+existing consent tool". Other tasks are unchanged. The leak tasks still say what must
+be held, but holding it is the banner's job, and a note at the top of the list says so.
+
+Add-on mode uses a second file, `complykit-consent-companion.js`, which the tool loads
+from the same host. The page reload after a withdrawal is off by default. If the
+banner's API never appears (complykit waits about ten seconds), it gives up, cleans
+nothing, and says so in `ComplyKit.diagnostics.companion`.
+
+Install differences: paste the line anywhere in `<head>`, after the banner's own script
+if possible. `async` is fine. Keep the banner.
+
+## 3. Apply the change list
 
 The paste is the easy half. The tool can hold back only what it controls, and the
 tools on your site load in different ways. The change list says, per tool, what has
@@ -185,7 +236,7 @@ place:
   break in a visitor who has not consented. Test with a fresh browser profile.
 - **Withdrawal un-runs nothing.** A script that already ran cannot be unloaded. After a
   withdrawal the tool stops releasing, reloads the page by default, and holds the
-  category from the start of the next load ([reload attribute](#_5-script-attributes)).
+  category from the start of the next load ([reload attribute](#_4-script-attributes)).
 
 **Things that cannot be gated as written.** The generator flags these in
 `generator-notes.md`; a tag it flags is not silently rewritten.
@@ -222,7 +273,7 @@ Tags inside a container are not in your HTML; the container decides. Follow
 snippet, turn on the consent overview, set each listed tag's "Require additional
 consent for tag to fire", and add the `complykit_consent` trigger so tags fire when
 consent arrives later. A requirement only holds a tag when a **denied default** was
-set first; the tool sets one before the container runs, which is why step 3's order
+set first; the tool sets one before the container runs, which is why step 1's order
 matters.
 
 **Consent Mode default.** With a `gtm` section in the config, the tool pushes
@@ -273,10 +324,11 @@ The generator flags a consent plugin it recognizes (`generator-notes.md`, code
 - After removal, tags the old plugin used to hold are now plain scripts. Re-run the
   scan and apply the tag rewrites from the new change list.
 
-## 5. Script attributes
+## 4. Script attributes
 
-Attributes on the core `<script src=…complykit-consent.js>` tag, and on your own
-elements:
+Attributes on the core `<script>` tag (the hosted line, or `complykit-consent.js` when
+self-hosted), and on your own elements. `data-complykit-ui` matters only when
+self-hosting, because the hosted tool finds its banner file on the host by itself.
 
 | Attribute | On | Values | Effect |
 |---|---|---|---|
@@ -289,7 +341,7 @@ Also available from script: `ComplyKit.open()`, `ComplyKit.withdraw()`,
 `ComplyKit.on('change' | 'open' | 'withdraw', fn)` and `ComplyKit.diagnostics`
 (what the rescan reads).
 
-## 6. Look and words
+## 5. Look and words
 
 Theming is a handful of tokens, not an engine: `theme` sets `--ck-bg`, `--ck-fg`,
 `--ck-accent`, `--ck-border` and `--ck-radius`; `layout` is `bar`, `box` or `modal`;
@@ -302,7 +354,7 @@ something the law or the dark-pattern findings rule out (a reject label that doe
 say reject, "By continuing to browse…", and so on). Design rules the rescan checks,
 not config options: [Banner design rules](./banner-rules.md).
 
-## 7. Location and regime
+## 6. Location and regime
 
 The tool picks a regime (`opt-in`, `opt-out-signal`, `opt-out`) from where the
 visitor is, and an unknown location is `opt-in`. The browser does not know its own
@@ -312,15 +364,18 @@ written at the edge, a same-origin endpoint that echoes a country header, the pl
 Cloudflare, Vercel, Netlify, Fly and your own server, and the caching trap with the
 meta tag: [Visitor location and regime](./location.md).
 
-## 8. Consent records
+## 7. Consent records
 
-Optional. The tool can POST a small record of each choice (categories, timestamp,
-tool version, config hash) to an endpoint you run, or to the complykit service's.
-Without one the choice is stored only in the visitor's browser and still enforced.
+The tool can POST a small record of each choice (categories, timestamp, tool version,
+config hash) to an endpoint. With the hosted line, the host fills the endpoint in with
+its own, so records need no setup. In add-on mode there are none: the banner keeps its
+own proof. Without an endpoint the choice is stored only in the visitor's browser and
+still enforced.
 What a record contains, retention and exporting: [Consent records](./consent-records.md).
-Set it with `--record-endpoint` at generation time or `record.endpoint` in the config.
+Self-hosting: set it with `--record-endpoint` at generation time or `record.endpoint`
+in the config.
 
-## 9. Verify by rescan
+## 8. Verify by rescan
 
 A deployed install is proven by scanning it, not by reading the snippet. The service
 walks this as a checklist with a **Verify** button per change and a **Rescan site**
@@ -364,7 +419,7 @@ because the tags that load them were held; three were fully proven.
 
 The section also lists findings. The ones that mean the install is wrong rather than
 incomplete: **no config element** or **config refused** (the tool does nothing),
-**tool loaded after Google Tag Manager** (step 3), **banner file did not load**
+**tool loaded after Google Tag Manager** (step 1), **banner file did not load**
 (`data-complykit-ui`), **gated script never rewritten** (a change-list item you
 missed), **tracker listed as necessary**, **vendors not controlled**, **Global Privacy
 Control not recorded**, and **trackers the config does not list ran** (the config is
@@ -397,10 +452,95 @@ browser did on the pages and locations it covered. It does not certify complianc
 one location is not the world: real EU and UK exits need verified proxies
 ([CLI: `--locations`](/reference/cli#consent)).
 
+## 9. Self-hosting
+
+The service always generates the hosted line. The package is public, though, and the
+CLI still produces a fully self-hosted install: files and a block of config that you
+serve from your own domain, so the tool makes **no request to us**, before consent or
+after. Choose this if you cannot accept the trade in [What hosting it
+means](#what-hosting-it-means), or if your policy requires the script on your own
+origin. It costs you the convenience: a config or tool change means regenerating,
+uploading and re-pasting.
+
+### What you get
+
+Files built from `client/` in this repository (`cd client && npm run build`; the
+output is in `client/dist/`):
+
+| File | What it does | Size budget (gzip) |
+|---|---|---|
+| `complykit-consent.js` | The core: consent store, script gate, vendor adapters, Google Tag Manager bridge, location, platform bridges, the `ComplyKit` API. Blocking, first in `<head>`. | 15 KB |
+| `complykit-consent-ui.js` | The banner, the settings layer and the Privacy choices control. Loaded by the core, asynchronously. | 12 KB |
+| `complykit-consent-companion.js` | The add-on sources, loaded only when the config's `mode` is `companion`. | 8 KB |
+
+(`client/dist/` also has an ES-module build and a source map for bundlers. The snippet
+uses the plain files.)
+
+Put the files in **one folder** on your own domain, under a versioned path. The
+generator's default is `/complykit/v1/`, so the snippet loads
+`/complykit/v1/complykit-consent.js` and the core finds the other files next to it. The
+`v1` is the config schema major version: a 1.x config keeps a 1.x tool until you
+reinstall from a new scan ([Versioning](./config.md#versioning-and-migration)). Do not
+put the files on a public CDN: a request to a third party before the visitor has
+chosen is exactly what the scan reports as a finding.
+
+There is no npm package yet, and none is published. You copy the files out of a build
+of this repository into your own static assets. The `client` package is private. The
+files are plain browser scripts with no dependencies.
+
+### Generate the config, snippet and change list
+
+Run a consent scan of your site first ([Consent & tracking by location](./consent.md)).
+Then generate the install material from that run, **without** `--hosted`:
+
+```sh
+complykit consent --url https://www.example-shop.test
+complykit consent-config .comply/runs/<run-id>
+```
+
+`consent-config <run-dir>` writes four files to `<run-dir>/consent-config/`:
+
+| File | What it is |
+|---|---|
+| `complykit-config.json` | The config: categories, vendors, gate rules, GTM, platform, location source. Validated against the schema and hashed. |
+| `snippet.html` | What to paste in `<head>`, followed by each tag to rewrite as before and after markup. |
+| `change-list.md` | The same change list as the report: everything in step 3. |
+| `generator-notes.md` | What the generator refused or could not decide, and what to check before deploying. **Read this before you deploy.** |
+
+Useful options: `--workspace <file>` (your classifications override the scan's),
+`--script-src <path>` (where you will host the files, if not `/complykit/v1/`),
+`--privacy-policy <url>`, `--record-endpoint <path>`, and `--regime-source`
+(`meta`, `platform`, `fixed:opt-in`, or `header:<header>:<path>`). Full option list:
+`complykit consent-config --help`, and [How the generator decides](./config.md#generating-it).
+
+With `--hosted <url>` the same command writes the one-line hosted snippet instead and
+copies no client files. The service does exactly that for you.
+
+The config's fields are listed in [Config reference](/reference/config-schema) and
+explained in [Consent tool config](./config.md). You should not need to hand-edit it;
+if you do, the hash will no longer match and the rescan will say so.
+
+### Paste the snippet first in `<head>`
+
+`snippet.html` starts with this block (the JSON is your generated config):
+
+```html
+<script type="application/json" id="complykit-config">{ "version": "1.0", … }</script>
+<script src="/complykit/v1/complykit-consent.js"></script>
+```
+
+Both elements go **first in `<head>`**, under the same rules as the hosted line ([step
+1](#_1-paste-the-line-first-in-head)): above every other script, blocking, outside
+optimizers' reach, in every layout that has its own `<head>`. If the config is missing,
+malformed or from a newer major version, the tool does nothing and the rescan reports
+it.
+
+
 ## See also
 
 - [Config reference](/reference/config-schema): every field, generated from the schema
 - [Consent tool config](./config.md): what the fields mean and how the generator fills them
+- [Banner analytics](./analytics.md): what the beacon sends and what is stored
 - [Compatibility verdicts and the change list](./compatibility.md)
 - [How each vendor is controlled](./vendor-control.md) and [Adapters](./adapters.md)
 - [From scan to verified install](./remediation.md): the checklist, Verify and Rescan

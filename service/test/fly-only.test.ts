@@ -90,7 +90,7 @@ function recordingFleet(map: Record<string, string>): { fleet: Fleet; regions: s
 
 async function host(blobDir: string, fleet: Fleet) {
   const records = await mongoRecords({ url: mongo.getUri(), db: `ck_fly_${crypto.randomBytes(4).toString('hex')}` });
-  const storage: Storage = { kind: 'cloud', blobs: new FsBlobs(blobDir), jobs: records.jobs, workspaces: records.workspaces, consentRecords: records.consentRecords, close: records.close };
+  const storage: Storage = { kind: 'cloud', blobs: new FsBlobs(blobDir), jobs: records.jobs, workspaces: records.workspaces, consentRecords: records.consentRecords, configSnapshots: records.configSnapshots, consentStats: records.consentStats, close: records.close };
   const s = await startService({ workerSecret: SECRET }, { staggerMs: 10, remotePollMs: 25, fleet }, { storage });
   return { s, storage };
 }

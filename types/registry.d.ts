@@ -71,6 +71,8 @@ export {
   verifyRegistry,
   unmappedEngineRules,
   KB_VERSION,
+  COMPLYKIT_PARTY_ID,
+  COMPLYKIT_HOSTS,
   KB_ENTRIES,
   DEFAULT_KB,
   CONSENT_CATEGORIES,

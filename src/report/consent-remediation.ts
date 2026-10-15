@@ -154,7 +154,7 @@ ${pages}
 ${t.guide ? `<p class="ck-task-guide"><a href="${esc(safeHref(t.guide.href))}">Guide: ${esc(t.guide.label)}</a></p>` : ''}
 ${t.notes.length ? `<details class="human-details"><summary>Notes (${t.notes.length})</summary><div><ul>${t.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div></details>` : ''}
 ${manual}
-<div class="ck-task-actions"><button type="button" data-rem-done aria-pressed="${t.status === 'done-unverified'}">I’ve made this change</button>${t.verify.method !== 'manual' ? '<button type="button" data-rem-verify hidden>Verify</button>' : ''}${t.kind === 'install' ? '<a class="ck-zip" data-rem-zip hidden download>Download install bundle (.zip)</a>' : ''}</div>
+<div class="ck-task-actions"><button type="button" data-rem-done aria-pressed="${t.status === 'done-unverified'}">I’ve made this change</button>${t.verify.method !== 'manual' ? '<button type="button" data-rem-verify hidden>Verify</button>' : ''}</div>
 <div class="ck-task-result" data-rem-result role="status" aria-live="polite">${lastVerifyHtml(t)}</div>
 <details class="human-details ck-task-note"><summary>Note</summary><div><label>Note for your team <textarea data-rem-note rows="2" maxlength="4000" placeholder="Who made the change, when, or why it is skipped"></textarea></label></div></details>
 </li>
@@ -271,7 +271,6 @@ function render(){
     var dn=el.querySelector('[data-rem-decision-note]');if(dn)dn.textContent=s==='verified'?(base(el).status==='verified'?'Decided: your team’s classification is saved for this site.':'Decided. Press “Update report with my classifications” to recompute the changes that wait on it.'):'';
     var d=el.querySelector('[data-rem-done]');if(d){d.hidden=s==='verified';d.setAttribute('aria-pressed',s==='done-unverified'?'true':'false');d.textContent=s==='done-unverified'?'Undo “made this change”':'I’ve made this change';}
     var vb=el.querySelector('[data-rem-verify]');if(vb){vb.hidden=!service;vb.disabled=anyBusy;vb.setAttribute('aria-busy',busy[id]?'true':'false');vb.textContent=busy[id]?'Checking the live page…':s==='verified'||s==='failed'||s==='cannot-verify'?'Verify again':'Verify';}
-    var zip=el.querySelector('[data-rem-zip]');if(zip){zip.hidden=!service;if(service)zip.href=siteApi()+'/install.zip';}
     el.querySelectorAll('[data-rem-surface]').forEach(function(x){x.hidden=(x.dataset.remSurface==='service')!==!!service;});
     var box=el.querySelector('[data-rem-result]');if(box&&!busy[id]&&!box.dataset.error)resultInto(box,v.lastVerify);
     var note=el.querySelector('[data-rem-note]');if(note&&document.activeElement!==note)note.value=v.note||'';

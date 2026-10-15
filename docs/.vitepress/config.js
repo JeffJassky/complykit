@@ -56,6 +56,7 @@ export default defineConfig({
           items: [
             { text: 'From scan to verified install', link: '/guide/remediation' },
             { text: 'Install guide', link: '/guide/consent-tool' },
+            { text: 'Banner analytics', link: '/guide/analytics' },
             { text: 'Visitor location and regime', link: '/guide/location' },
             { text: 'Consent records', link: '/guide/consent-records' },
             { text: 'Google Tag Manager setup', link: '/guide/gtm-setup' },

@@ -205,6 +205,16 @@ export interface ConsentRecordEndpoint {
   endpoint: string;
 }
 
+/** Add-on mode: the existing banner the tool follows (consent-config.ts CompanionCmpSchema). */
+export type CompanionCmp = 'onetrust' | 'cookiebot' | 'usercentrics' | 'didomi' | 'trustarc' | 'shopify' | 'wordpress' | 'tcf' | 'consent-mode' | 'manual';
+export const COMPANION_CMPS: readonly CompanionCmp[] = ['onetrust', 'cookiebot', 'usercentrics', 'didomi', 'trustarc', 'shopify', 'wordpress', 'tcf', 'consent-mode', 'manual'];
+
+export interface CompanionConfig {
+  cmp: CompanionCmp;
+  /** The banner's purpose/group id → complykit category ids. Absent = the built-in map. */
+  map?: Record<string, string[]>;
+}
+
 export interface ConsentToolConfig {
   version: string;
   generatedFrom: { runId: string; at: string; site: string; complykit: string; kb?: string };
@@ -223,6 +233,12 @@ export interface ConsentToolConfig {
   /** Linked from the banner. https only. */
   privacyPolicyUrl?: string;
   record?: ConsentRecordEndpoint;
+  /** Where the banner beacon is posted (counters only). Absent = no beacon. */
+  analytics?: { endpoint: string };
+  /** Absent = 'full'. 'companion': follow the site's own banner, clean up on revoke (plans/hosted-script.md). */
+  mode?: 'full' | 'companion';
+  /** Required when mode is 'companion'. */
+  companion?: CompanionConfig;
   layout: ConsentLayout;
   /** Block the page (backdrop, inert, no scroll) until the visitor chooses. The guard fills false when absent (configs older than the field). */
   blockPage: boolean;
@@ -343,6 +359,9 @@ export function guardConsentToolConfig(raw: unknown): ConsentConfigGuardResult {
     if (!isObj(g) || !Array.isArray(g.containers) || typeof g.dataLayer !== 'string' || !isObj(g.consentMode) || !Array.isArray(g.tags)) return missing('gtm');
   }
   if (raw.record !== undefined && !(isObj(raw.record) && typeof raw.record.endpoint === 'string')) return missing('record.endpoint');
+  if (raw.analytics !== undefined && !(isObj(raw.analytics) && typeof raw.analytics.endpoint === 'string')) return missing('analytics.endpoint');
+  if (raw.mode !== undefined && raw.mode !== 'full' && raw.mode !== 'companion') return missing('mode');
+  if (raw.mode === 'companion' && !(isObj(raw.companion) && (COMPANION_CMPS as readonly unknown[]).includes(raw.companion.cmp))) return missing('companion.cmp');
   if (!isObj(raw.consent) || typeof raw.consent.lifetimeDays !== 'number' || !(raw.consent.lifetimeDays > 0)) return missing('consent.lifetimeDays');
   if (typeof raw.layout !== 'string') return missing('layout');
   if (raw.blockPage !== undefined && typeof raw.blockPage !== 'boolean') return missing('blockPage');

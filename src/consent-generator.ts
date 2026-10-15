@@ -1,4 +1,4 @@
-import type { Finding, PartyInventoryItem, TrackingEvaluation } from './record/index.js';
+import type { CompanionCmp, Finding, PartyInventoryItem, TrackingEvaluation } from './record/index.js';
 import {
   CONSENT_CONFIG_VERSION,
   NECESSARY_CATEGORY,
@@ -13,7 +13,7 @@ import {
   type ConsentTheme,
 } from './record/consent-config-guard.js';
 import { parseConsentToolConfig, withConsentConfigHash, type ConsentToolConfigInput } from './record/consent-config.js';
-import { CONSENT_CATEGORIES, DEFAULT_KB, type KnowledgeBase, type KnowledgeEntry } from './registry/index.js';
+import { COMPLYKIT_PARTY_ID, CONSENT_CATEGORIES, DEFAULT_KB, type KnowledgeBase, type KnowledgeEntry } from './registry/index.js';
 import { purposeScopeOf } from './rules/tracking/compatibility.js';
 import {
   buildConsentReportModel,
@@ -26,7 +26,7 @@ import {
 import { cookiePurposes } from './report/cookie-purpose.js';
 import { reconcileRecord } from './consent-compatibility.js';
 import { doneTasks, resolveSiteClassifications, type WorkspaceSnapshot, type WorkspaceSubject } from './site-workspace.js';
-import { buildRemediationTasks, renderHeadSnippet, scriptJson } from './remediation.js';
+import { buildRemediationTasks, renderHeadSnippet, renderHostedSnippet, scriptJson } from './remediation.js';
 import type { RemediationTask } from './record/index.js';
 
 // The guided remediation flow (plans/remediation-flow.md) reads the output:
@@ -135,6 +135,7 @@ export type GeneratorNoteCode =
   | 'inline-rewrite'
   | 'regime-source'
   | 'script-path'
+  | 'hosted' // the snippet is one line served by the complykit host
   | 'platform-unsupported'
   | 'dormant-tags' // tags in the HTML for tools that never ran
   | 'gtag-config-via-gtm' // a Google tag destination GTM loads from a gtag('config') command in the page
@@ -179,6 +180,8 @@ export interface GenerateConsentConfigOptions {
   /** generatedFrom.at (default: now). */
   now?: string;
   scriptSrc?: string;
+  /** The hosted install (plans/hosted-script.md): the full URL of the site's hosted script on the complykit host. Set → a one-line snippet and a hosted install task; scriptSrc is ignored. */
+  hostedScriptUrl?: string;
   /** Opt-in consent-record endpoint (omitted by default). */
   recordEndpoint?: string;
   privacyPolicyUrl?: string;
@@ -204,6 +207,10 @@ export interface GeneratedConsentConfig {
   notesMarkdown: string;
   /** Where the snippet loads the tool from (opts.scriptSrc or DEFAULT_SCRIPT_SRC). */
   scriptSrc: string;
+  /** opts.hostedScriptUrl, when the install is hosted. */
+  hostedScriptUrl?: string;
+  /** The site's existing banner, as an add-on source (plans/hosted-script.md "Add-on mode"): from the scan's existing consent tool or consent plugin. Absent when none was seen or it has no source. */
+  detectedCmp?: CompanionCmp;
   /** The report's compatibility section this config was built from: the change items carry their stable ids. */
   compatibility: CompatibilityReport;
   /** The guided checklist (plans/remediation-flow.md): install first, then one task per change item. Status 'todo' unless the workspace says otherwise. */
@@ -293,6 +300,27 @@ function contextCategory(categories: readonly string[]): string {
   const purposes = cookiePurposes([...categories]);
   for (const id of ['advertising', 'analytics', 'performance', 'functional']) if (purposes.includes(id)) return id;
   return 'functional';
+}
+
+/** Party id of a recognized consent tool → the add-on source that reads it (plans/hosted-script.md "Add-on mode"). */
+const CMP_FOR_PARTY: Readonly<Record<string, CompanionCmp>> = {
+  'consent.onetrust': 'onetrust',
+  'consent.cookiebot': 'cookiebot',
+  'consent.usercentrics': 'usercentrics',
+  'consent.didomi': 'didomi',
+  'consent.trustarc': 'trustarc',
+};
+
+/** The site's existing banner as an add-on source: a recognized consent tool party, else the platform's consent plugin. Unknown → undefined. */
+export function detectCompanionCmp(ev: TrackingEvaluation): CompanionCmp | undefined {
+  for (const p of ev.inventory) {
+    const cmp = CMP_FOR_PARTY[p.partyId];
+    if (cmp) return cmp;
+  }
+  const plugin = ev.platform?.consentPlugin;
+  if (plugin === 'shopify-customer-privacy') return 'shopify';
+  if (plugin && ev.platform?.name === 'wordpress') return 'wordpress';
+  return undefined;
 }
 
 function platformOf(ev: TrackingEvaluation): ConsentPlatform {
@@ -405,7 +433,7 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
   // the site's own domain is no outside party, so the inventory check below never
   // sees it). Shopify's Customer Privacy API is the platform's signal, not a tool to remove.
   const plugin = ev.platform?.consentPlugin;
-  if (plugin && plugin !== 'shopify-customer-privacy' && !ev.inventory.some((p) => p.categories.includes('consent'))) {
+  if (plugin && plugin !== 'shopify-customer-privacy' && !ev.inventory.some((p) => p.categories.includes('consent') && p.partyId !== COMPLYKIT_PARTY_ID)) {
     notes.push({ code: 'existing-consent-tool', level: 'flag', message: `The site runs a consent plugin (${plugin}, ${ev.platform!.name}). Deactivate it when installing this one: two banners, and two sources of truth for what the visitor chose. While it is active it also holds tags itself, so tools it held during the scan may be missing from this config — scan with an accept visit before generating.` });
   }
 
@@ -427,6 +455,7 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
       continue;
     }
     if (p.categories.includes('consent')) {
+      if (p.partyId === COMPLYKIT_PARTY_ID) continue; // our own hosted script: not an old banner, not a vendor
       notes.push({ code: 'existing-consent-tool', level: 'flag', partyIds: [p.partyId], message: `${p.label} (an existing consent tool) was seen on the site. Remove it when installing this one: two banners, and two sources of truth for what the visitor chose.` });
       continue;
     }
@@ -747,8 +776,11 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
       message: 'Visitor location: the config reads <meta name="complykit-region" content="CC-RR">, which your server or CDN must write into every page (recipes: /guide/location). Until it does, every visitor is treated as opt-in — the strictest posture — which is safe but asks US visitors for consent too.',
     });
   }
-  const scriptSrc = opts.scriptSrc ?? DEFAULT_SCRIPT_SRC;
-  if (!opts.scriptSrc) {
+  const hostedScriptUrl = opts.hostedScriptUrl;
+  const scriptSrc = hostedScriptUrl ?? opts.scriptSrc ?? DEFAULT_SCRIPT_SRC;
+  if (hostedScriptUrl) {
+    notes.push({ code: 'hosted', level: 'info', message: `The snippet is one line that loads the tool and your settings from ${hostedScriptUrl}. Paste it first in <head>; there are no files to host.` });
+  } else if (!opts.scriptSrc) {
     notes.push({ code: 'script-path', level: 'info', message: `The snippet loads the tool from ${scriptSrc} — a placeholder. Self-host complykit-consent.js and complykit-consent-ui.js in one folder and adjust the path; a third-party CDN URL means a request before consent.` });
   }
 
@@ -778,9 +810,10 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
 
   const order: Record<GeneratorNote['level'], number> = { refused: 0, flag: 1, info: 2 };
   notes.sort((a, b) => order[a.level] - order[b.level]);
-  const snippet = renderSnippet(config, rewrites, { scriptSrc, explicitSrc: Boolean(opts.scriptSrc) });
-  const tasks = buildRemediationTasks({ config, notes, compatibility: report, scriptSrc }, ev, { workspace: opts.workspace, kb });
-  return { config, json, snippet, changeList, rewrites, notes, notesMarkdown: renderGeneratorNotes(config, notes, report), scriptSrc, compatibility: report, tasks };
+  const snippet = renderSnippet(config, rewrites, { scriptSrc, explicitSrc: Boolean(opts.scriptSrc), ...(hostedScriptUrl ? { hostedScriptUrl } : {}) });
+  const tasks = buildRemediationTasks({ config, notes, compatibility: report, scriptSrc, ...(hostedScriptUrl ? { hostedScriptUrl } : {}) }, ev, { workspace: opts.workspace, kb });
+  const detectedCmp = detectCompanionCmp(ev);
+  return { config, json, snippet, changeList, rewrites, notes, notesMarkdown: renderGeneratorNotes(config, notes, report), scriptSrc, ...(hostedScriptUrl ? { hostedScriptUrl } : {}), ...(detectedCmp ? { detectedCmp } : {}), compatibility: report, tasks };
 }
 
 // --- rendering ------------------------------------------------------------------------
@@ -789,9 +822,16 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
 const commentSafe = (s: string): string => s.replace(/--/g, '- -');
 const indent = (s: string, pad: string): string => s.split('\n').map((l) => pad + l).join('\n');
 
-export function renderSnippet(config: ConsentToolConfig, rewrites: SnippetRewrite[], opts: { scriptSrc: string; explicitSrc?: boolean }): string {
+export function renderSnippet(config: ConsentToolConfig, rewrites: SnippetRewrite[], opts: { scriptSrc: string; explicitSrc?: boolean; hostedScriptUrl?: string }): string {
   const out: string[] = [];
-  out.push(
+  if (opts.hostedScriptUrl) {
+    out.push(
+      `<!-- complykit consent tool — generated ${config.generatedFrom.at} for ${config.generatedFrom.site} from run ${config.generatedFrom.runId} (complykit ${config.generatedFrom.complykit}).`,
+      '     Part 1: paste this one line once, first in <head> — above the Google Tag Manager snippet and above every tag in Part 2. Keep it blocking (no async, defer or type="module").',
+      '     The tool and your settings are served from that address; there are no files to host. Remove any earlier complykit lines (an inline config element, a self-hosted copy of the tool). -->',
+      renderHostedSnippet(opts.hostedScriptUrl),
+    );
+  } else out.push(
     `<!-- complykit consent tool — generated ${config.generatedFrom.at} for ${config.generatedFrom.site} from run ${config.generatedFrom.runId} (complykit ${config.generatedFrom.complykit}).`,
     '     Part 1: paste once, as high in <head> as possible — above the Google Tag Manager snippet and above every tag in Part 2.',
     opts.explicitSrc

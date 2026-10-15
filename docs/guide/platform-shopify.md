@@ -15,23 +15,26 @@ There is no complykit Shopify app yet, so the install path is the theme.
 1. In the Shopify admin open **Online Store > Themes**, then **... > Edit code** on
    the live theme. Open `layout/theme.liquid`. (Duplicate the theme first if you
    want a way back.)
-2. Paste the consent tool snippet (the config element and the script) **directly
-   after `<head>`**, above everything else, and in particular above
-   `{{ content_for_header }}`. That tag is where Shopify injects its own scripts,
-   the pixel manager and app embeds that load in the head. Anything above the tool
-   can run before it does.
+2. Paste the consent tool line **directly after `<head>`**, above everything else, and
+   in particular above `{{ content_for_header }}`. That tag is where Shopify injects
+   its own scripts, the pixel manager and app embeds that load in the head. Anything
+   above the tool can run before it does.
 
    ```html
    <head>
-     <script type="application/json" id="complykit-config">{ … "platform": "shopify", "regimeSource": { "kind": "platform" } … }</script>
-     <script src="{{ 'complykit-consent.js' | asset_url }}"></script>
+     <script src="https://<complykit host>/s/your-shop.example.js" referrerpolicy="no-referrer"></script>
      …
      {{ content_for_header }}
    ```
 
-   Upload `complykit-consent.js` to the theme's **Assets** (or host it on your own
-   domain). Do not load it from a third-party CDN: that request would happen before
-   consent.
+   The line is the one the install task gives you ([Installing the consent
+   tool](./consent-tool.md)). It serves your config too, with `"platform": "shopify"`
+   and the platform location source; there is nothing to upload to the theme's Assets.
+   Keep it blocking (no `async`, no `defer`). Shopify has no setting for a Content
+   Security Policy on storefront pages you control, but if your theme or a proxy adds
+   one, `script-src` must allow the complykit host.
+   *Self-hosting from the CLI* is still possible: paste the inline config and a script
+   loaded from the theme's **Assets** (or your own domain), never a third-party CDN.
 3. Repeat step 2 on any other layout that has its own `<head>` (some themes ship
    `layout/password.liquid` or alternate layouts).
 4. Set Shopify's own banner as described below.

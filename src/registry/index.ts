@@ -50,6 +50,8 @@ export { describeLocationRules, type LocationRules, type LocationRuleLaw, type D
 export { GUIDE_POSTURE, GUIDE_MODELS, GUIDE_WIRETAP, GUIDE_LAWS, GUIDE_PLACE_NOTES, type GuideNoteEntry } from './guide-notes.js';
 export {
   KB_VERSION,
+  COMPLYKIT_PARTY_ID,
+  COMPLYKIT_HOSTS,
   KB_ENTRIES,
   DEFAULT_KB,
   buildKnowledgeBase,

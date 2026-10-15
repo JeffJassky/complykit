@@ -49,8 +49,7 @@ page load.
 ```html
 <head>
   <!-- 1. The consent tool: first, synchronous (no async, no defer) -->
-  <script src="…/complykit-consent.js"></script>
-  <script>/* the snippet the generator gave you */</script>
+  <script src="https://<complykit host>/s/example.com.js" referrerpolicy="no-referrer"></script>
 
   <!-- 2. Then the Google Tag Manager snippet -->
   <script>(function(w,d,s,l,i){ … })(window,document,'script','dataLayer','GTM-XXXX01');</script>
@@ -58,6 +57,12 @@ page load.
 ```
 
 - Load the tool synchronously. `async` or `defer` lets the container run first.
+- **Never load the tool through GTM**, hosted line or not. A tag in the container
+  runs after the container has started, which is too late for the defaults. The line
+  goes in the page's HTML, above the container snippet.
+- Add-on mode: if you keep an existing banner and only need cookie cleanup, the Google
+  Tag Manager bridge is off and the banner (or its Consent Mode template) owns the
+  signals. This page then applies to the banner's setup, not complykit's.
 - **Remove GTM's `<noscript><iframe src="…/ns.html?id=GTM-…">`** from the
   `<body>`. It loads without JavaScript, so no consent tool can hold it back.
 - Don't run a second consent tool or a CMP template in the container

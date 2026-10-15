@@ -376,10 +376,35 @@ export interface ConsentConfigValue {
   /** change-list.md */
   changeList: string;
   notes: Array<{ code: string; level: 'refused' | 'flag' | 'info'; message: string; partyIds?: string[] }>;
-  /** Where the snippet loads the tool from; the install zip puts the client files in its folder. */
+  /** Where the snippet loads the tool from (the hosted script URL for a hosted install). */
   scriptSrc?: string;
+  /** The hosted script URL, when the install is hosted (always, for configs the service generates now). */
+  hostedScriptUrl?: string;
   /** The guided remediation checklist (complykit's RemediationTask[], plans/remediation-flow.md §3), in order. */
   tasks?: RemediationTask[];
+  /** The site's existing banner as an add-on source, when the scan saw one (complykit's CompanionCmp). */
+  detectedCmp?: CompanionCmp;
+}
+
+/** The banners add-on mode can follow (complykit's CompanionCmp). */
+export type CompanionCmp = 'onetrust' | 'cookiebot' | 'usercentrics' | 'didomi' | 'trustarc' | 'shopify' | 'wordpress' | 'tcf' | 'consent-mode' | 'manual';
+
+/** The owner's settings for the hosted tool: workspace entry `consent-settings` (plans/hosted-script.md "Owner settings"). */
+export interface ConsentSettings {
+  mode: 'full' | 'companion';
+  /** Required when mode is companion. */
+  cmp?: CompanionCmp;
+  layout?: 'bar' | 'box' | 'modal';
+  blockPage?: boolean;
+  /** https only. */
+  privacyPolicyUrl?: string;
+}
+
+/** GET / PUT /api/sites/:domain/consent-settings */
+export interface ConsentSettingsResponse {
+  /** Stored settings, or { mode: 'full' } when none. */
+  settings: ConsentSettings;
+  detectedCmp?: CompanionCmp;
 }
 
 // --- Guided remediation (plans/remediation-flow.md) --------------------------------
@@ -444,6 +469,8 @@ export interface RemediationTask {
   alsoFixes?: string[];
   /** Steps whose wording depends on the surface: each replaces steps[step] here (`service`) or in a report file / the CLI (`offline`). */
   stepVariants?: Array<{ step: number; service: string; offline: string }>;
+  /** Install task, hosted: the add-on mode steps (shown when the site's settings say companion). */
+  companionSteps?: string[];
   order: number;
 }
 
@@ -739,10 +766,12 @@ export interface JobReportResponse {
   accessibilityReportUrl?: string;
   /** The consent report as data (consent-report.json beside the HTML report). */
   jsonReportUrl?: string;
+  /** The install task's settings form: stored settings, the banner the scan saw, the site's category ids. Present with the checklist. */
+  consentSettings?: { settings: ConsentSettings; detectedCmp?: CompanionCmp; categoryIds: string[]; defaults?: { layout?: string; blockPage?: boolean; privacyPolicyUrl?: string } };
   /** Zip of everything for this job (reports, evidence, run data). */
   downloadUrl?: string;
-  /** The site's install bundle (once a checklist exists). */
-  installZipUrl?: string;
+  /** The site's hosted script URL (once a checklist exists): the install is one pasted script tag. */
+  hostedScriptUrl?: string;
   /** Every scan of this site, newest first (this one marked `current`). */
   history: ScanHistoryItem[];
   /** Set when a newer finished consent scan of the site exists: this report is an earlier scan and can't make the to-do list. */
@@ -861,4 +890,37 @@ export function parseUrlList(raw: string): { urls: string[]; rejected: string[] 
     urls.push(key);
   }
   return { urls: urls.slice(0, MAX_URLS_PER_BATCH), rejected: [...rejected, ...urls.slice(MAX_URLS_PER_BATCH).map((u) => `${u} (over the ${MAX_URLS_PER_BATCH}-URL limit)`)] };
+}
+
+// --- Hosted script + banner analytics (plans/hosted-script.md) -----------------------
+
+/** A config the host has served, by its hash: what a stats row measured (copy, labels, categories). */
+export interface ConfigSnapshot {
+  hash: string;
+  /** Registrable domain. */
+  domain: string;
+  /** The served (hosted) config: endpoints filled in, re-hashed. */
+  config: Record<string, unknown>;
+  /** ISO time the host first rendered this hash. */
+  firstServed: string;
+}
+
+/** One config version's counters (keys: plans/hosted-script.md "Counters"). */
+export interface ConsentStatsConfig {
+  hash: string;
+  firstServed?: string;
+  /** Sum of every day in range. */
+  totals: Record<string, number>;
+  /** Days with any count, oldest first; `day` is UTC YYYY-MM-DD. */
+  days: Array<{ day: string; n: Record<string, number> }>;
+}
+
+/** GET /api/sites/:domain/stats?days=N */
+export interface ConsentStatsResponse {
+  domain: string;
+  /** UTC YYYY-MM-DD, inclusive. */
+  from: string;
+  to: string;
+  /** Newest firstServed first. */
+  configs: ConsentStatsConfig[];
 }

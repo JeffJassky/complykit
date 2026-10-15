@@ -3,6 +3,12 @@ import { CONTROL_FACTS } from './control.js';
 
 export { CONTROL_VENDOR_IDS } from './control.js';
 
+/** complykit's own consent tool, served by the complykit host (plans/hosted-script.md). A `consent` party, but never an "existing consent tool" to remove. */
+export const COMPLYKIT_PARTY_ID = 'consent.complykit';
+/** Hosts the complykit host serves the hosted script, the beacon and consent records from. Add the custom domain here when it exists. */
+export const COMPLYKIT_HOSTS: readonly string[] = ['complykit-6v9s6.ondigitalocean.app'];
+
+
 // Seed knowledge base. Every entry is a PROPOSAL (proposedBy 'complykit-seed',
 // no confirmedBy): it lets the first scans name the common vendors, and each
 // one waits for a human to confirm it through the research workflow (§4.2).
@@ -792,6 +798,16 @@ const BASE_ENTRIES: KnowledgeEntryInput[] = [
     match: { hosts: ['trustarc.com', 'truste.com'] },
     categories: ['consent'],
     sources: ['https://trustarc.com/'],
+  }),
+  // complykit's own tool, served by the complykit host (plans/hosted-script.md, B4):
+  // the site's own consent tool, never a tracker and never an existing tool to remove.
+  seed({
+    id: COMPLYKIT_PARTY_ID,
+    vendor: 'ComplyKit',
+    owner: 'ComplyKit',
+    match: { hosts: [...COMPLYKIT_HOSTS] },
+    categories: ['consent'],
+    sources: ['https://github.com/JeffJassky/complykit', 'https://jeffjassky.github.io/complykit/'],
   }),
 ];
 

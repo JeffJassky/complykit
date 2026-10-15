@@ -394,7 +394,7 @@ remSuite('the guided checklist in a browser', () => {
     expect(await section.locator('[data-rem-progress-text]').textContent()).toBe(`0 of ${required} done`);
     expect(await section.locator('[data-rem-verify]:visible').count()).toBe(0);
     expect(await section.locator('[data-rem-offline]').isVisible()).toBe(true);
-    expect(await section.locator('[data-rem-zip]').isVisible()).toBe(false);
+    expect(await section.locator('[data-rem-zip]').count()).toBe(0); // no install bundle button anywhere
     // The install step names the CLI's folder here, never the service's button.
     const step1 = section.locator('[data-remediation-id="install"] .ck-task-steps li').first();
     expect(await step1.innerText()).toContain('complykit consent-config <run-dir>');
@@ -454,7 +454,7 @@ remSuite('the guided checklist in a browser', () => {
     const section = page.locator('#remediation');
     const install = section.locator('[data-remediation-id="install"]');
     expect(await section.locator('[data-rem-offline]').isVisible()).toBe(false);
-    expect(await install.locator('[data-rem-zip]').getAttribute('href')).toBe('/api/sites/example-shop.test/install.zip');
+    expect(await install.locator('[data-rem-zip]').count()).toBe(0);
     // On the service the install step names the bundle button, never the CLI's folder.
     const step1 = await install.locator('.ck-task-steps li').first().innerText();
     expect(step1).toContain('Download install bundle (.zip)');

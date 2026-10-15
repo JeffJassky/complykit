@@ -145,7 +145,7 @@ suite('verify-change against a fixture site (static checks)', () => {
   let browser: VerifyBrowser;
   const run = (spec: RemediationVerifySpec) => verifyChange(spec, { browser });
   const page = (p: string) => `${site.base}${p}`;
-  const installSpec = (p: string, configHash = site.config.hash): RemediationVerifySpec => ({ check: 'install', method: 'static', page: page(p), configHash, scriptSrc: '/complykit-consent.js', elementId: 'complykit-config' });
+  const installSpec = (p: string, configHash = site.config.hash): RemediationVerifySpec => ({ check: 'install', method: 'static', mode: 'self', page: page(p), configHash, scriptSrc: '/complykit-consent.js', elementId: 'complykit-config' });
 
   beforeAll(async () => {
     site = await startSite();
