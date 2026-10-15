@@ -189,11 +189,12 @@ export function verifyInstall(html: string, expected: InstallExpectation, opts: 
   return ok('config present and current; core script blocking and first', evidence);
 }
 
-/** origin + path of a URL as the page would resolve it (query and hash ignored); undefined when it is not a URL. */
+/** origin + path of a URL as the page would resolve it (query and hash ignored); undefined when it is not a URL, or carries a username/password (browsers refuse to load those). */
 function originPath(url: string | undefined, base: string): string | undefined {
   if (!url) return undefined;
   try {
     const u = new URL(url, base);
+    if (u.username || u.password) return undefined;
     return `${u.origin}${u.pathname}`;
   } catch {
     return undefined;
