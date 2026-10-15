@@ -39,12 +39,12 @@ export interface UiHost {
  * What the UI reports for the banner beacon (plans/hosted-script.md, "Event beacon").
  * - shown: the banner became visible.
  * - open: the settings layer opened; `via` = what opened it.
- * - decide: the visitor made a choice in the UI; `action` is the button (`save` = the settings layer's Save), `categories` the resulting choice.
+ * - decide: the visitor made a choice in the UI; `action` is the button (`save` = the settings layer's Save), `categories` the resulting choice. `via: 'cmp'` = the add-on file followed the site's own banner (T6).
  */
 export type UiAnalyticsEvent =
   | { t: 'shown' }
   | { t: 'open'; via: 'banner' | 'choices' | 'api' }
-  | { t: 'decide'; action: 'accept' | 'reject' | 'save'; via: 'banner' | 'settings'; categories: Record<string, boolean> };
+  | { t: 'decide'; action: 'accept' | 'reject' | 'save'; via: 'banner' | 'settings' | 'cmp'; categories: Record<string, boolean> };
 
 let current: UiHost | undefined;
 export const setHost = (h: UiHost): void => {

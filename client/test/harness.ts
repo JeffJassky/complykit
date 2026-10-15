@@ -36,6 +36,7 @@ const ROUTES: Record<string, string> = {
   '/gtm/gtm.js': path.join(FIXTURES, 'fake-gtm.js'),
   '/complykit-consent.js': path.join(DIST, 'complykit-consent.js'),
   '/complykit-consent-ui.js': path.join(DIST, 'complykit-consent-ui.js'),
+  '/complykit-consent-companion.js': path.join(DIST, 'complykit-consent-companion.js'),
 };
 
 // Extra response headers per path (e.g. a CSP header for the nonce fixture).
