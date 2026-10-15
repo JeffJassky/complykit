@@ -78,7 +78,7 @@ async function load(scriptAttrs = '', origin = server.origin, tweak?: (c: any) =
   if (origin !== server.origin) {
     // A named host (the fixture server is 127.0.0.1, which has no parent domain): serve the IIFE for it too.
     for (const f of ['complykit-consent.js', 'complykit-consent-ui.js']) {
-      await page.route(`${origin}/${f}`, (route) => route.fulfill({ contentType: 'text/javascript', path: path.join(DIST, f) }));
+      await page.route(`${origin}/${f}*`, (route) => route.fulfill({ contentType: 'text/javascript', path: path.join(DIST, f) }));
     }
   }
   await page.goto(`${origin}/shop/withdraw-page`);

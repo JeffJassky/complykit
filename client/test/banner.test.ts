@@ -153,7 +153,7 @@ describe('banner (bar layout): markup', () => {
 describe('two-file split: the core loads the UI file', () => {
   it('from the same folder as the core, and records it in diagnostics', async () => {
     const page = await load();
-    expect(await page.evaluate(() => (window as any).ComplyKit.diagnostics.ui)).toEqual({ url: `${server.origin}/complykit-consent-ui.js`, state: 'loaded' });
+    expect(await page.evaluate(() => (window as any).ComplyKit.diagnostics.ui)).toEqual({ url: `${server.origin}/complykit-consent-ui.js?v=0.0.0`, state: 'loaded' });
     await page.context().close();
   });
 
@@ -162,7 +162,7 @@ describe('two-file split: the core loads the UI file', () => {
     const p = await ctx.newPage();
     const warnings: string[] = [];
     p.on('console', (m) => m.type() === 'warning' && warnings.push(m.text()));
-    await p.route('**/complykit-consent-ui.js', (r) => r.abort());
+    await p.route('**/complykit-consent-ui.js*', (r) => r.abort());
     await p.route('**/banner-page', (r) =>
       r.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="en"><head><title>x</title><script type="application/json" id="complykit-config">${JSON.stringify(baseConfig())}</script><script src="/complykit-consent.js"></script></head><body><main>x</main></body></html>` }),
     );
