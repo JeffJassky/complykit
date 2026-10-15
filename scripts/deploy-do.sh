@@ -53,14 +53,23 @@ PY
 else
   echo "==> updating $APP_NAME ($APP_ID): WORKER_IMAGE=$WORKER_IMAGE"
   doctl --context "$DO_CONTEXT" apps spec get "$APP_ID" -o json > "$SPEC"
-  python3 - "$SPEC" "$WORKER_IMAGE" <<'PY'
-import json, sys
-path, image = sys.argv[1], sys.argv[2]
+  python3 - "$SPEC" "$WORKER_IMAGE" .do/app.yaml <<'PY'
+import json, re, sys
+path, image, yaml_path = sys.argv[1], sys.argv[2], sys.argv[3]
 spec = json.load(open(path))
+# Plain (non-secret) envs .do/app.yaml declares with a value that the live app lacks
+# are added (e.g. a new setting); the live app's values and its secrets are never touched.
+declared = dict(re.findall(r'\{\s*key:\s*([A-Z0-9_]+)\s*,\s*value:\s*"([^"]*)"\s*\}', open(yaml_path).read()))
 for svc in spec.get('services', []):
-    for e in svc.get('envs', []):
+    envs = svc.setdefault('envs', [])
+    for e in envs:
         if e['key'] == 'WORKER_IMAGE':
             e['value'] = image
+    have = {e['key'] for e in envs}
+    for k, v in declared.items():
+        if k not in have and v and not v.startswith('${') and k != 'WORKER_IMAGE':
+            envs.append({'key': k, 'value': v, 'scope': 'RUN_TIME'})
+            print(f'adding env {k}', file=sys.stderr)
 json.dump(spec, open(path, 'w'))
 PY
   doctl --context "$DO_CONTEXT" apps update "$APP_ID" --spec "$SPEC" --wait
