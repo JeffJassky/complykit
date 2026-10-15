@@ -138,7 +138,7 @@ describe('verifyInstall, hosted mode', () => {
     const html = page([ONE_LINE]);
     expect(verifyInstall(html, spec, {}, { status: 404, text: '/* complykit: no consent config */' })).toMatchObject({ result: 'fail', message: expect.stringMatching(/hosted script/i) });
     expect(verifyInstall(html, spec, {}, { status: 200, text: 'console.log(1)' })).toMatchObject({ result: 'fail', message: expect.stringMatching(/hosted script/i) });
-    expect(verifyInstall(html, spec, {}).result).toBe('unknown');
+    expect(verifyInstall(html, spec, {}).result).toBe('cannot-verify');
   });
 
   it('a missing referrerpolicy still passes, with a line saying to add it', () => {
@@ -150,7 +150,7 @@ describe('verifyInstall, hosted mode', () => {
   it('runVerify passes the fetched hosted script through', () => {
     const s = { check: 'install', method: 'static', mode: 'hosted', page: PAGE, scriptSrc: URL_ } as const;
     expect(runVerify(s, { html: page([ONE_LINE]), hostedScript: SERVED }).result).toBe('pass');
-    expect(runVerify(s, { html: page([ONE_LINE]) }).result).toBe('unknown');
+    expect(runVerify(s, { html: page([ONE_LINE]) }).result).toBe('cannot-verify');
   });
 
   it('a self-mode spec without a config hash fails (regenerate)', () => {

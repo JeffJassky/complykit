@@ -433,7 +433,7 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
   // the site's own domain is no outside party, so the inventory check below never
   // sees it). Shopify's Customer Privacy API is the platform's signal, not a tool to remove.
   const plugin = ev.platform?.consentPlugin;
-  if (plugin && plugin !== 'shopify-customer-privacy' && !ev.inventory.some((p) => p.categories.includes('consent'))) {
+  if (plugin && plugin !== 'shopify-customer-privacy' && !ev.inventory.some((p) => p.categories.includes('consent') && p.partyId !== COMPLYKIT_PARTY_ID)) {
     notes.push({ code: 'existing-consent-tool', level: 'flag', message: `The site runs a consent plugin (${plugin}, ${ev.platform!.name}). Deactivate it when installing this one: two banners, and two sources of truth for what the visitor chose. While it is active it also holds tags itself, so tools it held during the scan may be missing from this config — scan with an accept visit before generating.` });
   }
 
