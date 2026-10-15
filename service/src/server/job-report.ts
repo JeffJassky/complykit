@@ -15,8 +15,9 @@ import path from 'node:path';
 import { RUN_ID_RE, isFinal, type JobFiles } from './job-files.js';
 import { firstScan, newerScan, siteHistory } from './history.js';
 import { scoreReport } from '../shared/score.js';
-import type { JobDetail, JobReportResponse, OwnerReport, SiteWorkspace } from '../shared/api.js';
+import type { CompanionCmp, JobDetail, JobReportResponse, OwnerReport, SiteWorkspace } from '../shared/api.js';
 import { toSummary } from './store.js';
+import { storedConsentSettings } from './consent-settings.js';
 import { checklistProgress, mergeTaskStatus, storedTasks } from './remediation.js';
 import { rerenderJob, rerenderRunning, type RerenderDeps } from './rerender.js';
 import type { WorkspaceStore } from './workspace.js';
@@ -226,8 +227,25 @@ export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspa
     ...((await jsonReportExists(job, deps.files)) && job.result?.consent ? { jsonReportUrl: job.result.consent.reportUrl.replace(/\.html$/, '.json') } : {}),
     ...(job.result?.downloadUrl ? { downloadUrl: job.result.downloadUrl } : {}),
     ...(ready && hostedScriptUrl ? { hostedScriptUrl } : {}),
+    ...(ready ? { consentSettings: consentSettingsView(ws) } : {}),
     history: siteHistory(domain, jobs, ws, domainOf, job.id),
     ...(newer ? { newerScan: { jobId: newer.id, at: newer.createdAt } } : {}),
     ...(first ? { firstScan: { jobId: first.id, at: first.createdAt, ...(first.id === job.id ? { current: true as const } : {}), ...(firstScore !== undefined ? { score: firstScore } : {}) } } : {}),
+  };
+}
+
+const isRec = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** What the install task's form needs: the settings, the banner the scan saw, and the site's own category ids and defaults. */
+function consentSettingsView(ws: SiteWorkspace): NonNullable<JobReportResponse['consentSettings']> {
+  const v = ws.config?.value;
+  const cfg = isRec(v) && isRec(v.config) ? v.config : {};
+  const detected = isRec(v) && typeof v.detectedCmp === 'string' ? (v.detectedCmp as CompanionCmp) : undefined;
+  const categoryIds = Array.isArray(cfg.categories) ? cfg.categories.filter((c): c is { id: string } => isRec(c) && typeof c.id === 'string').map((c) => c.id) : [];
+  return {
+    settings: storedConsentSettings(ws) ?? { mode: 'full' },
+    ...(detected ? { detectedCmp: detected } : {}),
+    categoryIds,
+    defaults: { ...(typeof cfg.layout === 'string' ? { layout: cfg.layout } : {}), ...(typeof cfg.blockPage === 'boolean' ? { blockPage: cfg.blockPage } : {}), ...(typeof cfg.privacyPolicyUrl === 'string' ? { privacyPolicyUrl: cfg.privacyPolicyUrl } : {}) },
   };
 }

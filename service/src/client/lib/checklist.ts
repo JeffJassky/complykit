@@ -1,3 +1,4 @@
+import { consentSettingsOf } from './consentSettings';
 import { classificationDecided, type JobSummary, type RemediationStatus, type RemediationTask, type RemediationTaskValue, type SiteWorkspace } from '../../shared/api';
 
 // The site page's checklist (R3): the latest generated config's tasks
@@ -30,7 +31,9 @@ export function readTaskValue(value: unknown): RemediationTaskValue | undefined 
 export function checklistFromWorkspace(ws: SiteWorkspace): RemediationTask[] {
   const value = ws.config?.value;
   const raw = isObject(value) && Array.isArray(value.tasks) ? (value.tasks as unknown[]) : [];
-  const tasks = raw.filter((t): t is RemediationTask => isObject(t) && typeof t.id === 'string' && typeof t.title === 'string' && isObject(t.verify));
+  // Add-on mode keeps the site's banner: nothing to remove (the service hides these too).
+  const companion = consentSettingsOf(ws).mode === 'companion';
+  const tasks = raw.filter((t): t is RemediationTask => isObject(t) && typeof t.id === 'string' && typeof t.title === 'string' && isObject(t.verify) && !(companion && t.kind === 'remove-existing-tool'));
   return tasks
     .map((t) => {
       // A decision: decided when the workspace holds a purpose for the tool (its class: entry), nothing else.

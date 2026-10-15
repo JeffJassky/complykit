@@ -766,6 +766,8 @@ export interface JobReportResponse {
   accessibilityReportUrl?: string;
   /** The consent report as data (consent-report.json beside the HTML report). */
   jsonReportUrl?: string;
+  /** The install task's settings form: stored settings, the banner the scan saw, the site's category ids. Present with the checklist. */
+  consentSettings?: { settings: ConsentSettings; detectedCmp?: CompanionCmp; categoryIds: string[]; defaults?: { layout?: string; blockPage?: boolean; privacyPolicyUrl?: string } };
   /** Zip of everything for this job (reports, evidence, run data). */
   downloadUrl?: string;
   /** The site's hosted script URL (once a checklist exists): the install is one pasted script tag. */

@@ -31,6 +31,7 @@ import type {
   VerifyTaskResponse,
 } from '../shared/api.js';
 import type { ServiceConfig } from './config.js';
+import { isCompanion, storedConsentSettings } from './consent-settings.js';
 import type { Fleet, WorkerHandle } from './fleet.js';
 import type { RegionLocks } from './region-lock.js';
 import { DEFAULT_WORKER_REGION, WORKER_SECRET_HEADER, type VerifyRequest } from './worker-protocol.js';
@@ -74,7 +75,9 @@ export function storedTasks(ws: SiteWorkspace): RemediationTask[] {
   const v = ws.config?.value;
   const tasks = isObject(v) ? v.tasks : undefined;
   if (!Array.isArray(tasks)) return [];
-  return tasks.filter((t): t is RemediationTask => isObject(t) && typeof t.id === 'string' && isObject(t.verify));
+  const companion = isCompanion(storedConsentSettings(ws));
+  // Add-on mode: the existing banner stays, so there is nothing to remove.
+  return tasks.filter((t): t is RemediationTask => isObject(t) && typeof t.id === 'string' && isObject(t.verify) && !(companion && t.kind === 'remove-existing-tool'));
 }
 
 /**

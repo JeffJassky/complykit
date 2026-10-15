@@ -2,13 +2,15 @@ import { useEffect, useId, useState } from 'react';
 import type { LawId } from '../../shared/laws';
 import { orderLaws, scanBlockedReason } from '../lib/laws';
 import { AuthorizedBox, JobLaws, LawPicker } from './Laws';
-import type { JobSummary, RemediationStatus, RemediationTask, SiteSummary, SiteWorkspace, WorkspaceRun } from '../../shared/api';
+import type { ConsentSettings, JobSummary, RemediationStatus, RemediationTask, SiteSummary, SiteWorkspace, WorkspaceRun } from '../../shared/api';
 import { formatAbsolute, formatRelative } from '../lib/format';
 import { api } from '../lib/api';
 import { notifyJobsChanged } from '../lib/useJobs';
 import { configDownloads, configStoredOf, generatableRuns, siteRuns, generateErrorText, REPORT_REFRESH_FAILED, summarizeWorkspace } from '../lib/sites';
 import { PHASE_LABEL } from '../lib/format';
 import { checklistFromWorkspace, checklistProgress, hostedScriptUrlOf, installSnippet, openDecisions, reportChecklistHref, reportTaskHref, taskStatusLabel, TASK_CHANGE_PREFIX } from '../lib/checklist';
+import { COMPANION_LIST_NOTE, categoryIdsOf, consentSettingsOf, detectedCmpOf, settingsDefaultsOf } from '../lib/consentSettings';
+import { ConsentSettingsForm } from './ConsentSettingsForm';
 import { reportHref, siteHref } from '../lib/useHashView';
 import { useNow } from '../lib/useNow';
 import { copyText, useReviewer } from '../lib/useKb';
@@ -230,7 +232,7 @@ function InstallLine({ hostedScriptUrl }: { hostedScriptUrl: string }) {
   );
 }
 
-function ChecklistItem({ task, tasks, hostedScriptUrl, state, onVerify, onMarkDone }: { task: RemediationTask; tasks: RemediationTask[]; hostedScriptUrl?: string; state: ChecklistState; onVerify: (t: RemediationTask) => void; onMarkDone: (t: RemediationTask) => void }) {
+function ChecklistItem({ task, tasks, hostedScriptUrl, state, onVerify, onMarkDone, workspace, onSaveSettings }: { task: RemediationTask; tasks: RemediationTask[]; hostedScriptUrl?: string; state: ChecklistState; onVerify: (t: RemediationTask) => void; onMarkDone: (t: RemediationTask) => void; workspace?: SiteWorkspace; onSaveSettings?: (s: ConsentSettings) => Promise<void> }) {
   const busy = state.verifying === task.id;
   const error = state.errors?.[task.id];
   const waiting = openDecisions(task, tasks);
@@ -274,7 +276,25 @@ function ChecklistItem({ task, tasks, hostedScriptUrl, state, onVerify, onMarkDo
           <span className="muted">Can’t be checked automatically — mark it done when it’s made.</span>
         )}
       </div>}
+      {task.kind === 'install' && workspace && consentSettingsOf(workspace).mode === 'companion' && task.companionSteps?.length ? (
+        <ol className="checklist-steps" data-testid="companion-steps">
+          {task.companionSteps.map((s, i) => (
+            <li key={i}>{s}</li>
+          ))}
+        </ol>
+      ) : null}
       {task.kind === 'install' && hostedScriptUrl ? <InstallLine hostedScriptUrl={hostedScriptUrl} /> : null}
+      {task.kind === 'install' && workspace && onSaveSettings ? (
+        <ConsentSettingsForm
+          // The form restarts from what is stored whenever that changes.
+          key={JSON.stringify(consentSettingsOf(workspace))}
+          settings={consentSettingsOf(workspace)}
+          defaults={settingsDefaultsOf(workspace)}
+          detectedCmp={detectedCmpOf(workspace)}
+          categoryIds={categoryIdsOf(workspace)}
+          onSave={onSaveSettings}
+        />
+      ) : null}
       {busy ? (
         <p className="muted" role="status">
           Checking the live page… a browser check can take up to a minute.
@@ -445,9 +465,11 @@ export function ChecklistPanel({
   onMarkDone = () => {},
   rescan,
   onRescan,
+  onSaveSettings,
 }: {
   workspace: SiteWorkspace;
   jobs: Record<string, JobSummary> | null;
+  onSaveSettings?: (s: ConsentSettings) => Promise<void>;
   state?: ChecklistState;
   onVerify?: (t: RemediationTask) => void;
   onMarkDone?: (t: RemediationTask) => void;
@@ -461,7 +483,7 @@ export function ChecklistPanel({
   const required = tasks.filter((t) => !t.optional);
   const later = tasks.filter((t) => t.optional);
   const item = (t: RemediationTask) =>
-    t.kind === 'classify' ? <DecisionItem key={t.id} task={t} tasks={tasks} report={report} /> : <ChecklistItem key={t.id} task={t} tasks={tasks} hostedScriptUrl={hostedScriptUrlOf(workspace)} state={state} onVerify={onVerify} onMarkDone={onMarkDone} />;
+    t.kind === 'classify' ? <DecisionItem key={t.id} task={t} tasks={tasks} report={report} /> : <ChecklistItem key={t.id} task={t} tasks={tasks} hostedScriptUrl={hostedScriptUrlOf(workspace)} state={state} onVerify={onVerify} onMarkDone={onMarkDone} workspace={workspace} onSaveSettings={onSaveSettings} />;
   return (
     <section className="panel" aria-labelledby="site-checklist">
       <h2 id="site-checklist" className="section-title">
@@ -477,6 +499,11 @@ export function ChecklistPanel({
             {p.doneUnverified ? ` · ${p.doneUnverified} more marked done, not verified yet` : ''}
             {p.failed ? ` · ${p.failed} failed` : ''}
           </p>
+          {consentSettingsOf(workspace).mode === 'companion' ? (
+            <p className="hint" data-testid="companion-note">
+              {COMPANION_LIST_NOTE}
+            </p>
+          ) : null}
           {report ? (
             <p>
               <a href={report}>Open the to-do list in the report</a> for the steps, the markup to paste and the classify controls.
@@ -519,10 +546,12 @@ export function SitePageView({
   onMarkDone,
   rescan,
   onRescan,
+  onSaveSettings,
 }: {
   workspace: SiteWorkspace;
   jobs: Record<string, JobSummary> | null;
   now: number;
+  onSaveSettings?: (s: ConsentSettings) => Promise<void>;
   generate?: GenerateState;
   onGenerate?: (run: WorkspaceRun) => void;
   /** Retry the report re-render after a generate whose report step failed. */
@@ -595,7 +624,7 @@ export function SitePageView({
         </dl>
       </section>
 
-      <ChecklistPanel workspace={workspace} jobs={jobs} state={checklist} onVerify={onVerify} onMarkDone={onMarkDone} rescan={rescan} onRescan={onRescan} />
+      <ChecklistPanel workspace={workspace} jobs={jobs} state={checklist} onVerify={onVerify} onMarkDone={onMarkDone} rescan={rescan} onRescan={onRescan} onSaveSettings={onSaveSettings} />
 
       <section className="panel" aria-labelledby="site-config">
         <h2 id="site-config" className="section-title">
@@ -769,6 +798,10 @@ export function SitePage({ domain, jobs }: { domain: string; jobs: Record<string
       setChecklist((c) => ({ ...c, saving: undefined }));
     }
   };
+  const onSaveSettings = async (settings: ConsentSettings) => {
+    await api.saveConsentSettings(domain, settings);
+    await refresh();
+  };
   return (
     <>
       {error ? (
@@ -776,7 +809,7 @@ export function SitePage({ domain, jobs }: { domain: string; jobs: Record<string
           Couldn’t load {domain}: {error}
         </div>
       ) : null}
-      {data ? <SitePageView workspace={data} jobs={jobs} now={now} generate={generate} onGenerate={onGenerate} onUpdateReport={onUpdateReport} checklist={checklist} onVerify={onVerify} onMarkDone={onMarkDone} rescan={rescan} onRescan={onRescan} /> : error ? null : <div className="skeleton" aria-busy="true" aria-label="Loading site"><div className="skeleton-card" /></div>}
+      {data ? <SitePageView workspace={data} jobs={jobs} now={now} generate={generate} onGenerate={onGenerate} onUpdateReport={onUpdateReport} checklist={checklist} onVerify={onVerify} onMarkDone={onMarkDone} rescan={rescan} onRescan={onRescan} onSaveSettings={onSaveSettings} /> : error ? null : <div className="skeleton" aria-busy="true" aria-label="Loading site"><div className="skeleton-card" /></div>}
     </>
   );
 }
