@@ -47,7 +47,7 @@ async function open(config: unknown, opts: { ctx?: BrowserContext; scriptAttrs?:
   const ctx = opts.ctx ?? (await browser.newContext());
   const page = await ctx.newPage();
   const beacons: Beacon[] = [];
-  await page.route('**/events-page', (route) =>
+  await page.route('**/events-page*', (route) =>
     route.fulfill({
       contentType: 'text/html; charset=utf-8',
       body: `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Events fixture</title>
