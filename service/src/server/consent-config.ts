@@ -87,13 +87,13 @@ export async function generateStagedConsentConfig(job: JobDetail, body: ConsentC
   args.push('--hosted', hostedUrl, '--record-endpoint', recordEndpoint);
   if (privacyPolicyUrl) args.push('--privacy-policy', privacyPolicyUrl);
   const stdout = await runCli(deps.config, args);
-  let printed: { config: Record<string, unknown>; snippet: string; changeList: string; notes: ConsentConfigValue['notes']; scriptSrc?: string; hostedScriptUrl?: string; detectedCmp?: ConsentConfigValue['detectedCmp']; tasks?: ConsentConfigValue['tasks'] };
+  let printed: { config: Record<string, unknown>; snippet: string; changeList: string; notes: ConsentConfigValue['notes']; scriptSrc?: string; hostedScriptUrl?: string; detectedCmp?: ConsentConfigValue['detectedCmp']; detectedBanner?: ConsentConfigValue['detectedBanner']; tasks?: ConsentConfigValue['tasks'] };
   try {
     printed = JSON.parse(stdout);
   } catch {
     throw new WorkspaceError(500, 'complykit consent-config printed something other than JSON');
   }
-  const value: ConsentConfigValue = { config: printed.config, snippet: printed.snippet, changeList: printed.changeList, notes: printed.notes, ...(printed.scriptSrc ? { scriptSrc: printed.scriptSrc } : {}), ...(printed.hostedScriptUrl ? { hostedScriptUrl: printed.hostedScriptUrl } : {}), ...(printed.detectedCmp ? { detectedCmp: printed.detectedCmp } : {}), ...(Array.isArray(printed.tasks) ? { tasks: printed.tasks } : {}) };
+  const value: ConsentConfigValue = { config: printed.config, snippet: printed.snippet, changeList: printed.changeList, notes: printed.notes, ...(printed.scriptSrc ? { scriptSrc: printed.scriptSrc } : {}), ...(printed.hostedScriptUrl ? { hostedScriptUrl: printed.hostedScriptUrl } : {}), ...(printed.detectedCmp ? { detectedCmp: printed.detectedCmp } : {}), ...(printed.detectedBanner ? { detectedBanner: printed.detectedBanner } : {}), ...(Array.isArray(printed.tasks) ? { tasks: printed.tasks } : {}) };
   const res = await deps.workspaces.patch(domain, { ...(by ? { by } : {}), config: { value, runId } });
   // The config itself goes last: it is what readers open, and what says the other files are current.
   const outFiles = (await walkLocal(outDir)).sort((a, b) => Number(a === 'complykit-config.json') - Number(b === 'complykit-config.json'));

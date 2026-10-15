@@ -207,7 +207,7 @@ export async function cmdConsentConfig(argv: string[]): Promise<number> {
   const client: { written: string[]; note?: string } = result.hostedScriptUrl ? { written: [] } : copyClientFiles(out, result.scriptSrc, values['client-dist']);
 
   if (values.json) {
-    process.stdout.write(JSON.stringify({ clientFiles: client.written, ...(client.note ? { clientNote: client.note } : {}), runId: result.config.generatedFrom.runId, site: result.config.generatedFrom.site, config: result.config, snippet: result.snippet, changeList: result.changeList, notes: result.notes, tasks: result.tasks, scriptSrc: result.scriptSrc, ...(result.hostedScriptUrl ? { hostedScriptUrl: result.hostedScriptUrl } : {}), ...(result.detectedCmp ? { detectedCmp: result.detectedCmp } : {}), files }) + '\n');
+    process.stdout.write(JSON.stringify({ clientFiles: client.written, ...(client.note ? { clientNote: client.note } : {}), runId: result.config.generatedFrom.runId, site: result.config.generatedFrom.site, config: result.config, snippet: result.snippet, changeList: result.changeList, notes: result.notes, tasks: result.tasks, scriptSrc: result.scriptSrc, ...(result.hostedScriptUrl ? { hostedScriptUrl: result.hostedScriptUrl } : {}), ...(result.detectedCmp ? { detectedCmp: result.detectedCmp } : {}), ...(result.detectedBanner ? { detectedBanner: result.detectedBanner } : {}), files }) + '\n');
     return 0;
   }
   const c = result.config;

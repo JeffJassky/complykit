@@ -1,12 +1,14 @@
 import { useId, useState } from 'react';
-import type { CompanionCmp, ConsentSettings } from '../../shared/api';
-import { companionNote, COMPANION_BANNERS, manualSyncCode, settingsFromDraft, type SettingsDefaults, type SettingsDraft } from '../lib/consentSettings';
+import type { ConsentSettings, DetectedBanner } from '../../shared/api';
+import { companionNote, manualSyncCode, settingsFromDraft, type SettingsDefaults, type SettingsDraft } from '../lib/consentSettings';
 import { copyText } from '../lib/useKb';
 
 // The install task's settings form (plans/hosted-script.md "Owner settings"):
-// Mode first; full mode: layout, block the page, privacy link; add-on mode: which
-// banner to follow (preselected from the one the scan saw) and, for "other", the
-// line to add to the banner's callback.
+// The scan already knows the banner. With one detected: two radios ("Fully replace
+// {banner} with ComplyKit" / "Add ComplyKit to {banner} for improved compliance");
+// full mode shows layout, block the page and the privacy link; add-on mode follows the
+// detected banner (and, when complykit can't follow it automatically, shows the line
+// to add to its callback). Nothing detected: no choice, just the full-mode fields.
 
 export interface ConsentSettingsFormViewProps {
   draft: SettingsDraft;
@@ -16,14 +18,17 @@ export interface ConsentSettingsFormViewProps {
   /** Saved just now. */
   saved?: boolean;
   error?: string;
-  detectedCmp?: CompanionCmp;
+  /** The banner the scan saw (or, for stored add-on settings with no detection, a stand-in named "your current banner"). */
+  detectedBanner?: DetectedBanner;
   onChange: (patch: Partial<SettingsDraft>) => void;
   onSave: () => void;
 }
 
-export function ConsentSettingsFormView({ draft, defaults, categoryIds, saving, saved, error, detectedCmp, onChange, onSave }: ConsentSettingsFormViewProps) {
+export function ConsentSettingsFormView({ draft, defaults, categoryIds, saving, saved, error, detectedBanner, onChange, onSave }: ConsentSettingsFormViewProps) {
   const id = useId();
-  const companion = draft.mode === 'companion';
+  const companion = !!detectedBanner && draft.mode === 'companion';
+  const cmp = detectedBanner?.cmp ?? draft.cmp;
+  const banner = detectedBanner?.label ?? 'your current banner';
   const [copied, setCopied] = useState<boolean | null>(null);
   const code = manualSyncCode(categoryIds);
   const blockPage = draft.blockPage ?? defaults.blockPage ?? false;
@@ -31,39 +36,33 @@ export function ConsentSettingsFormView({ draft, defaults, categoryIds, saving, 
     <form
       className="consent-settings"
       data-testid="consent-settings"
-      data-mode={draft.mode}
+      data-mode={companion ? 'companion' : 'full'}
       onSubmit={(e) => {
         e.preventDefault();
         onSave();
       }}
     >
       <fieldset disabled={saving}>
-        <legend className="section-subtitle">Settings</legend>
-        <label className="option">
-          <input type="radio" name={`${id}-mode`} checked={!companion} onChange={() => onChange({ mode: 'full' })} data-testid="mode-full" /> <span>Use complykit as your consent banner</span>
-        </label>
-        <label className="option">
-          <input type="radio" name={`${id}-mode`} checked={companion} onChange={() => onChange({ mode: 'companion' })} data-testid="mode-companion" /> <span>Keep my banner — add complykit’s cookie cleanup</span>
-        </label>
+        <legend className="section-subtitle">{detectedBanner ? 'Settings' : 'Use ComplyKit as your consent banner'}</legend>
+        {detectedBanner ? (
+          <>
+            <label className="option">
+              <input type="radio" name={`${id}-mode`} checked={!companion} onChange={() => onChange({ mode: 'full' })} data-testid="mode-full" /> <span>Fully replace {banner} with ComplyKit</span>
+            </label>
+            <label className="option">
+              <input type="radio" name={`${id}-mode`} checked={companion} onChange={() => onChange({ mode: 'companion' })} data-testid="mode-companion" /> <span>Add ComplyKit to {banner} for improved compliance</span>
+            </label>
+          </>
+        ) : null}
 
         {companion ? (
           <div data-testid="companion-fields">
-            <label htmlFor={`${id}-cmp`}>Your banner</label>{' '}
-            <select id={`${id}-cmp`} value={draft.cmp ?? ''} onChange={(e) => onChange({ cmp: (e.target.value || undefined) as CompanionCmp | undefined })}>
-              {draft.cmp ? null : <option value="">Choose your banner…</option>}
-              {COMPANION_BANNERS.map((b) => (
-                <option key={b.cmp} value={b.cmp}>
-                  {b.label}
-                  {b.cmp === detectedCmp ? ' (detected on your site)' : ''}
-                </option>
-              ))}
-            </select>
-            {draft.cmp ? (
+            {cmp ? (
               <p className="hint" data-testid="cmp-note">
-                {companionNote(draft.cmp)}
+                {companionNote(cmp)}
               </p>
             ) : null}
-            {draft.cmp === 'manual' ? (
+            {cmp === 'manual' ? (
               <div className="checklist-snippet" data-testid="manual-code">
                 <div className="site-downloads">
                   <span>Add to your banner’s callback, with the visitor’s choices</span>
@@ -95,7 +94,7 @@ export function ConsentSettingsFormView({ draft, defaults, categoryIds, saving, 
         )}
       </fieldset>
       <p>
-        <button type="submit" className="btn btn-sm btn-primary" disabled={saving || (companion && !draft.cmp)} aria-busy={saving}>
+        <button type="submit" className="btn btn-sm btn-primary" disabled={saving || (companion && !cmp)} aria-busy={saving}>
           {saving ? 'Saving…' : 'Save settings'}
         </button>{' '}
         {saved && !saving && !error ? (
@@ -114,15 +113,17 @@ export function ConsentSettingsFormView({ draft, defaults, categoryIds, saving, 
 }
 
 /** The form with its own draft; `onSave` rejects with the reason to show. */
-export function ConsentSettingsForm({ settings, defaults, detectedCmp, categoryIds, onSave }: { settings: ConsentSettings; defaults: SettingsDefaults; detectedCmp?: CompanionCmp; categoryIds: readonly string[]; onSave: (s: ConsentSettings) => Promise<void> }) {
-  const [draft, setDraft] = useState<SettingsDraft>(() => ({ mode: settings.mode, cmp: settings.cmp ?? detectedCmp, layout: settings.layout, blockPage: settings.blockPage, privacyPolicyUrl: settings.privacyPolicyUrl }));
+export function ConsentSettingsForm({ settings, defaults, detectedBanner, categoryIds, onSave }: { settings: ConsentSettings; defaults: SettingsDefaults; detectedBanner?: DetectedBanner; categoryIds: readonly string[]; onSave: (s: ConsentSettings) => Promise<void> }) {
+  // Stored add-on settings with no detection now keep both radios, naming "your current banner", so nothing changes silently.
+  const banner: DetectedBanner | undefined = detectedBanner ?? (settings.mode === 'companion' && settings.cmp ? { label: 'your current banner', cmp: settings.cmp } : undefined);
+  const [draft, setDraft] = useState<SettingsDraft>(() => ({ mode: banner ? settings.mode : 'full', cmp: banner?.cmp ?? settings.cmp, layout: settings.layout, blockPage: settings.blockPage, privacyPolicyUrl: settings.privacyPolicyUrl }));
   const [state, setState] = useState<{ saving?: boolean; saved?: boolean; error?: string }>({});
   return (
     <ConsentSettingsFormView
       draft={draft}
       defaults={defaults}
       categoryIds={categoryIds}
-      detectedCmp={detectedCmp}
+      detectedBanner={banner}
       saving={state.saving}
       saved={state.saved}
       error={state.error}

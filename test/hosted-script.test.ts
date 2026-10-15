@@ -206,7 +206,7 @@ describe('add-on mode in the generated install (plans/hosted-script.md "Add-on m
     const shop = compatibilityEvaluation();
     shop.platform = { name: 'shopify', consentPlugin: 'shopify-customer-privacy', evidence: ['window.Shopify'] };
     expect(generateConsentConfig(shop, { complykitVersion: '0.0.0-test', now: NOW }).detectedCmp).toBe('shopify');
-    expect(generateConsentConfig(withTool('unknown:cmp.test'), { complykitVersion: '0.0.0-test', now: NOW }).detectedCmp).toBeUndefined();
+    expect(generateConsentConfig(withTool('unknown:cmp.test'), { complykitVersion: '0.0.0-test', now: NOW }).detectedCmp).toBe('manual');
     expect(hosted.detectedCmp).toBeUndefined();
   });
 

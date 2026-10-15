@@ -568,3 +568,60 @@ describe('data: URL tags and a destination GTM loads from gtag(config) (#47, #48
     expect(containsBannedVocabulary(out)).toBe(false);
   });
 });
+
+describe('detectedBanner: the existing banner, named, and how complykit follows it', () => {
+  const withParty = (partyId: string, label: string) => {
+    const e = compatibilityEvaluation();
+    e.inventory.push({ ...e.inventory[1], partyId, label, domain: 'cmp.test', hosts: ['cdn.cmp.test'], recognized: true, categories: ['consent'], implementation: { class: 'direct-script', evidence: [], alsoSeen: [] } });
+    return e;
+  };
+  const withPlatform = (name: 'wordpress' | 'shopify', consentPlugin: string, wpConsentApi?: boolean) => {
+    const e = compatibilityEvaluation();
+    e.platform = { name, consentPlugin, evidence: ['x'], ...(wpConsentApi !== undefined ? { wpConsentApi } : {}) };
+    return e;
+  };
+
+  it('a mapped consent-tool party → its cmp, labelled by the party', () => {
+    const r = gen(withParty('consent.onetrust', 'OneTrust'));
+    expect(r.detectedBanner).toEqual({ label: 'OneTrust', cmp: 'onetrust' });
+    expect(r.detectedCmp).toBe('onetrust');
+  });
+  it('an unmapped consent party → manual with its label', () => {
+    expect(gen(withParty('consent.termly', 'Termly')).detectedBanner).toEqual({ label: 'Termly', cmp: 'manual' });
+  });
+  it('a mapped party wins over an unmapped one', () => {
+    const e = withParty('consent.termly', 'Termly');
+    e.inventory.push({ ...e.inventory[e.inventory.length - 1], partyId: 'consent.didomi', label: 'Didomi' });
+    expect(gen(e).detectedBanner).toEqual({ label: 'Didomi', cmp: 'didomi' });
+  });
+  it('WordPress Complianz with the WP Consent API → wordpress', () => {
+    const r = gen(withPlatform('wordpress', 'complianz', true));
+    expect(r.detectedBanner).toEqual({ label: 'Complianz', cmp: 'wordpress' });
+    expect(r.detectedCmp).toBe('wordpress');
+  });
+  it('a WordPress plugin without the WP Consent API → manual', () => {
+    expect(gen(withPlatform('wordpress', 'complianz', false)).detectedBanner).toEqual({ label: 'Complianz', cmp: 'manual' });
+    expect(gen(withPlatform('wordpress', 'cookieyes')).detectedBanner).toEqual({ label: 'CookieYes', cmp: 'manual' });
+  });
+  it('the Cookiebot WordPress plugin → cookiebot', () => {
+    expect(gen(withPlatform('wordpress', 'cookiebot', false)).detectedBanner).toEqual({ label: 'Cookiebot', cmp: 'cookiebot' });
+  });
+  it('an unknown plugin id → "your consent plugin"', () => {
+    expect(gen(withPlatform('wordpress', 'mystery-plugin', true)).detectedBanner).toEqual({ label: 'your consent plugin', cmp: 'wordpress' });
+  });
+  it('Shopify customer privacy → shopify', () => {
+    expect(gen(withPlatform('shopify', 'shopify-customer-privacy')).detectedBanner).toEqual({ label: 'Shopify’s cookie banner', cmp: 'shopify' });
+  });
+  it('nothing detected → no banner', () => {
+    const r = gen();
+    expect(r.detectedBanner).toBeUndefined();
+    expect(r.detectedCmp).toBeUndefined();
+  });
+  it('every consent plugin id has a product name', async () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'registry', 'platform.ts'), 'utf8');
+    const ids = [...src.matchAll(/^\s+\{ id: '([^']+)'/gm)].map((m) => m[1]);
+    const { CONSENT_PLUGIN_LABELS } = await import('../src/registry/index.js');
+    expect(ids.length).toBeGreaterThan(5);
+    for (const id of ids) expect(CONSENT_PLUGIN_LABELS[id], id).toBeTruthy();
+  });
+});

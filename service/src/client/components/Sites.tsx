@@ -9,7 +9,7 @@ import { notifyJobsChanged } from '../lib/useJobs';
 import { configDownloads, configStoredOf, generatableRuns, siteRuns, generateErrorText, REPORT_REFRESH_FAILED, summarizeWorkspace } from '../lib/sites';
 import { PHASE_LABEL } from '../lib/format';
 import { COMPANION_INSTALL_SUMMARY, checklistFromWorkspace, checklistProgress, hostedScriptUrlOf, installSnippet, openDecisions, reportChecklistHref, reportTaskHref, taskStatusLabel, TASK_CHANGE_PREFIX } from '../lib/checklist';
-import { COMPANION_LIST_NOTE, categoryIdsOf, consentSettingsOf, detectedCmpOf, settingsDefaultsOf } from '../lib/consentSettings';
+import { COMPANION_LIST_NOTE, categoryIdsOf, consentSettingsOf, detectedBannerOf, settingsDefaultsOf } from '../lib/consentSettings';
 import { ConsentSettingsForm } from './ConsentSettingsForm';
 import { reportHref, siteHref } from '../lib/useHashView';
 import { useNow } from '../lib/useNow';
@@ -291,7 +291,7 @@ function ChecklistItem({ task, tasks, hostedScriptUrl, state, onVerify, onMarkDo
           key={JSON.stringify(consentSettingsOf(workspace))}
           settings={consentSettingsOf(workspace)}
           defaults={settingsDefaultsOf(workspace)}
-          detectedCmp={detectedCmpOf(workspace)}
+          detectedBanner={detectedBannerOf(workspace)}
           categoryIds={categoryIdsOf(workspace)}
           onSave={onSaveSettings}
         />

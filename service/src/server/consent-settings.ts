@@ -3,7 +3,7 @@
 // (the route and the reader share it), applied to the served config by
 // hostedConfig, and read by the to-do list (add-on mode hides remove-existing-tool).
 
-import type { CompanionCmp, ConsentSettings, SiteWorkspace } from '../shared/api.js';
+import type { CompanionCmp, ConsentSettings, DetectedBanner, SiteWorkspace } from '../shared/api.js';
 import { CONSENT_SETTINGS_ENTRY, WorkspaceError } from './workspace.js';
 
 export const CONSENT_SETTINGS_KEY = CONSENT_SETTINGS_ENTRY;
@@ -17,6 +17,13 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 const bad = (message: string): never => {
   throw new WorkspaceError(400, message);
 };
+
+/** The banner the scan saw, as stored in the generated config value (`detectedBanner`); undefined when absent or malformed. */
+export function detectedBannerOf(configValue: unknown): DetectedBanner | undefined {
+  const b = isObj(configValue) ? configValue.detectedBanner : undefined;
+  if (!isObj(b) || typeof b.label !== 'string' || !b.label.trim() || !(COMPANION_CMP_IDS as readonly unknown[]).includes(b.cmp)) return undefined;
+  return { label: b.label.slice(0, 100), cmp: b.cmp as CompanionCmp };
+}
 
 /** The settings as stored: only the allow-listed keys, each checked. Throws WorkspaceError(400). */
 export function normalizeConsentSettings(raw: unknown): ConsentSettings {

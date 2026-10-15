@@ -112,6 +112,20 @@ const CONSENT_PLUGINS: ConsentPluginDef[] = [
   { id: 'shopify-customer-privacy', globals: ['Shopify.customerPrivacy'], platform: 'shopify' },
 ];
 
+/** Product names for the consent plugin ids above, for owner-facing copy. Every id in CONSENT_PLUGINS has an entry. */
+export const CONSENT_PLUGIN_LABELS: Readonly<Record<string, string>> = {
+  complianz: 'Complianz',
+  cookieyes: 'CookieYes',
+  'cookie-notice': 'Cookie Notice',
+  'real-cookie-banner': 'Real Cookie Banner',
+  'borlabs-cookie': 'Borlabs Cookie',
+  iubenda: 'iubenda',
+  cookiebot: 'Cookiebot',
+  'gdpr-cookie-compliance': 'GDPR Cookie Compliance',
+  'webtoffee-cookie-consent': 'WebToffee Cookie Consent',
+  'shopify-customer-privacy': 'Shopify’s cookie banner',
+};
+
 function versionFromGenerator(generator: string | undefined, name: PlatformName): string | undefined {
   if (!generator) return undefined;
   if (name === 'wordpress') return /^wordpress\s+(\d+(?:\.\d+){0,2})/i.exec(generator)?.[1];
