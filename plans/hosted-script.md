@@ -77,7 +77,14 @@ configs hash the same): `mode?: 'full' | 'companion'` (absent = full) and
 `companion?: { cmp, map? }` (required for companion). `cmp` ∈ `onetrust cookiebot
 usercentrics didomi trustarc shopify wordpress tcf consent-mode manual`.
 
-Client in companion mode:
+Client in companion mode (a separate bundle — the core is at ~96% of its 15 KB gz budget):
+- `complykit-consent-companion.js` (new IIFE, own budget 8 KB gz) holds the source
+  adapters and maps. The core, when `mode === 'companion'`, loads it async from the same
+  folder as itself with `?v=<TOOL_VERSION>` (same derivation as the UI file; attribute
+  `data-complykit-companion` overrides), exactly like the UI loader. The companion file
+  registers on a host object the core exposes (like `ComplyKit._ui`). The service serves
+  it at `/s/complykit-consent-companion.js` with the UI file's caching rules; the CLI's
+  self-hosted copy step copies it too.
 - **Off:** the UI file (never requested), the GTM bridge, the vendor adapters, the
   platform bridges (they would write our state into the platform — the banner owns it),
   consent records (the banner keeps its own proof). The gate is installed but there are no
