@@ -768,8 +768,8 @@ export interface JobReportResponse {
   jsonReportUrl?: string;
   /** Zip of everything for this job (reports, evidence, run data). */
   downloadUrl?: string;
-  /** The site's install bundle (once a checklist exists). */
-  installZipUrl?: string;
+  /** The site's hosted script URL (once a checklist exists): the install is one pasted script tag. */
+  hostedScriptUrl?: string;
   /** Every scan of this site, newest first (this one marked `current`). */
   history: ScanHistoryItem[];
   /** Set when a newer finished consent scan of the site exists: this report is an earlier scan and can't make the to-do list. */

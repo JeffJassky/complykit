@@ -199,6 +199,8 @@ export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspa
   else state = 'none';
 
   const ready = state === 'ready';
+  const storedValue = ws.config?.value as { hostedScriptUrl?: unknown } | null | undefined;
+  const hostedScriptUrl = typeof storedValue?.hostedScriptUrl === 'string' ? storedValue.hostedScriptUrl : undefined;
   const jobs = deps.jobs ?? [job];
   const domainOf = (host: string) => deps.workspaces.domain(host);
   const newer = newerScan(job, jobs, domainOf);
@@ -223,7 +225,7 @@ export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspa
     ...(job.result?.accessibility?.reportUrl ? { accessibilityReportUrl: job.result.accessibility.reportUrl } : {}),
     ...((await jsonReportExists(job, deps.files)) && job.result?.consent ? { jsonReportUrl: job.result.consent.reportUrl.replace(/\.html$/, '.json') } : {}),
     ...(job.result?.downloadUrl ? { downloadUrl: job.result.downloadUrl } : {}),
-    ...(ready ? { installZipUrl: `/api/sites/${encodeURIComponent(domain)}/install.zip` } : {}),
+    ...(ready && hostedScriptUrl ? { hostedScriptUrl } : {}),
     history: siteHistory(domain, jobs, ws, domainOf, job.id),
     ...(newer ? { newerScan: { jobId: newer.id, at: newer.createdAt } } : {}),
     ...(first ? { firstScan: { jobId: first.id, at: first.createdAt, ...(first.id === job.id ? { current: true as const } : {}), ...(firstScore !== undefined ? { score: firstScore } : {}) } } : {}),

@@ -214,6 +214,7 @@ const withTasks: SiteWorkspace = {
       snippet: '',
       changeList: '',
       notes: [],
+      hostedScriptUrl: 'https://ck.example-host.test/s/example-shop.test.js',
       tasks: [
         task('rewrite-tag:aaaaaaaaaaaa', 1),
         task('install', 0),
@@ -238,7 +239,7 @@ describe('site checklist', () => {
     expect(summarizeWorkspace(withTasks)).toMatchObject({ openTasks: 2, doneTasks: 1 });
   });
 
-  it('renders progress, status pills, Verify only for checkable tasks, the install zip and a link into the report', () => {
+  it('renders progress, status pills, Verify only for checkable tasks, the one-line install snippet with Copy (no zip) and a link into the report', () => {
     const jobs = { 'job-2': job('job-2') };
     expect(reportChecklistHref(withTasks, jobs)).toBe('/reports/job-2/consent/consent-report.html#remediation');
     const html = renderToStaticMarkup(<ChecklistPanel workspace={withTasks} jobs={jobs} />);
@@ -247,7 +248,9 @@ describe('site checklist', () => {
     expect(html).toContain('Verified ✓');
     expect(html).toContain('Marked done');
     expect(html).toContain('The served HTML carries the change.');
-    expect(html).toContain('href="/api/sites/example-shop.test/install.zip"');
+    expect(html).not.toContain('install.zip');
+    expect(html).toContain('&lt;script src=&quot;https://ck.example-host.test/s/example-shop.test.js&quot; referrerpolicy=&quot;no-referrer&quot;&gt;&lt;/script&gt;');
+    expect(html).toMatch(/data-testid="install-snippet".*Copy/s);
     expect(html).toContain('href="/reports/job-2/consent/consent-report.html#remediation"');
     expect(html).toContain('Can’t be checked automatically');
     expect(html).toContain('Only if they apply (1): chat, embeds and fonts');

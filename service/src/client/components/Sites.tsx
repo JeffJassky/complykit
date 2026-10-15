@@ -8,10 +8,10 @@ import { api } from '../lib/api';
 import { notifyJobsChanged } from '../lib/useJobs';
 import { configDownloads, configStoredOf, generatableRuns, siteRuns, generateErrorText, REPORT_REFRESH_FAILED, summarizeWorkspace } from '../lib/sites';
 import { PHASE_LABEL } from '../lib/format';
-import { checklistFromWorkspace, checklistProgress, installZipHref, openDecisions, reportChecklistHref, reportTaskHref, taskStatusLabel, TASK_CHANGE_PREFIX } from '../lib/checklist';
+import { checklistFromWorkspace, checklistProgress, hostedScriptUrlOf, installSnippet, openDecisions, reportChecklistHref, reportTaskHref, taskStatusLabel, TASK_CHANGE_PREFIX } from '../lib/checklist';
 import { reportHref, siteHref } from '../lib/useHashView';
 import { useNow } from '../lib/useNow';
-import { useReviewer } from '../lib/useKb';
+import { copyText, useReviewer } from '../lib/useKb';
 import { useLiveRefresh, useSites, useSiteWorkspace } from '../lib/useSites';
 
 function When({ iso, now }: { iso: string | undefined; now: number }) {
@@ -211,7 +211,26 @@ function DecisionItem({ task, tasks, report }: { task: RemediationTask; tasks: R
   );
 }
 
-function ChecklistItem({ task, tasks, domain, state, onVerify, onMarkDone }: { task: RemediationTask; tasks: RemediationTask[]; domain: string; state: ChecklistState; onVerify: (t: RemediationTask) => void; onMarkDone: (t: RemediationTask) => void }) {
+/** The install line with a Copy button: all a site owner pastes (first in <head>). */
+function InstallLine({ hostedScriptUrl }: { hostedScriptUrl: string }) {
+  const text = installSnippet(hostedScriptUrl);
+  const [copied, setCopied] = useState<boolean | null>(null);
+  return (
+    <div className="checklist-snippet" data-testid="install-snippet">
+      <div className="site-downloads">
+        <span>Paste first in &lt;head&gt;</span>
+        <button type="button" className="btn btn-sm btn-secondary" onClick={() => void copyText(text).then(setCopied)}>
+          {copied === true ? 'Copied ✓' : copied === false ? 'Copy failed' : 'Copy'}
+        </button>
+      </div>
+      <pre>
+        <code>{text}</code>
+      </pre>
+    </div>
+  );
+}
+
+function ChecklistItem({ task, tasks, hostedScriptUrl, state, onVerify, onMarkDone }: { task: RemediationTask; tasks: RemediationTask[]; hostedScriptUrl?: string; state: ChecklistState; onVerify: (t: RemediationTask) => void; onMarkDone: (t: RemediationTask) => void }) {
   const busy = state.verifying === task.id;
   const error = state.errors?.[task.id];
   const waiting = openDecisions(task, tasks);
@@ -254,12 +273,8 @@ function ChecklistItem({ task, tasks, domain, state, onVerify, onMarkDone }: { t
         ) : (
           <span className="muted">Can’t be checked automatically — mark it done when it’s made.</span>
         )}
-        {task.kind === 'install' ? (
-          <a className="btn btn-sm btn-secondary" href={installZipHref(domain)} download>
-            Download install bundle (.zip)
-          </a>
-        ) : null}
       </div>}
+      {task.kind === 'install' && hostedScriptUrl ? <InstallLine hostedScriptUrl={hostedScriptUrl} /> : null}
       {busy ? (
         <p className="muted" role="status">
           Checking the live page… a browser check can take up to a minute.
@@ -446,7 +461,7 @@ export function ChecklistPanel({
   const required = tasks.filter((t) => !t.optional);
   const later = tasks.filter((t) => t.optional);
   const item = (t: RemediationTask) =>
-    t.kind === 'classify' ? <DecisionItem key={t.id} task={t} tasks={tasks} report={report} /> : <ChecklistItem key={t.id} task={t} tasks={tasks} domain={workspace.domain} state={state} onVerify={onVerify} onMarkDone={onMarkDone} />;
+    t.kind === 'classify' ? <DecisionItem key={t.id} task={t} tasks={tasks} report={report} /> : <ChecklistItem key={t.id} task={t} tasks={tasks} hostedScriptUrl={hostedScriptUrlOf(workspace)} state={state} onVerify={onVerify} onMarkDone={onMarkDone} />;
   return (
     <section className="panel" aria-labelledby="site-checklist">
       <h2 id="site-checklist" className="section-title">

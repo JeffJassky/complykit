@@ -8,7 +8,7 @@ import { JobLaws, LawProgress, RescanButton } from './Laws';
 import { lawRows, type LawRow } from '../lib/laws';
 import { tabReport } from '../lib/lawReport';
 import { formatAbsolute, formatClock, jobDuration, STATUS_LABEL as JOB_STATUS_LABEL } from '../lib/format';
-import { openDecisions, STATUS_LABEL as TASK_STATUS_LABEL, TASK_CHANGE_PREFIX } from '../lib/checklist';
+import { installSnippet, openDecisions, STATUS_LABEL as TASK_STATUS_LABEL, TASK_CHANGE_PREFIX } from '../lib/checklist';
 import { copyText, useReviewer } from '../lib/useKb';
 import { createRerenderQueue, useJobReport } from '../lib/useJobReport';
 import { reportHref } from '../lib/useHashView';
@@ -560,7 +560,11 @@ function ChangeTodo({ task, tasks, data, ui, actions, current }: { task: Remedia
               ))}
             </ol>
           ) : null}
-          {task.snippet?.after ? <SnippetBlock text={task.snippet.after} label={task.kind === 'install' ? 'Paste first in <head>' : 'Change it to'} onCopy={actions.onCopy} /> : null}
+          {task.kind === 'install' && data.hostedScriptUrl ? (
+            <SnippetBlock text={installSnippet(data.hostedScriptUrl)} label="Paste first in <head>" onCopy={actions.onCopy} />
+          ) : task.snippet?.after ? (
+            <SnippetBlock text={task.snippet.after} label={task.kind === 'install' ? 'Paste first in <head>' : 'Change it to'} onCopy={actions.onCopy} />
+          ) : null}
           {task.snippet?.before ? (
             <details className="rp-before">
               <summary>What it looks like now</summary>
@@ -580,11 +584,6 @@ function ChangeTodo({ task, tasks, data, ui, actions, current }: { task: Remedia
       )}
       {waiting.length ? null : (
         <div className="rp-todo-actions">
-          {task.kind === 'install' && data.installZipUrl ? (
-            <a className="btn btn-sm btn-secondary" href={data.installZipUrl} download>
-              Download install bundle (.zip)
-            </a>
-          ) : null}
           {task.verify.method !== 'manual' ? (
             <button type="button" className="btn btn-sm btn-primary" disabled={!!ui.verifying || !actions.onVerify} aria-busy={verifying} onClick={() => actions.onVerify?.(task)}>
               {verifying ? 'Checking your site…' : task.lastVerify ? 'Verify again' : 'Verify'}

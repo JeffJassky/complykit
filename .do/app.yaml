@@ -32,6 +32,7 @@ services:
       - { key: IDLE_SHUTDOWN_MINUTES, value: "0" }
       - { key: CONCURRENCY, value: "2" }
       - { key: ALLOW_OPEN, value: "1" }
+      - { key: PUBLIC_ORIGIN, value: "https://complykit-6v9s6.ondigitalocean.app" }
       - { key: MONGO_URL, type: SECRET, value: "${MONGO_URL}" }
       - { key: MONGO_CA, type: SECRET, value: "${MONGO_CA}" }
       - { key: SPACES_KEY, type: SECRET, value: "${SPACES_KEY}" }

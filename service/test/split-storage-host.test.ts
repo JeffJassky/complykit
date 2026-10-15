@@ -25,7 +25,7 @@ afterEach(stopAll);
 async function split(wrap: (b: Blobs) => Blobs = (b) => b): Promise<{ storage: Storage; blobDir: string }> {
   const blobDir = tempDir();
   const records = await mongoRecords({ url: mongo.getUri(), db: `ck_host_${crypto.randomBytes(4).toString('hex')}` });
-  return { blobDir, storage: { kind: 'cloud', blobs: wrap(new FsBlobs(blobDir)), jobs: records.jobs, workspaces: records.workspaces, consentRecords: records.consentRecords, close: records.close } };
+  return { blobDir, storage: { kind: 'cloud', blobs: wrap(new FsBlobs(blobDir)), jobs: records.jobs, workspaces: records.workspaces, consentRecords: records.consentRecords, configSnapshots: records.configSnapshots, close: records.close } };
 }
 
 type S = Awaited<ReturnType<typeof startService>>;
@@ -57,7 +57,7 @@ describe('split storage on the host', () => {
     const id = await scan(s, 'shop.example.com');
     const body = (await request(s.app).post(`/api/jobs/${id}/consent-config`).send({ by: 'Ann' }).expect(200)).body as ConsentConfigResponse;
     expect(fs.existsSync(path.join(blobDir, 'jobs', id, 'consent', 'consent-config', 'complykit-config.json'))).toBe(true);
-    expect((await request(s.app).get(body.files.snippet).expect(200)).text).toContain('complykit-config');
+    expect((await request(s.app).get(body.files.snippet).expect(200)).text).toContain('/s/example.com.js');
     expect(fs.existsSync(path.join(s.config.dataDir, 'jobs', id))).toBe(false);
   });
 

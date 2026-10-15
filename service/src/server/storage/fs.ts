@@ -9,13 +9,13 @@ import fsp from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-import type { JobDetail, SiteWorkspace } from '../../shared/api.js';
+import type { ConfigSnapshot, JobDetail, SiteWorkspace } from '../../shared/api.js';
 import { CONSENT_FILE, MAX_FILE_BYTES, type ConsentRecord } from '../consent-records.js';
 import { siteDomain } from '../domains.js';
 import { isJobId } from '../store.js';
 import { WORKSPACE_FILE, WorkspaceError } from '../workspace.js';
 import { FsBlobs } from './fs-blobs.js';
-import type { ConsentRecordRecords, JobRecords, StoredWorkspace, Storage, WorkspaceRecords } from './types.js';
+import type { ConfigSnapshotRecords, ConsentRecordRecords, JobRecords, StoredWorkspace, Storage, WorkspaceRecords } from './types.js';
 
 const STALE_MS = 30_000;
 const WAIT_MS = 15_000;
@@ -297,6 +297,38 @@ class FsConsentRecords implements ConsentRecordRecords {
   }
 }
 
+const HASH_RE = /^[0-9a-f]{64}$/;
+
+/** DATA_DIR/config-snapshots/<hash>.json, written once. */
+class FsConfigSnapshots implements ConfigSnapshotRecords {
+  private readonly chains = new Chains();
+  constructor(private readonly dir: string) {}
+
+  async put(snapshot: ConfigSnapshot): Promise<void> {
+    if (!HASH_RE.test(snapshot.hash)) throw new Error('not a config hash');
+    const file = path.join(this.dir, `${snapshot.hash}.json`);
+    await this.chains.run(snapshot.hash, async () => {
+      try {
+        await fsp.access(file);
+        return;
+      } catch {
+        /* not there yet */
+      }
+      await atomicWrite(file, JSON.stringify(snapshot) + '\n');
+    });
+  }
+
+  async get(hash: string): Promise<ConfigSnapshot | undefined> {
+    if (!HASH_RE.test(hash)) return undefined;
+    try {
+      const v = JSON.parse(await fsp.readFile(path.join(this.dir, `${hash}.json`), 'utf8')) as unknown;
+      return isPlainObject(v) && v.hash === hash ? (v as unknown as ConfigSnapshot) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+}
+
 export function fsStorage(dataDir: string, opts: { consentMaxBytes?: number } = {}): Storage {
   const sites = path.join(dataDir, 'sites');
   return {
@@ -305,6 +337,7 @@ export function fsStorage(dataDir: string, opts: { consentMaxBytes?: number } = 
     jobs: new FsJobs(dataDir),
     workspaces: new FsWorkspaces(sites),
     consentRecords: new FsConsentRecords(sites, opts.consentMaxBytes ?? MAX_FILE_BYTES),
+    configSnapshots: new FsConfigSnapshots(path.join(dataDir, 'config-snapshots')),
     close: async () => undefined,
   };
 }
