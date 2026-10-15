@@ -283,7 +283,12 @@ Kept forever (not personal data).
 App Platform now: `PUBLIC_ORIGIN=https://complykit-6v9s6.ondigitalocean.app`. When the
 domain exists: point a proxied Cloudflare hostname at the app, enable the "Add visitor
 location headers" managed transform, set the four vars, deploy, and add the hostname to
-the KB entry (T1b). The default App Platform host stays in the KB entry.
+the KB entry (T1b). The default App Platform host stays in the KB entry: the new hostname
+must be ADDED to `COMPLYKIT_HOSTS` (src/registry/kb/entries.ts), the old one kept. Stored hosted URLs
+lose nothing when `PUBLIC_ORIGIN` changes: the service rewrites a `/s/<domain>.js` URL to the current
+origin wherever it shows or verifies one (job report, remediation view, workspace, Verify).
+`/e` and `/api/consent-records` rate limits key on the one-hop `trust proxy` address, or on
+`cf-connecting-ip` when `TRUST_CF_GEO` is on.
 
 ---
 

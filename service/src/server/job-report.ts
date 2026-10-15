@@ -18,7 +18,7 @@ import { scoreReport } from '../shared/score.js';
 import type { CompanionCmp, JobDetail, JobReportResponse, OwnerReport, SiteWorkspace } from '../shared/api.js';
 import { toSummary } from './store.js';
 import { storedConsentSettings } from './consent-settings.js';
-import { checklistProgress, mergeTaskStatus, storedTasks } from './remediation.js';
+import { checklistProgress, mergeTaskStatus, rehomeHostedUrl, storedTasks } from './remediation.js';
 import { rerenderJob, rerenderRunning, type RerenderDeps } from './rerender.js';
 import type { WorkspaceStore } from './workspace.js';
 
@@ -170,7 +170,7 @@ async function baselineScore(job: JobDetail, files: JobFiles): Promise<number | 
   return score;
 }
 
-export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspaces: WorkspaceStore; maker?: ChecklistMaker; jobs?: JobDetail[] }): Promise<JobReportResponse> {
+export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspaces: WorkspaceStore; maker?: ChecklistMaker; jobs?: JobDetail[]; publicOrigin?: string }): Promise<JobReportResponse> {
   const consent = job.checks.includes('consent');
   const domain = deps.workspaces.domain(new URL(job.url).hostname);
   const report = consent ? await readOwnerReport(job, deps.files, await ownerReportRel(job, deps.files)) : null;
@@ -186,7 +186,7 @@ export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspa
         )
       : undefined;
   const ws = await deps.workspaces.get(domain);
-  const tasks = mergeTaskStatus(storedTasks(ws), ws).sort((a, b) => a.order - b.order);
+  const tasks = mergeTaskStatus(storedTasks(ws, deps.publicOrigin), ws).sort((a, b) => a.order - b.order);
   const runId = job.result?.consent?.runId;
   const auto = deps.maker?.state(job.id);
 
@@ -201,7 +201,7 @@ export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspa
 
   const ready = state === 'ready';
   const storedValue = ws.config?.value as { hostedScriptUrl?: unknown } | null | undefined;
-  const hostedScriptUrl = typeof storedValue?.hostedScriptUrl === 'string' ? storedValue.hostedScriptUrl : undefined;
+  const hostedScriptUrl = typeof storedValue?.hostedScriptUrl === 'string' ? (deps.publicOrigin ? rehomeHostedUrl(storedValue.hostedScriptUrl, deps.publicOrigin) : storedValue.hostedScriptUrl) : undefined;
   const jobs = deps.jobs ?? [job];
   const domainOf = (host: string) => deps.workspaces.domain(host);
   const newer = newerScan(job, jobs, domainOf);

@@ -160,6 +160,29 @@ describe('POST /e', () => {
     expect(limited).toBeGreaterThanOrEqual(5);
   });
 
+  it('a client-supplied leftmost X-Forwarded-For cannot reset the limit (trust proxy 1)', async () => {
+    const { s, hash } = await service();
+    let limited = 0;
+    for (let i = 0; i < 125; i++) {
+      // The platform proxy appends the real address (9.9.9.9) on the right; the client forges the left.
+      const r = await post(s, body(hash, [{ t: 'shown' }]), { 'X-Forwarded-For': `10.0.${i}.1, 9.9.9.9` });
+      if (r.status === 429) limited++;
+    }
+    expect(limited).toBeGreaterThanOrEqual(5);
+    await post(s, body(hash, [{ t: 'shown' }]), { 'X-Forwarded-For': '1.2.3.4, 8.8.8.8' }).expect(204);
+  });
+
+  it('behind Cloudflare the limiter keys on cf-connecting-ip', async () => {
+    const { s, hash } = await service({ trustCfGeo: true });
+    let limited = 0;
+    for (let i = 0; i < 125; i++) {
+      const r = await post(s, body(hash, [{ t: 'shown' }]), { 'cf-connecting-ip': '7.7.7.7', 'X-Forwarded-For': `10.0.${i}.1` });
+      if (r.status === 429) limited++;
+    }
+    expect(limited).toBeGreaterThanOrEqual(5);
+    await post(s, body(hash, [{ t: 'shown' }]), { 'cf-connecting-ip': '7.7.7.8' }).expect(204);
+  });
+
   it('is public even when the service has a password', async () => {
     const { s, hash } = await service({ password: 'pw' });
     await post(s, body(hash, [{ t: 'shown' }])).expect(204);

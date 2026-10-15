@@ -95,7 +95,7 @@ export function ConsentSettingsFormView({ draft, defaults, categoryIds, saving, 
         )}
       </fieldset>
       <p>
-        <button type="submit" className="btn btn-sm" disabled={saving || (companion && !draft.cmp)} aria-busy={saving}>
+        <button type="submit" className="btn btn-sm btn-primary" disabled={saving || (companion && !draft.cmp)} aria-busy={saving}>
           {saving ? 'Saving…' : 'Save settings'}
         </button>{' '}
         {saved && !saving && !error ? (

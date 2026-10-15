@@ -113,6 +113,12 @@ describe('verifyInstall, hosted mode', () => {
     expect(verifyInstall(page([ONE_LINE.replace('.js"', '.js?v=2"'), GTAG]), spec, {}, SERVED).result).toBe('pass');
   });
 
+  it('matches a tag whose src carries a username and password (userinfo is not part of the address)', () => {
+    const withUserinfo = ONE_LINE.replace('https://', 'https://user:pass@');
+    expect(verifyInstall(page([withUserinfo, GTAG]), spec, {}, SERVED).result).toBe('pass');
+    expect(verifyInstall(page([ONE_LINE, GTAG]), { ...spec, scriptSrc: URL_.replace('https://', 'https://user:pass@') }, {}, SERVED).result).toBe('pass');
+  });
+
   it('fails when the tag is missing, or points at another site’s file', () => {
     expect(verifyInstall(page([GTAG]), spec, {}, SERVED)).toMatchObject({ result: 'fail', message: expect.stringContaining(URL_) });
     expect(verifyInstall(page([ONE_LINE.replace('example-shop.test.js', 'other.test.js')]), spec, {}, SERVED).result).toBe('fail');

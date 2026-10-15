@@ -121,6 +121,12 @@ describe('the site page checklist and the settings', () => {
     expect(addon).toContain('data-mode="companion"');
     expect(addon).toContain('data-testid="companion-steps"');
     expect(addon).toContain('Keep your banner.');
+    // Add-on copy: no "first", the add-on summary, and the full-mode wording is gone.
+    expect(addon).toContain('Paste in &lt;head&gt;');
+    expect(addon).not.toContain('Paste first in');
+    expect(addon).toContain('One line in &lt;head&gt;. Your banner keeps the choice;');
+    expect(full).toContain('Paste first in &lt;head&gt;');
+    expect(full).not.toContain('Your banner keeps the choice');
     // One form, on the install task only.
     expect(addon.match(/data-testid="consent-settings"/g)?.length).toBe(1);
   });
@@ -150,6 +156,12 @@ describe('the report page to-do list and the settings', () => {
     expect(addon).not.toContain('Paste it first in head.');
     expect(addon).toMatch(/<option value="cookiebot" selected="">/);
     expect(addon).toContain('data-testid="companion-note"');
+    expect(addon).toContain('Paste in &lt;head&gt;');
+    expect(addon).not.toContain('Paste first in');
+    expect(addon).toContain('One line in &lt;head&gt;. Your banner keeps the choice;');
+    expect(full).toContain('Paste first in &lt;head&gt;');
+    expect(full).not.toContain('Your banner keeps the choice');
+    expect(addon).toMatch(/<button type="submit" class="btn btn-sm btn-primary"/);
     // Without a save handler there is no form (a read-only view).
     expect(renderToStaticMarkup(<TodoList data={data('full')} />)).not.toContain('consent-settings');
   });
