@@ -65,3 +65,16 @@ export function binaryParser(res: unknown, cb: (err: Error | null, body: Buffer)
   stream.on('data', (c: Buffer) => chunks.push(c));
   stream.on('end', () => cb(null, Buffer.concat(chunks)));
 }
+
+/** A free localhost port (for tests that must know the service's public origin before it listens). */
+export async function freePort(): Promise<number> {
+  const net = await import('node:net');
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address() as import('node:net').AddressInfo;
+      srv.close(() => resolve(port));
+    });
+  });
+}

@@ -29,7 +29,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { classificationKey } from '../src/site-workspace.js';
 import { startE2eSite, opensslAvailable, SITE, GTAG_SRC, PIXEL_SRC, WIDGET_SRC, type E2eSite } from './fixtures/remediation-e2e-site.js';
 import { clientBuilt } from './fixtures/proof-site.js';
-import { startService, stopAll, waitForStatus } from '../service/test/helpers.js';
+import { freePort, startService, stopAll, waitForStatus } from '../service/test/helpers.js';
 import type { Service } from '../service/src/server/app.js';
 import type { ConsentConfigResponse, CreateBatchResponse, RemediationResponse, RemediationTask, RerenderResponse, RescanResponse, SitesResponse, SiteWorkspace, VerifyTaskResponse } from '../service/src/shared/api.js';
 
@@ -77,8 +77,10 @@ suite('remediation flow, end to end (real CLI, service, browser, fixture site)',
     // The CLI children (scan, verify-change) inherit the environment: the fixture's host mapping.
     prevArgs = process.env.COMPLYKIT_BROWSER_ARGS;
     process.env.COMPLYKIT_BROWSER_ARGS = site.launchArgs.join(' ');
-    service = await startService({ cliPath: CLI, consentRuns: 1, pollMs: 250, concurrency: 1, killGraceMs: 2000 });
-    server = service.app.listen(0, '127.0.0.1');
+    // The hosted script URL the service hands out must be this listener: pick the port first.
+    const port = await freePort();
+    service = await startService({ publicOrigin: `http://127.0.0.1:${port}`, cliPath: CLI, consentRuns: 1, pollMs: 250, concurrency: 1, killGraceMs: 2000 });
+    server = service.app.listen(port, '127.0.0.1');
     await new Promise((r) => server.once('listening', r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
@@ -158,7 +160,7 @@ suite('remediation flow, end to end (real CLI, service, browser, fixture site)',
       expect(gen.status, JSON.stringify(gen.body)).toBe(200);
       const ws = (await api<SiteWorkspace>('GET', `/api/sites/${SITE}/workspace`)).body;
       const stored = ws.config!.value as { tasks?: RemediationTask[]; scriptSrc?: string; snippet: string };
-      expect(stored.scriptSrc).toBe('/complykit/v1/complykit-consent.js');
+      expect(stored.scriptSrc).toBe(`${base}/s/${SITE}.js`);
       expect(stored.tasks?.length).toBeGreaterThan(4);
 
       // --- 5. The checklist ---------------------------------------------------------
