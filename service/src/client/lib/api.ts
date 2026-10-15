@@ -1,6 +1,8 @@
 import type {
   ConsentConfigRequest,
   ConsentConfigResponse,
+  ConsentSettings,
+  ConsentSettingsResponse,
   CreateBatchRequest,
   CreateBatchResponse,
   JobDetail,
@@ -87,6 +89,8 @@ export const api = {
   generateConsentConfig: (jobId: string, req: ConsentConfigRequest = {}) =>
     request<ConsentConfigResponse>('POST', `/api/jobs/${encodeURIComponent(jobId)}/consent-config`, req),
   patchWorkspace: (domain: string, patch: SiteWorkspacePatch) => request<SiteWorkspacePatchResponse>('PATCH', `/api/sites/${encodeURIComponent(domain)}/workspace`, patch),
+  /** Save the install task's settings (mode, layout, banner...): the hosted script follows. */
+  saveConsentSettings: (domain: string, settings: ConsentSettings) => request<ConsentSettingsResponse>('PUT', `/api/sites/${encodeURIComponent(domain)}/consent-settings`, settings),
   /** Re-render a job's consent report with the site's current workspace; `generate: true` makes the config from that run first (R2). */
   rerender: (jobId: string, req: RerenderRequest = {}) => request<RerenderResponse>('POST', `/api/jobs/${encodeURIComponent(jobId)}/rerender`, req),
   /** The checklist's last step: a new consent job with the options of the site's latest one. */

@@ -1,10 +1,12 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { JobReportResponse, ScanHistoryItem, OwnerCell, OwnerColumn, OwnerReport, OwnerToolActivity, OwnerToolRow, RemediationTask } from '../../shared/api';
+import type { ConsentSettings, JobReportResponse, ScanHistoryItem, OwnerCell, OwnerColumn, OwnerReport, OwnerToolActivity, OwnerToolRow, RemediationTask } from '../../shared/api';
 import { LAWS, type LawId } from '../../shared/laws';
 import { reportSeverity, scoreReport, type Severity } from '../../shared/score';
 import { api } from '../lib/api';
 import { notifyJobsChanged } from '../lib/useJobs';
 import { JobLaws, LawProgress, RescanButton } from './Laws';
+import { ConsentSettingsForm } from './ConsentSettingsForm';
+import { COMPANION_LIST_NOTE } from '../lib/consentSettings';
 import { lawRows, type LawRow } from '../lib/laws';
 import { tabReport } from '../lib/lawReport';
 import { formatAbsolute, formatClock, jobDuration, STATUS_LABEL as JOB_STATUS_LABEL } from '../lib/format';
@@ -51,6 +53,8 @@ export interface ReportActions {
   /** Make the list when none was made (or making it failed). */
   onMakeList?: () => void;
   onCopy?: (text: string) => Promise<boolean>;
+  /** Save the install task's settings (rejects with the reason to show). */
+  onSaveSettings?: (settings: ConsentSettings) => Promise<void>;
   /** Delete this scan (after the owner confirms). */
   onDelete?: () => void;
 }
@@ -540,7 +544,10 @@ function SnippetBlock({ text, label, onCopy }: { text: string; label: string; on
 function ChangeTodo({ task, tasks, data, ui, actions, current }: { task: RemediationTask; tasks: RemediationTask[]; data: JobReportResponse; ui: ReportUiState; actions: ReportActions; current?: boolean }) {
   const waiting = openDecisions(task, tasks).filter((d) => !ui.saved?.[d.classKey ?? '']);
   const verifying = ui.verifying === task.id;
-  const steps = task.steps.map((s, i) => task.stepVariants?.find((v) => v.step === i)?.service ?? s);
+  const cs = data.consentSettings;
+  const companion = task.kind === 'install' && cs?.settings.mode === 'companion';
+  // Add-on mode: the install steps for keeping the site's banner.
+  const steps = companion && task.companionSteps?.length ? task.companionSteps : task.steps.map((s, i) => task.stepVariants?.find((v) => v.step === i)?.service ?? s);
   return (
     <li className="rp-todo" data-kind={task.kind} data-task-id={task.id} data-status={task.status}>
       <div className="rp-todo-head">
@@ -564,6 +571,9 @@ function ChangeTodo({ task, tasks, data, ui, actions, current }: { task: Remedia
             <SnippetBlock text={installSnippet(data.hostedScriptUrl)} label="Paste first in <head>" onCopy={actions.onCopy} />
           ) : task.snippet?.after ? (
             <SnippetBlock text={task.snippet.after} label={task.kind === 'install' ? 'Paste first in <head>' : 'Change it to'} onCopy={actions.onCopy} />
+          ) : null}
+          {task.kind === 'install' && cs && actions.onSaveSettings ? (
+            <ConsentSettingsForm key={JSON.stringify(cs.settings)} settings={cs.settings} defaults={cs.defaults ?? {}} detectedCmp={cs.detectedCmp} categoryIds={cs.categoryIds} onSave={actions.onSaveSettings} />
           ) : null}
           {task.snippet?.before ? (
             <details className="rp-before">
@@ -645,6 +655,11 @@ export function TodoList({ data, ui = {}, actions = {} }: { data: JobReportRespo
       {ui.rerender && ui.rerender !== 'idle' ? (
         <p className="muted" role="status" data-testid="updating">
           <span className="rp-spinner rp-spinner-sm" aria-hidden="true" /> Updating the report with your answers…
+        </p>
+      ) : null}
+      {todo.state === 'ready' && data.consentSettings?.settings.mode === 'companion' ? (
+        <p className="muted rp-note" data-testid="companion-note">
+          {COMPANION_LIST_NOTE}
         </p>
       ) : null}
       {todo.state === 'ready' && todo.fromThisRun === false ? <p className="muted rp-note">This list comes from an earlier scan of this site; your progress on it is kept.</p> : null}
@@ -1121,6 +1136,12 @@ export function ReportPage({ jobId }: { jobId: string }) {
 
   const actions: ReportActions = {
     onCopy: copyText,
+    onSaveSettings: async (settings) => {
+      const d = dataRef.current;
+      if (!d) return;
+      await api.saveConsentSettings(d.domain, settings);
+      await refresh();
+    },
     onDelete: async () => {
       const d = dataRef.current;
       const host = d?.job.host ?? 'this site';
