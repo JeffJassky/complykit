@@ -1,6 +1,7 @@
 import {
   CONSENT_CONFIG_ELEMENT_ID,
   parseConsentToolConfig,
+  parseHostedScript,
   parseMarkup,
   type ElementSignature,
   type MarkupElement,
@@ -135,9 +136,10 @@ export interface HostedScriptFetch {
  * latest generated config; the core script is present, blocking, and runs
  * before any tag-manager / vendor script.
  */
-export function verifyInstall(html: string, expected: InstallExpectation, opts: VerifyOptions = {}, _hostedScript?: HostedScriptFetch): VerifyOutcome {
+export function verifyInstall(html: string, expected: InstallExpectation, opts: VerifyOptions = {}, hostedScript?: HostedScriptFetch): VerifyOutcome {
   const bad = notHtml(html);
   if (bad) return bad;
+  if (expected.mode === 'hosted') return verifyHostedInstall(html, expected, opts, hostedScript);
   const kb = opts.kb ?? DEFAULT_KB;
   const site = siteOf(expected.page, opts);
   const evidence: string[] = [];
@@ -185,6 +187,74 @@ export function verifyInstall(html: string, expected: InstallExpectation, opts: 
     if (label) return fail(`${label} (${where(el)}) loads before the consent tool (${where(core)}): move the snippet above it`, evidence);
   }
   return ok('config present and current; core script blocking and first', evidence);
+}
+
+/** origin + path of a URL as the page would resolve it (query and hash ignored); undefined when it is not a URL. */
+function originPath(url: string | undefined, base: string): string | undefined {
+  if (!url) return undefined;
+  try {
+    const u = new URL(url, base);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The config the hosted script carries (line 2), or why it can't be read. */
+function readHostedConfig(h: HostedScriptFetch | undefined, src: string): { config: Record<string, unknown> } | { problem: string } {
+  if (!h) return { problem: 'not fetched' };
+  if (h.status !== 200) return { problem: `${src} answered ${h.status}, not 200` };
+  const raw = h.text === undefined ? undefined : parseHostedScript(h.text);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { problem: `${src} answered 200 but its second line is not the config (window.ComplyKitConfig=…;)` };
+  return { config: raw as Record<string, unknown> };
+}
+
+/**
+ * Hosted install (plans/hosted-script.md): ONE <script> whose src is the hosted
+ * script (origin + path; query and hash ignored), nothing of the old self-hosted
+ * install beside it, and the host actually serves a config. Full mode: blocking
+ * and before every tag script. Add-on mode (the served config says
+ * mode: 'companion'): present, one copy and serving is enough.
+ */
+function verifyHostedInstall(html: string, expected: InstallExpectation, opts: VerifyOptions, hostedScript: HostedScriptFetch | undefined): VerifyOutcome {
+  const kb = opts.kb ?? DEFAULT_KB;
+  const site = siteOf(expected.page, opts);
+  const want = originPath(expected.scriptSrc, expected.page);
+  const elements = parseMarkup(html, expected.page);
+  const cores = elements.filter((el) => el.kind === 'script' && want !== undefined && originPath(el.url, expected.page) === want);
+  if (!cores.length) return fail(`no <script src="${expected.scriptSrc}"> on this page: paste the line from the install task (or a cache serves the old page)`);
+  if (cores.length > 1) return fail(`${cores.length} copies of the hosted script on this page (${cores.map(where).join(', ')}): keep exactly one — two copies fight over the same choice`);
+  const core = cores[0];
+  const oldConfig = configElementText(html).count > 0;
+  const oldCore = elements.find((el) => el.kind === 'script' && el !== core && /\/complykit-consent\.js$/i.test(urlParts(el.url).path ?? ''));
+  if (oldConfig || oldCore) {
+    return fail(`two copies of the consent tool: the hosted script and ${oldConfig ? `an inline <script id="${CONSENT_CONFIG_ELEMENT_ID}">` : `a self-hosted complykit-consent.js (${where(oldCore!)})`}. Remove the earlier install and keep only the hosted line`);
+  }
+  const evidence: string[] = [`hosted script at ${where(core)}`];
+
+  const served = readHostedConfig(hostedScript, expected.scriptSrc);
+  if ('problem' in served) {
+    if (!hostedScript) return unknown(`the hosted script ${expected.scriptSrc} was not fetched: nothing to check it against`, evidence);
+    return fail(`the hosted script does not serve a config: ${served.problem}`, evidence);
+  }
+  const hash = typeof served.config.hash === 'string' ? served.config.hash.slice(0, 12) : undefined;
+  evidence.push(`hosted script serves a config${hash ? ` (hash ${hash})` : ''}`);
+
+  if (core.context !== 'document') return fail(`the hosted script is inside <${core.context}> (${where(core)}): it never runs there`, evidence);
+  if (core.loads !== 'executes') return fail(`the hosted script at ${where(core)} does not execute (type="${core.attributes.type ?? ''}"${core.optimizer ? `, delayed by ${core.optimizer}` : ''})`, evidence);
+  if (core.optimizer) return fail(`${core.optimizer} delays the hosted script (${where(core)}): exclude it — a delayed tool holds nothing`, evidence);
+  if (core.attributes.referrerpolicy?.toLowerCase() !== 'no-referrer') evidence.push('the tag has no referrerpolicy="no-referrer": add it so the page address is not sent to the complykit host (it still works without)');
+
+  if (served.config.mode === 'companion') return ok('the hosted script is on the page once and serves an add-on config (add-on mode: order and blocking do not matter)', evidence);
+
+  const a = core.attributes;
+  if ('async' in a || 'defer' in a || (a.type ?? '').toLowerCase() === 'module') return fail(`the hosted script at ${where(core)} is ${'async' in a ? 'async' : 'defer' in a ? 'defer' : 'a module'}: it must block (no async, defer or type="module")`, evidence);
+  evidence.push(`blocking at ${where(core)}`);
+  for (const el of elements.slice(0, elements.indexOf(core))) {
+    const label = isTagScript(el, kb, site);
+    if (label) return fail(`${label} (${where(el)}) loads before the consent tool (${where(core)}): move the line above it`, evidence);
+  }
+  return ok('the hosted script is on the page once, blocking and first, and serves a config', evidence);
 }
 
 // --- rewrite / remove ------------------------------------------------------------------
@@ -282,7 +352,7 @@ export function toolConsentDefault(config: { gtm?: unknown; vendors: ReadonlyArr
   return covered.size && consentTypes.every((t) => covered.has(t)) ? 'adapter' : undefined;
 }
 
-export function verifyConsentDefault(html: string, spec: { page: string; consentTypes: string[]; scriptSrc?: string }, _hostedScript?: HostedScriptFetch): VerifyOutcome {
+export function verifyConsentDefault(html: string, spec: { page: string; consentTypes: string[]; scriptSrc?: string }, hostedScript?: HostedScriptFetch): VerifyOutcome {
   const bad = notHtml(html);
   if (bad) return bad;
   const elements = parseMarkup(html, spec.page);
@@ -298,12 +368,21 @@ export function verifyConsentDefault(html: string, spec: { page: string; consent
   if (firstIdx < 0) return unknown('no Google Tag Manager or gtag.js script on this page: there is no tag to set a default for here (try the page the container loads on)');
   const first = elements[firstIdx];
   const before = elements.slice(0, firstIdx);
+  // Hosted (spec.scriptSrc): the core is the hosted script and the config is line 2 of what it serves.
+  const hostedWant = spec.scriptSrc ? originPath(spec.scriptSrc, spec.page) : undefined;
+  const hostedCore = hostedWant ? before.find((el) => el.kind === 'script' && el.loads === 'executes' && originPath(el.url, spec.page) === hostedWant) : undefined;
+  if (hostedCore) {
+    const served = readHostedConfig(hostedScript, spec.scriptSrc!);
+    if ('problem' in served) {
+      return hostedScript ? fail(`the hosted script does not serve a config: ${served.problem}`) : unknown(`the hosted script ${spec.scriptSrc} was not fetched: its config decides the Consent Mode default`);
+    }
+  }
   const configEl = before.find((el) => el.kind === 'script' && el.attributes.id === CONSENT_CONFIG_ELEMENT_ID);
-  const core = before.find((el) => el.kind === 'script' && el.loads === 'executes' && /\/complykit-consent\.js$/i.test(urlParts(el.url).path ?? ''));
-  if (configEl && core) {
-    const cfg = configElementText(html);
+  const core = hostedCore ?? before.find((el) => el.kind === 'script' && el.loads === 'executes' && /\/complykit-consent\.js$/i.test(urlParts(el.url).path ?? ''));
+  if ((configEl || hostedCore) && core) {
     try {
-      const parsed = parseConsentToolConfig(JSON.parse(cfg.text ?? ''));
+      const rawConfig = hostedCore ? (readHostedConfig(hostedScript, spec.scriptSrc!) as { config: unknown }).config : JSON.parse(configElementText(html).text ?? '');
+      const parsed = parseConsentToolConfig(rawConfig);
       if (parsed.ok && parsed.config.gtm) return ok(`the consent tool (${where(core)}) sets the Consent Mode defaults before ${where(first)}: config.gtm lists ${parsed.config.gtm.containers.join(', ')}; unmapped signals stay denied`, [`core at line ${core.line}`, `first Google script at line ${first.line}`]);
       if (parsed.ok) {
         // No gtm section: the google-consent-mode adapter sets the default for its vendors' signals.
@@ -456,13 +535,13 @@ export interface StaticVerifyInput {
 export function runVerify(spec: RemediationVerifySpec, input: StaticVerifyInput, opts: VerifyOptions = {}): VerifyOutcome {
   switch (spec.check) {
     case 'install':
-      return input.html === undefined ? unknown('the page was not fetched') : verifyInstall(input.html, spec, opts);
+      return input.html === undefined ? unknown('the page was not fetched') : verifyInstall(input.html, spec, opts, input.hostedScript);
     case 'rewrite-tag':
       return input.html === undefined ? unknown('the page was not fetched') : verifyRewriteTag(input.html, spec);
     case 'remove-leak':
       return input.html === undefined ? unknown('the page was not fetched') : verifyRemoveLeak(input.html, spec);
     case 'consent-default':
-      return input.html === undefined ? unknown('the page was not fetched') : verifyConsentDefault(input.html, spec);
+      return input.html === undefined ? unknown('the page was not fetched') : verifyConsentDefault(input.html, spec, input.hostedScript);
     case 'remove-existing-tool':
       return input.html === undefined ? unknown('the page was not fetched') : verifyRemoveExistingTool(input.html, spec, opts);
     case 'gtm-tag-consent':
