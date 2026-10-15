@@ -1,4 +1,4 @@
-import type { CompanionCmp, ConsentSettings, SiteWorkspace } from '../../shared/api';
+import type { CompanionCmp, ConsentSettings, DetectedBanner, SiteWorkspace } from '../../shared/api';
 
 // The owner's consent settings as the client reads them (workspace entry
 // `consent-settings`; the service validates, this is lenient and display-only).
@@ -28,10 +28,10 @@ const NOTES: Record<CompanionCmp, string> = {
   didomi: 'Follows Didomi’s purposes: measurement and analytics purposes, and advertising and personalization purposes.',
   trustarc: 'Follows TrustArc’s consent level: functional, then advertising and analytics.',
   shopify: 'Follows Shopify’s customer privacy choices: analytics, marketing and preferences.',
-  wordpress: 'Follows the WordPress Consent API categories your consent plugin reports.',
+  wordpress: 'Follows the categories your consent plugin reports through the WordPress Consent API.',
   tcf: 'Follows the IAB TCF purposes the banner records (measurement purposes are analytics, ad purposes are advertising).',
   'consent-mode': 'Follows the consent updates your banner sends to Google Consent Mode (analytics_storage, ad_storage).',
-  manual: 'For any other banner: add one line to its choice callback so complykit knows what the visitor chose.',
+  manual: 'complykit can’t follow this banner automatically: add one line to its choice callback so complykit knows what the visitor chose.',
 };
 export const companionNote = (cmp: CompanionCmp): string => NOTES[cmp];
 
@@ -88,6 +88,28 @@ export function detectedCmpOf(ws: Pick<SiteWorkspace, 'config'>): CompanionCmp |
   const v = ws.config?.value;
   const d = isObject(v) ? v.detectedCmp : undefined;
   return COMPANION_BANNERS.find((b) => b.cmp === d)?.cmp;
+}
+
+/** The banner the scan saw, named: the stored detectedBanner, or (workspaces generated before it existed) the label of the stored detectedCmp. */
+export function detectedBannerOf(ws: Pick<SiteWorkspace, 'config'>): DetectedBanner | undefined {
+  const v = ws.config?.value;
+  const b = isObject(v) ? v.detectedBanner : undefined;
+  if (isObject(b) && typeof b.label === 'string' && b.label.trim() && COMPANION_BANNERS.some((x) => x.cmp === b.cmp)) return { label: b.label, cmp: b.cmp as CompanionCmp };
+  return bannerFromCmp(detectedCmpOf(ws));
+}
+
+// A bare cmp that names a mechanism, not a product: "Fully replace WordPress Consent API with ComplyKit" reads wrong.
+const GENERIC_LABEL: Partial<Record<CompanionCmp, string>> = {
+  wordpress: 'your WordPress consent plugin',
+  tcf: 'your current banner',
+  'consent-mode': 'your current banner',
+  manual: 'your current banner',
+};
+
+/** A banner for a bare CompanionCmp (old stored data, the report's detectedCmp): named from COMPANION_BANNERS. */
+export function bannerFromCmp(cmp: CompanionCmp | undefined): DetectedBanner | undefined {
+  const hit = COMPANION_BANNERS.find((x) => x.cmp === cmp);
+  return hit ? { label: GENERIC_LABEL[hit.cmp] ?? hit.label, cmp: hit.cmp } : undefined;
 }
 
 /** The site's category ids from its stored config. */

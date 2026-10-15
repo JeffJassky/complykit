@@ -13,7 +13,7 @@ import {
   type ConsentTheme,
 } from './record/consent-config-guard.js';
 import { parseConsentToolConfig, withConsentConfigHash, type ConsentToolConfigInput } from './record/consent-config.js';
-import { COMPLYKIT_PARTY_ID, CONSENT_CATEGORIES, DEFAULT_KB, type KnowledgeBase, type KnowledgeEntry } from './registry/index.js';
+import { COMPLYKIT_PARTY_ID, CONSENT_CATEGORIES, CONSENT_PLUGIN_LABELS, DEFAULT_KB, type KnowledgeBase, type KnowledgeEntry } from './registry/index.js';
 import { purposeScopeOf } from './rules/tracking/compatibility.js';
 import {
   buildConsentReportModel,
@@ -211,6 +211,8 @@ export interface GeneratedConsentConfig {
   hostedScriptUrl?: string;
   /** The site's existing banner, as an add-on source (plans/hosted-script.md "Add-on mode"): from the scan's existing consent tool or consent plugin. Absent when none was seen or it has no source. */
   detectedCmp?: CompanionCmp;
+  /** The detected banner with an owner-facing name; detectedCmp is its cmp. A banner complykit cannot follow automatically has cmp 'manual'. */
+  detectedBanner?: DetectedBanner;
   /** The report's compatibility section this config was built from: the change items carry their stable ids. */
   compatibility: CompatibilityReport;
   /** The guided checklist (plans/remediation-flow.md): install first, then one task per change item. Status 'todo' unless the workspace says otherwise. */
@@ -302,6 +304,12 @@ function contextCategory(categories: readonly string[]): string {
   return 'functional';
 }
 
+/** The site's existing banner: a name for the owner, and the add-on source that follows it ('manual' when complykit cannot follow it automatically). */
+export interface DetectedBanner {
+  label: string;
+  cmp: CompanionCmp;
+}
+
 /** Party id of a recognized consent tool → the add-on source that reads it (plans/hosted-script.md "Add-on mode"). */
 const CMP_FOR_PARTY: Readonly<Record<string, CompanionCmp>> = {
   'consent.onetrust': 'onetrust',
@@ -311,16 +319,24 @@ const CMP_FOR_PARTY: Readonly<Record<string, CompanionCmp>> = {
   'consent.trustarc': 'trustarc',
 };
 
-/** The site's existing banner as an add-on source: a recognized consent tool party, else the platform's consent plugin. Unknown → undefined. */
-export function detectCompanionCmp(ev: TrackingEvaluation): CompanionCmp | undefined {
-  for (const p of ev.inventory) {
-    const cmp = CMP_FOR_PARTY[p.partyId];
-    if (cmp) return cmp;
-  }
+/** The site's existing banner: a consent tool party (named by its label), else the platform's consent plugin. Nothing detected → undefined. */
+export function detectBanner(ev: TrackingEvaluation): DetectedBanner | undefined {
+  const consent = ev.inventory.filter((p) => p.categories.includes('consent') && p.partyId !== COMPLYKIT_PARTY_ID);
+  const mapped = consent.find((p) => CMP_FOR_PARTY[p.partyId]);
+  if (mapped) return { label: mapped.label, cmp: CMP_FOR_PARTY[mapped.partyId] };
+  if (consent.length) return { label: consent[0].label, cmp: 'manual' };
   const plugin = ev.platform?.consentPlugin;
-  if (plugin === 'shopify-customer-privacy') return 'shopify';
-  if (plugin && ev.platform?.name === 'wordpress') return 'wordpress';
-  return undefined;
+  if (!plugin) return undefined;
+  const label = CONSENT_PLUGIN_LABELS[plugin] ?? 'your consent plugin';
+  if (plugin === 'shopify-customer-privacy') return { label, cmp: 'shopify' };
+  if (ev.platform?.name !== 'wordpress') return { label, cmp: 'manual' };
+  if (plugin === 'cookiebot') return { label, cmp: 'cookiebot' };
+  return { label, cmp: ev.platform.wpConsentApi === true ? 'wordpress' : 'manual' };
+}
+
+/** The site's existing banner as an add-on source (detectBanner's cmp). */
+export function detectCompanionCmp(ev: TrackingEvaluation): CompanionCmp | undefined {
+  return detectBanner(ev)?.cmp;
 }
 
 function platformOf(ev: TrackingEvaluation): ConsentPlatform {
@@ -812,8 +828,9 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
   notes.sort((a, b) => order[a.level] - order[b.level]);
   const snippet = renderSnippet(config, rewrites, { scriptSrc, explicitSrc: Boolean(opts.scriptSrc), ...(hostedScriptUrl ? { hostedScriptUrl } : {}) });
   const tasks = buildRemediationTasks({ config, notes, compatibility: report, scriptSrc, ...(hostedScriptUrl ? { hostedScriptUrl } : {}) }, ev, { workspace: opts.workspace, kb });
-  const detectedCmp = detectCompanionCmp(ev);
-  return { config, json, snippet, changeList, rewrites, notes, notesMarkdown: renderGeneratorNotes(config, notes, report), scriptSrc, ...(hostedScriptUrl ? { hostedScriptUrl } : {}), ...(detectedCmp ? { detectedCmp } : {}), compatibility: report, tasks };
+  const detectedBanner = detectBanner(ev);
+  const detectedCmp = detectedBanner?.cmp;
+  return { config, json, snippet, changeList, rewrites, notes, notesMarkdown: renderGeneratorNotes(config, notes, report), scriptSrc, ...(hostedScriptUrl ? { hostedScriptUrl } : {}), ...(detectedCmp ? { detectedCmp } : {}), ...(detectedBanner ? { detectedBanner } : {}), compatibility: report, tasks };
 }
 
 // --- rendering ------------------------------------------------------------------------

@@ -6,7 +6,7 @@ import { api } from '../lib/api';
 import { notifyJobsChanged } from '../lib/useJobs';
 import { JobLaws, LawProgress, RescanButton } from './Laws';
 import { ConsentSettingsForm } from './ConsentSettingsForm';
-import { COMPANION_LIST_NOTE } from '../lib/consentSettings';
+import { bannerFromCmp, COMPANION_LIST_NOTE } from '../lib/consentSettings';
 import { lawRows, type LawRow } from '../lib/laws';
 import { tabReport } from '../lib/lawReport';
 import { formatAbsolute, formatClock, jobDuration, STATUS_LABEL as JOB_STATUS_LABEL } from '../lib/format';
@@ -573,7 +573,7 @@ function ChangeTodo({ task, tasks, data, ui, actions, current }: { task: Remedia
             <SnippetBlock text={task.snippet.after} label={task.kind === 'install' ? (companion ? 'Paste in <head>' : 'Paste first in <head>') : 'Change it to'} onCopy={actions.onCopy} />
           ) : null}
           {task.kind === 'install' && cs && actions.onSaveSettings ? (
-            <ConsentSettingsForm key={JSON.stringify(cs.settings)} settings={cs.settings} defaults={cs.defaults ?? {}} detectedCmp={cs.detectedCmp} categoryIds={cs.categoryIds} onSave={actions.onSaveSettings} />
+            <ConsentSettingsForm key={JSON.stringify(cs.settings)} settings={cs.settings} defaults={cs.defaults ?? {}} detectedBanner={cs.detectedBanner ?? bannerFromCmp(cs.detectedCmp)} categoryIds={cs.categoryIds} onSave={actions.onSaveSettings} />
           ) : null}
           {task.snippet?.before ? (
             <details className="rp-before">

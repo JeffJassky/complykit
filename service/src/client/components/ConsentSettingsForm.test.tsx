@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { JobReportResponse, RemediationTask, SiteWorkspace } from '../../shared/api';
 import { checklistFromWorkspace } from '../lib/checklist';
-import { categoryIdsOf, consentSettingsOf, detectedCmpOf, manualSyncCode, settingsFromDraft } from '../lib/consentSettings';
+import { bannerFromCmp, categoryIdsOf, consentSettingsOf, detectedBannerOf, detectedCmpOf, manualSyncCode, settingsFromDraft } from '../lib/consentSettings';
 import { ConsentSettingsForm, ConsentSettingsFormView } from './ConsentSettingsForm';
 import { TodoList } from './ReportPage';
 import { ChecklistPanel } from './Sites';
@@ -13,38 +13,63 @@ const noop = () => {};
 const view = (over: Partial<Parameters<typeof ConsentSettingsFormView>[0]> = {}) =>
   renderToStaticMarkup(<ConsentSettingsFormView draft={{ mode: 'full' }} defaults={{ layout: 'bar' }} categoryIds={['necessary', 'analytics', 'advertising']} onChange={noop} onSave={noop} {...over} />);
 
+const ONETRUST = { label: 'OneTrust', cmp: 'onetrust' } as const;
+const COMPLIANZ = { label: 'Complianz', cmp: 'wordpress' } as const;
+const TERMLY = { label: 'Termly', cmp: 'manual' } as const;
+
 describe('settings form', () => {
-  it('Mode comes first; full mode shows layout, block-page and the privacy link, not the banner select', () => {
-    const html = view();
-    expect(html).toContain('Use complykit as your consent banner');
-    expect(html).toContain('Keep my banner — add complykit’s cookie cleanup');
-    expect(html.indexOf('Use complykit as your consent banner')).toBeLessThan(html.indexOf('Layout'));
+  it('banner detected: the two radios name it, in order, with no banner select; full mode shows layout, block-page and the privacy link', () => {
+    const html = view({ detectedBanner: ONETRUST });
+    expect(html).toContain('Fully replace OneTrust with ComplyKit');
+    expect(html).toContain('Add ComplyKit to OneTrust for improved compliance');
+    expect(html.indexOf('Fully replace OneTrust with ComplyKit')).toBeLessThan(html.indexOf('Layout'));
+    expect(html).not.toContain('Your banner');
+    expect(html).not.toContain('Choose your banner');
+    expect(html).not.toContain('detected on your site');
+    expect(html).not.toMatch(/<select id="[^"]*-cmp"/);
     expect(html).toContain('data-testid="full-fields"');
     expect(html).toContain('Default (bar)');
     expect(html).toContain('Block the page until the visitor makes a choice');
     expect(html).toContain('Privacy policy link (https)');
     expect(html).not.toContain('companion-fields');
-    expect(html).toMatch(/data-testid="mode-full"[^>]*/);
   });
 
-  it('add-on mode: the banner select lists all banners, marks the detected one, shows its note; no full-mode fields', () => {
-    const html = view({ draft: { mode: 'companion', cmp: 'onetrust' }, detectedCmp: 'onetrust' });
+  it('WordPress plugin: the label is the plugin’s name', () => {
+    const html = view({ detectedBanner: COMPLIANZ });
+    expect(html).toContain('Fully replace Complianz with ComplyKit');
+    expect(html).toContain('Add ComplyKit to Complianz for improved compliance');
+  });
+
+  it('add-on mode follows the detected banner: its note, no select, no full-mode fields, no manual code for a followed banner', () => {
+    const html = view({ draft: { mode: 'companion' }, detectedBanner: ONETRUST });
     expect(html).toContain('data-testid="companion-fields"');
-    for (const label of ['OneTrust', 'Cookiebot', 'Usercentrics', 'Didomi', 'TrustArc', 'Shopify', 'WordPress Consent API', 'IAB TCF', 'Google Consent Mode', 'Other — manual']) expect(html).toContain(label);
-    expect(html).toContain('OneTrust (detected on your site)');
-    expect(html).toMatch(/<option value="onetrust" selected="">/);
+    expect(html).toContain('Follows OneTrust’s active groups');
     expect(html).toContain('data-testid="cmp-note"');
+    expect(html).not.toContain('<select');
     expect(html).not.toContain('full-fields');
     expect(html).not.toContain('manual-code');
   });
 
-  it('manual shows the sync line with the site’s own category ids; Save is off until a banner is chosen', () => {
-    const html = view({ draft: { mode: 'companion', cmp: 'manual' } });
+  it('a banner complykit cannot follow (Termly) uses manual: the sync line with the site’s own category ids', () => {
+    const html = view({ draft: { mode: 'companion' }, detectedBanner: TERMLY });
+    expect(html).toContain('Add ComplyKit to Termly for improved compliance');
     expect(html).toContain('data-testid="manual-code"');
     expect(html).toContain('ComplyKit.sync({ analytics: true, advertising: false })');
+    expect(html).toContain('can’t follow this banner automatically');
     expect(manualSyncCode(['necessary', 'analytics', 'advertising', 'functional'])).toBe('ComplyKit.sync({ analytics: true, advertising: false, functional: false })');
-    expect(view({ draft: { mode: 'companion' } })).toMatch(/<button type="submit"[^>]*disabled=""/);
-    expect(view({ draft: { mode: 'companion', cmp: 'cookiebot' } })).not.toMatch(/<button type="submit"[^>]*disabled=""/);
+    expect(html).not.toMatch(/<button type="submit"[^>]*disabled=""/);
+  });
+
+  it('nothing detected: no add-on option and no lone radio, just the full-mode fields under the heading', () => {
+    const html = view();
+    expect(html).toContain('Use ComplyKit as your consent banner');
+    expect(html).not.toContain('type="radio"');
+    expect(html).not.toContain('Fully replace');
+    expect(html).not.toContain('Add ComplyKit to');
+    expect(html).toContain('data-testid="full-fields"');
+    expect(html).toContain('Layout');
+    // even a stale companion draft renders the full fields
+    expect(view({ draft: { mode: 'companion' } })).toContain('data-testid="full-fields"');
   });
 
   it('shows the save error and the saving state', () => {
@@ -54,11 +79,27 @@ describe('settings form', () => {
     expect(saving).toContain('<fieldset disabled=""');
   });
 
-  it('the stateful form starts full by default and from the stored banner in add-on mode', () => {
-    const html = renderToStaticMarkup(<ConsentSettingsForm settings={{ mode: 'full' }} defaults={{}} detectedCmp="cookiebot" categoryIds={[]} onSave={async () => {}} />);
+  it('the stateful form starts full by default; stored add-on settings start in add-on mode on the detected banner', () => {
+    const html = renderToStaticMarkup(<ConsentSettingsForm settings={{ mode: 'full' }} defaults={{}} detectedBanner={{ label: 'Cookiebot', cmp: 'cookiebot' }} categoryIds={[]} onSave={async () => {}} />);
     expect(html).toContain('data-mode="full"');
-    const stored = renderToStaticMarkup(<ConsentSettingsForm settings={{ mode: 'companion', cmp: 'didomi' }} defaults={{}} detectedCmp="cookiebot" categoryIds={[]} onSave={async () => {}} />);
-    expect(stored).toMatch(/<option value="didomi" selected="">/);
+    const stored = renderToStaticMarkup(<ConsentSettingsForm settings={{ mode: 'companion', cmp: 'didomi' }} defaults={{}} detectedBanner={{ label: 'Cookiebot', cmp: 'cookiebot' }} categoryIds={[]} onSave={async () => {}} />);
+    expect(stored).toContain('data-mode="companion"');
+    expect(stored).toContain('Add ComplyKit to Cookiebot for improved compliance');
+    expect(stored).toContain('Follows Cookiebot’s statistics');
+  });
+
+  it('stored add-on settings with nothing detected now still show both radios, naming "your current banner" and the stored cmp', () => {
+    const html = renderToStaticMarkup(<ConsentSettingsForm settings={{ mode: 'companion', cmp: 'didomi' }} defaults={{}} categoryIds={[]} onSave={async () => {}} />);
+    expect(html).toContain('data-mode="companion"');
+    expect(html).toContain('Fully replace your current banner with ComplyKit');
+    expect(html).toContain('Add ComplyKit to your current banner for improved compliance');
+    expect(html).toContain('Follows Didomi’s purposes');
+  });
+
+  it('nothing detected and nothing stored: no radios', () => {
+    const html = renderToStaticMarkup(<ConsentSettingsForm settings={{ mode: 'full' }} defaults={{}} categoryIds={[]} onSave={async () => {}} />);
+    expect(html).not.toContain('type="radio"');
+    expect(html).toContain('Use ComplyKit as your consent banner');
   });
 
   it('what Save sends: only the keys the owner set', () => {
@@ -99,6 +140,11 @@ describe('the site page checklist and the settings', () => {
     expect(consentSettingsOf(companion)).toEqual({ mode: 'companion', cmp: 'onetrust' });
     expect(consentSettingsOf(ws({ 'consent-settings': { value: { mode: 'companion', cmp: 'acme' }, at } }))).toEqual({ mode: 'full' });
     expect(detectedCmpOf(ws())).toBe('onetrust');
+    // an old workspace with only detectedCmp: the label comes from the banner list
+    expect(detectedBannerOf(ws())).toEqual({ label: 'OneTrust', cmp: 'onetrust' });
+    // Old stored data with only a mechanism (no product name): a generic name, never "WordPress Consent API".
+    expect(bannerFromCmp('wordpress')).toEqual({ label: 'your WordPress consent plugin', cmp: 'wordpress' });
+    expect(bannerFromCmp('manual')).toEqual({ label: 'your current banner', cmp: 'manual' });
     expect(categoryIdsOf(ws())).toEqual(['necessary', 'analytics', 'advertising']);
   });
 
@@ -154,7 +200,8 @@ describe('the report page to-do list and the settings', () => {
     const addon = renderToStaticMarkup(<TodoList data={data('companion')} actions={{ onSaveSettings: async () => {} }} />);
     expect(addon).toContain('Keep your banner.');
     expect(addon).not.toContain('Paste it first in head.');
-    expect(addon).toMatch(/<option value="cookiebot" selected="">/);
+    expect(addon).toContain("Add ComplyKit to Cookiebot for improved compliance");
+    expect(addon).not.toContain("<option value=\"cookiebot\"");
     expect(addon).toContain('data-testid="companion-note"');
     expect(addon).toContain('Paste in &lt;head&gt;');
     expect(addon).not.toContain('Paste first in');

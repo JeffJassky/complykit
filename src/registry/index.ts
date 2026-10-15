@@ -27,7 +27,7 @@ export {
   getEngineMapping,
 } from './mappings/index.js';
 export { verifyRegistry, unmappedEngineRules } from './verify.js';
-export { classifyPlatform, platformLoaderOf, consentPluginPathPattern, type PlatformName, type PlatformSignalsInput } from './platform.js';
+export { classifyPlatform, platformLoaderOf, consentPluginPathPattern, CONSENT_PLUGIN_LABELS, type PlatformName, type PlatformSignalsInput } from './platform.js';
 export { classifyCookie, requiresConsent, type CookieCategory, type CookieClassification } from './cookies.js';
 export { jurisdictionsFor, requirementScopeFor, normalizeRegion, isEuEea, type MeasuredPlace } from './jurisdictions.js';
 export {

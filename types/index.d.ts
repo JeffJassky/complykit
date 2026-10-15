@@ -1762,6 +1762,8 @@ export interface GeneratedConsentConfig {
   hostedScriptUrl?: string;
   /** The site's existing banner as an add-on source, when the scan saw one. */
   detectedCmp?: CompanionCmp;
+  /** The detected banner with an owner-facing name; detectedCmp is its cmp. */
+  detectedBanner?: { label: string; cmp: CompanionCmp };
   /** The compatibility section the config was built from (its change items carry stable ids). */
   compatibility: CompatibilityReport;
   /** The guided remediation checklist: install first, then one task per change item. */

@@ -384,6 +384,14 @@ export interface ConsentConfigValue {
   tasks?: RemediationTask[];
   /** The site's existing banner as an add-on source, when the scan saw one (complykit's CompanionCmp). */
   detectedCmp?: CompanionCmp;
+  /** The same banner with an owner-facing name (complykit's detectedBanner); cmp 'manual' when complykit can't follow it automatically. */
+  detectedBanner?: DetectedBanner;
+}
+
+/** The site's existing banner: its name for the owner, and the add-on source that follows it. */
+export interface DetectedBanner {
+  label: string;
+  cmp: CompanionCmp;
 }
 
 /** The banners add-on mode can follow (complykit's CompanionCmp). */
@@ -405,6 +413,7 @@ export interface ConsentSettingsResponse {
   /** Stored settings, or { mode: 'full' } when none. */
   settings: ConsentSettings;
   detectedCmp?: CompanionCmp;
+  detectedBanner?: DetectedBanner;
 }
 
 // --- Guided remediation (plans/remediation-flow.md) --------------------------------
@@ -767,7 +776,7 @@ export interface JobReportResponse {
   /** The consent report as data (consent-report.json beside the HTML report). */
   jsonReportUrl?: string;
   /** The install task's settings form: stored settings, the banner the scan saw, the site's category ids. Present with the checklist. */
-  consentSettings?: { settings: ConsentSettings; detectedCmp?: CompanionCmp; categoryIds: string[]; defaults?: { layout?: string; blockPage?: boolean; privacyPolicyUrl?: string } };
+  consentSettings?: { settings: ConsentSettings; detectedCmp?: CompanionCmp; detectedBanner?: DetectedBanner; categoryIds: string[]; defaults?: { layout?: string; blockPage?: boolean; privacyPolicyUrl?: string } };
   /** Zip of everything for this job (reports, evidence, run data). */
   downloadUrl?: string;
   /** The site's hosted script URL (once a checklist exists): the install is one pasted script tag. */

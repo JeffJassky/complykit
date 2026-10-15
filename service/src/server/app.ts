@@ -31,7 +31,7 @@ import { Runner, type RunnerOptions } from './runner.js';
 import { isJobId, JobStore, newId, toSummary } from './store.js';
 import { StreamHub } from './stream.js';
 import { cloudflarePurger, noopPurger, type CdnPurger } from './cdn.js';
-import { CONSENT_SETTINGS_KEY, normalizeConsentSettings, storedConsentSettings } from './consent-settings.js';
+import { CONSENT_SETTINGS_KEY, detectedBannerOf, normalizeConsentSettings, storedConsentSettings } from './consent-settings.js';
 import { hostedBundleHash, hostedScript } from './hosted-script.js';
 import { ConsentStats, MAX_BEACON_BYTES, readStats } from './consent-stats.js';
 import { WorkspaceError, WorkspaceStore } from './workspace.js';
@@ -584,7 +584,8 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     const ws = await workspaces.get(domain);
     const v = ws.config?.value;
     const detected = typeof v === 'object' && v !== null ? (v as { detectedCmp?: unknown }).detectedCmp : undefined;
-    return { settings: storedConsentSettings(ws) ?? { mode: 'full' }, ...(typeof detected === 'string' ? { detectedCmp: detected as ConsentSettingsResponse['detectedCmp'] } : {}) };
+    const banner = detectedBannerOf(v);
+    return { settings: storedConsentSettings(ws) ?? { mode: 'full' }, ...(typeof detected === 'string' ? { detectedCmp: detected as ConsentSettingsResponse['detectedCmp'] } : {}), ...(banner ? { detectedBanner: banner } : {}) };
   };
   app.get(
     '/api/sites/:domain/consent-settings',

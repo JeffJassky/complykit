@@ -4,7 +4,7 @@ import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CdnPurger } from '../src/server/cdn.js';
 import { configHash } from '../src/server/config-hash.js';
-import { CONSENT_SETTINGS_KEY, normalizeConsentSettings } from '../src/server/consent-settings.js';
+import { CONSENT_SETTINGS_KEY, detectedBannerOf, normalizeConsentSettings } from '../src/server/consent-settings.js';
 import { hostedConfig } from '../src/server/hosted-script.js';
 import { storedTasks } from '../src/server/remediation.js';
 import { WorkspaceError } from '../src/server/workspace.js';
@@ -109,6 +109,14 @@ describe('PUT /api/sites/:domain/consent-settings', () => {
   it('GET returns the settings (default full) and the detected banner', async () => {
     const { s } = await service();
     expect((await request(s.app).get(`/api/sites/${DOMAIN}/consent-settings`).expect(200)).body).toEqual({ settings: { mode: 'full' }, detectedCmp: 'onetrust' });
+  });
+
+  it('detectedBannerOf reads the stored banner and ignores a malformed one', () => {
+    expect(detectedBannerOf({ detectedBanner: { label: 'Termly', cmp: 'manual' } })).toEqual({ label: 'Termly', cmp: 'manual' });
+    expect(detectedBannerOf({ detectedBanner: { label: 'X', cmp: 'nope' } })).toBeUndefined();
+    expect(detectedBannerOf({ detectedBanner: { label: ' ', cmp: 'manual' } })).toBeUndefined();
+    expect(detectedBannerOf({ detectedCmp: 'onetrust' })).toBeUndefined();
+    expect(detectedBannerOf(undefined)).toBeUndefined();
   });
 
   it('400 on bad settings; nothing stored', async () => {
