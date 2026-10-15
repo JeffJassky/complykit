@@ -53,8 +53,9 @@ Privacy / wiretap posture (see memory: wiretap posture, opinionated policy):
 - **P6** Geography is country + subdivision code from Cloudflare headers only, and only
   when `TRUST_CF_GEO=1`. Otherwise `XX`. Never derived from the IP by us.
 - **P7** The paste snippet carries `referrerpolicy="no-referrer"`.
-- **P8** The beacon is sent at most once per page view (on `pagehide` /
-  `visibilitychange: hidden`), with `credentials: 'omit'` on the fetch fallback.
+- **P8** The beacon is sent only when the page is hidden or closed (`pagehide` /
+  `visibilitychange: hidden`), each time carrying only events not sent yet (`load` and
+  `shown` at most once per page view), with `credentials: 'omit'` on the fetch fallback.
 
 Behavior:
 
