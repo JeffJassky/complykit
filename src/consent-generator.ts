@@ -13,7 +13,7 @@ import {
   type ConsentTheme,
 } from './record/consent-config-guard.js';
 import { parseConsentToolConfig, withConsentConfigHash, type ConsentToolConfigInput } from './record/consent-config.js';
-import { CONSENT_CATEGORIES, DEFAULT_KB, type KnowledgeBase, type KnowledgeEntry } from './registry/index.js';
+import { COMPLYKIT_PARTY_ID, CONSENT_CATEGORIES, DEFAULT_KB, type KnowledgeBase, type KnowledgeEntry } from './registry/index.js';
 import { purposeScopeOf } from './rules/tracking/compatibility.js';
 import {
   buildConsentReportModel,
@@ -433,6 +433,7 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
       continue;
     }
     if (p.categories.includes('consent')) {
+      if (p.partyId === COMPLYKIT_PARTY_ID) continue; // our own hosted script: not an old banner, not a vendor
       notes.push({ code: 'existing-consent-tool', level: 'flag', partyIds: [p.partyId], message: `${p.label} (an existing consent tool) was seen on the site. Remove it when installing this one: two banners, and two sources of truth for what the visitor chose.` });
       continue;
     }

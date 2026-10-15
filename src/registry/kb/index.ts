@@ -12,13 +12,10 @@ export * from './domains.js';
 export * from './signatures.js';
 import { entriesMatchingInline } from './signatures.js';
 
-/** Bump on any entry change; stamped into every evaluation. */
-/** complykit's own consent tool, served by the complykit host (plans/hosted-script.md). A `consent` party, but never an "existing consent tool" to remove. */
-export const COMPLYKIT_PARTY_ID = 'consent.complykit';
-/** Hosts the complykit host serves the hosted script, the beacon and consent records from. Add the custom domain here when it exists. */
-export const COMPLYKIT_HOSTS: readonly string[] = ['complykit-6v9s6.ondigitalocean.app'];
+export { COMPLYKIT_PARTY_ID, COMPLYKIT_HOSTS } from './entries.js';
 
-export const KB_VERSION = '0.1.5';
+/** Bump on any entry change; stamped into every evaluation. */
+export const KB_VERSION = '0.1.6';
 
 export const KB_ENTRIES: KnowledgeEntry[] = SEED_ENTRIES.map((e) => KnowledgeEntry.parse(e));
 

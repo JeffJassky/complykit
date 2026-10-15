@@ -75,7 +75,19 @@ export async function readComplykit(page: Page): Promise<ComplykitToolSnapshot |
           global: Boolean(ck),
           version: typeof ck?.version === 'string' ? ck.version : undefined,
           configElement: Boolean(el),
-          configJson: el?.textContent ? el.textContent.slice(0, limit) : undefined,
+          ...(() => {
+            // Self-hosted: the inline element. Hosted: the script sets window.ComplyKitConfig.
+            if (el) return { configJson: el.textContent ? el.textContent.slice(0, limit) : undefined, configSource: 'element' as const };
+            if (w.ComplyKitConfig !== undefined && w.ComplyKitConfig !== null) {
+              try {
+                const t = JSON.stringify(w.ComplyKitConfig);
+                if (typeof t === 'string') return { configJson: t.slice(0, limit), configSource: 'global' as const };
+              } catch {
+                /* unserializable: treated as absent */
+              }
+            }
+            return {};
+          })(),
           cookiePresent: /(?:^|;\s*)complykit_consent=/.test(document.cookie),
           running,
           state,
