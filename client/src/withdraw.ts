@@ -32,6 +32,7 @@
 //                         category off (stricter: a released script of that
 //                         category stops running now, not on the next page)
 //   "none"                never; the gate still holds from the next load
+//                         (the default in add-on mode, config.mode 'companion')
 // A withdrawal that revokes nothing (nothing was granted) does not reload.
 // Under "withdraw", a choice made in another tab cleans up here but does not
 // reload this tab.
@@ -209,7 +210,8 @@ export async function clearStores(config: ConsentToolConfig, categories: string[
  */
 export function installWithdrawal(config: ConsentToolConfig, store: ConsentStore, adapters?: () => { sync(): void } | undefined): void {
   const attr = ownScript?.getAttribute(RELOAD_ATTR);
-  const policy = attr === 'revoke' || attr === 'none' ? attr : 'withdraw';
+  // Add-on mode (T6) never reloads unless the attribute asks: the site's banner owns the page.
+  const policy = attr === 'revoke' || attr === 'none' || attr === 'withdraw' ? attr : config.mode === 'companion' ? 'none' : 'withdraw';
   // Cleanup in flight (bounded, never rejects): a reload waits for it so it cannot race the cookieStore deletions.
   let cleanup: Promise<unknown> = Promise.resolve();
   const reload = () => void cleanup.then(() => setTimeout(() => location.reload()));

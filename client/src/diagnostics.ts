@@ -22,6 +22,8 @@ export interface Diagnostics {
   shopify?: ShopifyDiagnostics;
   /** Set by the UI-file loader (ticket D9): where the banner file is and whether it loaded. */
   ui?: UiDiagnostics;
+  /** Set in add-on mode (T6): the banner being followed and whether it was found. */
+  companion?: { cmp: string; state: 'waiting' | 'ready' | 'not-found' };
   /** Set after a withdrawal's cleanup: what matched and went (`cleared`) or survived (`leftover`). HttpOnly cookies are invisible and never listed. */
   withdrawal?: WithdrawalReport;
   /** Set by the on-load sweep of a stored choice's denied categories (same shape; never overwrites `withdrawal`). */

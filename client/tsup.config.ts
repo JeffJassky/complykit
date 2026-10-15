@@ -1,6 +1,6 @@
 import { defineConfig } from 'tsup';
 
-// Core IIFE + UI IIFE + core ESM. The core IIFE is what a site pastes or self-hosts
+// Core IIFE + UI IIFE + add-on IIFE + core ESM. The core IIFE is what a site pastes or self-hosts
 // (global `ComplyKit`); the ESM is for bundler consumers and tests. No runtime
 // dependencies, so there is nothing to externalize. The IIFE's gzipped size is
 // a hard budget, enforced by scripts/check-size.mjs.
@@ -20,6 +20,18 @@ export default defineConfig([
   // the core from the same folder, async. Own budget (12 KB gz).
   {
     entry: { 'complykit-consent-ui': 'src/ui/entry.ts' },
+    format: ['iife'],
+    outExtension: () => ({ js: '.js' }),
+    target: 'es2018',
+    minify: true,
+    sourcemap: false,
+    clean: false,
+    dts: false,
+  },
+  // The add-on (companion) file: source adapters for the site's own banner, loaded
+  // by the core in config.mode 'companion'. Own budget (8 KB gz).
+  {
+    entry: { 'complykit-consent-companion': 'src/companion/entry.ts' },
     format: ['iife'],
     outExtension: () => ({ js: '.js' }),
     target: 'es2018',

@@ -19,7 +19,7 @@ category and control the way the report does, and writes:
   complykit-config.json    the config (validated against the schema, hashed)
   snippet.html             what to paste in <head>, then each tag to rewrite
   change-list.md           the owner's change list (same as the report's)
-  complykit/v1/            complykit-consent.js and complykit-consent-ui.js, copied from the
+  complykit/v1/            complykit-consent.js, -ui.js and -companion.js, copied from the
                            built client (the folder to upload; skipped with a note if the
                            client is not built)
   generator-notes.md       what was refused, what to check before deploying
@@ -46,8 +46,10 @@ category and control the way the report does, and writes:
   --json                   print { config, snippet, changeList, notes, tasks, scriptSrc, files } as JSON
                            (tasks: the guided remediation checklist, plans/remediation-flow.md)`;
 
-/** The two files the snippet loads, named as they are in the built client. */
-export const CLIENT_FILES = ['complykit-consent.js', 'complykit-consent-ui.js'] as const;
+/** The files the snippet loads (the core, and the UI and add-on files it loads next to itself), named as they are in the built client. */
+export const CLIENT_FILES = ['complykit-consent.js', 'complykit-consent-ui.js', 'complykit-consent-companion.js'] as const;
+
+const COMPANION_CLIENT_FILE = 'complykit-consent-companion.js';
 
 /** Where the built client might be, best first. */
 function clientDistCandidates(flag: string | undefined): string[] {
@@ -71,13 +73,15 @@ function folderUnder(scriptSrc: string): string {
 /** Copy the client files next to the config. Returns the written paths, or why not. */
 export function copyClientFiles(out: string, scriptSrc: string, clientDist: string | undefined): { written: string[]; note?: string } {
   const tried = clientDistCandidates(clientDist);
-  const dir = tried.find((d) => CLIENT_FILES.every((f) => fs.existsSync(path.join(d, f))));
+  // The add-on file is optional: a client build from before add-on mode still copies.
+  const dir = tried.find((d) => CLIENT_FILES.filter((f) => f !== COMPANION_CLIENT_FILE).every((f) => fs.existsSync(path.join(d, f))));
   if (!dir) return { written: [], note: `client files not found (looked in ${tried.join(', ')}); build the client or pass --client-dist <dir>, then copy ${CLIENT_FILES.join(' and ')} next to each other on your site` };
   const dest = path.join(out, folderUnder(scriptSrc));
   fs.mkdirSync(dest, { recursive: true });
   const written: string[] = [];
   for (const f of CLIENT_FILES) {
-    // The snippet loads whatever name its src ends in; the core finds the UI file next to it.
+    if (f === COMPANION_CLIENT_FILE && !fs.existsSync(path.join(dir, f))) continue;
+    // The snippet loads whatever name its src ends in; the core finds the UI and companion files next to it.
     const name = f === 'complykit-consent.js' ? path.posix.basename(scriptSrc.split(/[?#]/)[0]) || f : f;
     fs.copyFileSync(path.join(dir, f), path.join(dest, name));
     written.push(path.join(dest, name));

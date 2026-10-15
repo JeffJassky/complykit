@@ -3,7 +3,7 @@
 // exposes this module's exports as the global `ComplyKit`.
 export { TOOL_VERSION as version } from './version.js';
 // Consent state store + public API (D3): ComplyKit.get / on / open / withdraw.
-export { get, on, open, withdraw, init } from './api.js';
+export { get, on, open, withdraw, init, sync } from './api.js';
 export { installGtmBridge, consentModeSignals, GTM_CONSENT_EVENT } from './gtm.js';
 export { diagnostics } from './diagnostics.js';
 // D4: the script gate. Exported for pages that run their own store; installed
@@ -21,7 +21,7 @@ whenStore((s) => {
 import { installGtmBridge as installGtm } from './gtm.js';
 whenStore((s) => {
   const c = getConfig();
-  if (c?.gtm) installGtm(c, () => s.state().regime, s);
+  if (c?.gtm && c.mode !== 'companion') installGtm(c, () => s.state().regime, s);
 });
 // D5: vendor consent-API adapters (additive to the gate; never release a script).
 export { startAdapters, ADAPTER_IDS } from './adapters/index.js';
@@ -29,7 +29,7 @@ import { startAdapters as startVendorAdapters } from './adapters/index.js';
 import { setAdapters, getAdapters } from './api.js';
 whenStore((s) => {
   const c = getConfig();
-  if (c) setAdapters(startVendorAdapters(c, () => s.state().regime, s));
+  if (c && c.mode !== 'companion') setAdapters(startVendorAdapters(c, () => s.state().regime, s));
 });
 // F3: the withdrawal flow — on a revoke: adapters re-synced, reachable vendor
 // cookies / storage deleted; after ComplyKit.withdraw(): reload (gate holds).
@@ -44,21 +44,21 @@ export { installWordpressBridge, DEFAULT_WP_MAPPING } from './bridges/wordpress.
 import { installWordpressBridge as installWp } from './bridges/wordpress.js';
 whenStore((s) => {
   const c = getConfig();
-  if (c) installWp(c, s);
+  if (c && c.mode !== 'companion') installWp(c, s);
 });
 // E3: Wix consent policy bridge (platform 'wix', or the Wix API on the page).
 export { installWixBridge, wixPolicyFor, DEFAULT_WIX_MAP } from './bridges/wix.js';
 import { installWixBridge as installWix } from './bridges/wix.js';
 whenStore((s) => {
   const c = getConfig();
-  if (c) installWix(c, s);
+  if (c && c.mode !== 'companion') installWix(c, s);
 });
 // E1: Shopify Customer Privacy bridge (platform 'shopify', or window.Shopify on the page).
 export { installShopifyBridge, shopifyConsentFor, DEFAULT_SHOPIFY_MAP } from './bridges/shopify.js';
 import { installShopifyBridge as installShopify } from './bridges/shopify.js';
 whenStore((s) => {
   const c = getConfig();
-  if (c) installShopify(c, s);
+  if (c && c.mode !== 'companion') installShopify(c, s);
 });
 // D7: location source + regime decision (used by init; exported for pages and tests).
 export { resolveLocation, readGpc, DEFAULT_REGION_META } from './location.js';
@@ -66,7 +66,18 @@ export { resolveLocation, readGpc, DEFAULT_REGION_META } from './location.js';
 // (complykit-consent-ui.js, same folder); `_ui` is the host it mounts on.
 export { uiHost as _ui, loadUi } from './ui-loader.js';
 import { installUiLoader } from './ui-loader.js';
-whenStore((s) => installUiLoader(s));
+whenStore((s) => {
+  if (getConfig()?.mode !== 'companion') installUiLoader(s);
+});
+// T6: add-on mode — follow the site's own banner (complykit-consent-companion.js,
+// loaded by the core; `_companion` is the host it starts on). No UI, GTM bridge,
+// adapters, platform bridges or records in this mode.
+export { companionHost as _companion } from './companion-loader.js';
+import { loadCompanion } from './companion-loader.js';
+whenStore(() => {
+  const c = getConfig();
+  if (c?.mode === 'companion' && c.companion) loadCompanion(c.companion.cmp);
+});
 // T2: the banner beacon (only when config.analytics.endpoint is set).
 import { startEvents } from './events.js';
 whenStore((s) => {

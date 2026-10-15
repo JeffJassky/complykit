@@ -2,6 +2,7 @@
 //
 //   GET /s/<host>.js              the site's config + the core bundle, one file
 //   GET /s/complykit-consent-ui.js the UI bundle (version-pinned URL: immutable)
+//   GET /s/complykit-consent-companion.js the add-on mode bundle (same caching as the UI bundle)
 //
 // Public by design: a visitor's browser on a client's site requests it, mounted
 // before basic auth. It never sets or reads a cookie (P1). The served config is
@@ -24,6 +25,9 @@ export const CORE_FILE = 'complykit-consent.js';
 export const UI_FILE = 'complykit-consent-ui.js';
 /** The UI bundle's URL path segment: no TLD, so it can never be a site. */
 export const UI_NAME = 'complykit-consent-ui';
+export const COMPANION_FILE = 'complykit-consent-companion.js';
+/** The add-on (companion) bundle's URL path segment; like UI_NAME it can never be a site. */
+export const COMPANION_NAME = 'complykit-consent-companion';
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -72,10 +76,10 @@ class BundleFile {
   }
 }
 
-/** sha-256 over core + UI bundle + public origin: the boot purge compares it with the last one. */
+/** sha-256 over core + UI + companion bundle + public origin: the boot purge compares it with the last one. */
 export function hostedBundleHash(dist: string, publicOrigin: string): string {
   const h = crypto.createHash('sha256');
-  for (const f of [CORE_FILE, UI_FILE]) {
+  for (const f of [CORE_FILE, UI_FILE, COMPANION_FILE]) {
     try {
       h.update(fs.readFileSync(path.join(dist, f)));
     } catch {
@@ -117,6 +121,7 @@ export function hostedScript(deps: HostedScriptDeps): HostedScript {
   const log = deps.log ?? ((m: string) => console.warn(m));
   const core = new BundleFile(path.join(config.consentClientDist, CORE_FILE));
   const ui = new BundleFile(path.join(config.consentClientDist, UI_FILE));
+  const companion = new BundleFile(path.join(config.consentClientDist, COMPANION_FILE));
   const rendered = new Map<string, Rendered>();
   const snapshotted = new Set<string>();
   const cdn = Boolean(config.cdn);
@@ -164,8 +169,8 @@ export function hostedScript(deps: HostedScriptDeps): HostedScript {
     }
     const name = file.slice(0, -3).toLowerCase();
 
-    if (name === UI_NAME) {
-      const bundle = ui.read();
+    if (name === UI_NAME || name === COMPANION_NAME) {
+      const bundle = (name === UI_NAME ? ui : companion).read();
       if (!bundle) return unavailable(res);
       const pinned = req.query.v === config.version;
       send(req, res, bundle.body, etagOf(bundle.body), pinned ? CACHE_IMMUTABLE : CACHE_SHORT);
