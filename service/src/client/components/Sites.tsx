@@ -2,7 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import type { LawId } from '../../shared/laws';
 import { orderLaws, scanBlockedReason } from '../lib/laws';
 import { AuthorizedBox, JobLaws, LawPicker } from './Laws';
-import type { JobSummary, RemediationStatus, RemediationTask, SiteSummary, SiteWorkspace, WorkspaceRun } from '../../shared/api';
+import type { ConsentStatsResponse, JobSummary, RemediationStatus, RemediationTask, SiteSummary, SiteWorkspace, WorkspaceRun } from '../../shared/api';
 import { formatAbsolute, formatRelative } from '../lib/format';
 import { api } from '../lib/api';
 import { notifyJobsChanged } from '../lib/useJobs';
@@ -12,7 +12,8 @@ import { checklistFromWorkspace, checklistProgress, hostedScriptUrlOf, installSn
 import { reportHref, siteHref } from '../lib/useHashView';
 import { useNow } from '../lib/useNow';
 import { copyText, useReviewer } from '../lib/useKb';
-import { useLiveRefresh, useSites, useSiteWorkspace } from '../lib/useSites';
+import { useLiveRefresh, useSites, useSiteStats, useSiteWorkspace } from '../lib/useSites';
+import { hasActivity, summarizeStats } from '../lib/stats';
 
 function When({ iso, now }: { iso: string | undefined; now: number }) {
   if (!iso) return <span className="muted">—</span>;
@@ -507,6 +508,67 @@ export function ChecklistPanel({
   );
 }
 
+/** Banner analytics per config version: counters from visitors' browsers, never individuals. */
+export function BannerStatsPanel({ stats, error }: { stats?: ConsentStatsResponse | null; error?: string | null }) {
+  const versions = (stats?.configs ?? []).map((c) => ({ config: c, summary: summarizeStats(c) })).filter((v) => hasActivity(v.summary));
+  return (
+    <section className="panel" aria-labelledby="site-banner-stats" data-testid="banner-stats">
+      <h2 id="site-banner-stats" className="section-title">
+        Banner stats
+      </h2>
+      {error ? (
+        <p className="muted" role="alert">
+          Couldn’t load banner stats: {error}
+        </p>
+      ) : !stats ? (
+        <p className="muted">Loading…</p>
+      ) : !versions.length ? (
+        <p className="muted" data-testid="banner-stats-empty">
+          No visitor data yet: counts appear once visitors load a page that carries the hosted script.
+        </p>
+      ) : (
+        <>
+          <p className="muted">
+            Last 30 days ({stats.from} to {stats.to}, UTC), per config version, newest first. Counts only: no visitor is identified.
+          </p>
+          {versions.map(({ config, summary: s }) => (
+            <div key={config.hash} className="banner-stats-version" data-testid="banner-stats-version" data-hash={config.hash}>
+              <h3 className="section-subtitle">
+                Config <span className="mono">{config.hash.slice(0, 12)}</span>
+                {config.firstServed ? <span className="muted"> · first served {config.firstServed.slice(0, 10)}</span> : null}
+              </h3>
+              <dl className="kb-facts">
+                <div className="fact">
+                  <dt>Page loads</dt>
+                  <dd data-testid="stats-loads">{s.loads}</dd>
+                </div>
+                <div className="fact">
+                  <dt>Banner shown</dt>
+                  <dd data-testid="stats-shown">{s.shown}</dd>
+                </div>
+                <div className="fact">
+                  <dt>Decisions</dt>
+                  <dd data-testid="stats-decisions">
+                    {s.decisions ? `${s.percent.accept}% accept · ${s.percent.reject}% reject · ${s.percent.custom}% custom (of ${s.decisions})` : <span className="muted">none yet</span>}
+                  </dd>
+                </div>
+                <div className="fact">
+                  <dt>Most common time to decide</dt>
+                  <dd data-testid="stats-ttd">{s.commonTtd ?? <span className="muted">no timed decisions</span>}</dd>
+                </div>
+                <div className="fact">
+                  <dt>Top regions</dt>
+                  <dd data-testid="stats-regions">{s.regions.length ? s.regions.map((r) => `${r.label} (${r.loads})`).join(', ') : <span className="muted">none</span>}</dd>
+                </div>
+              </dl>
+            </div>
+          ))}
+        </>
+      )}
+    </section>
+  );
+}
+
 export function SitePageView({
   workspace,
   jobs,
@@ -519,7 +581,12 @@ export function SitePageView({
   onMarkDone,
   rescan,
   onRescan,
+  stats,
+  statsError,
 }: {
+  /** Banner stats (undefined = the panel isn't wired, e.g. a static render). */
+  stats?: ConsentStatsResponse | null;
+  statsError?: string | null;
   workspace: SiteWorkspace;
   jobs: Record<string, JobSummary> | null;
   now: number;
@@ -654,6 +721,8 @@ export function SitePageView({
         ) : null}
       </section>
 
+      {stats !== undefined || statsError ? <BannerStatsPanel stats={stats} error={statsError} /> : null}
+
       <section className="panel" aria-labelledby="site-runs">
         <h2 id="site-runs" className="section-title">
           Runs
@@ -689,6 +758,7 @@ export function SitePageView({
 
 export function SitePage({ domain, jobs }: { domain: string; jobs: Record<string, JobSummary> | null }) {
   const { data, error, refresh } = useSiteWorkspace(domain);
+  const { data: stats, error: statsError } = useSiteStats(domain);
   // The checklist changes elsewhere too (a Verify in the report, the API, another tab):
   // re-read on focus / visibility and every 30 s while visible.
   useLiveRefresh(refresh);
@@ -776,7 +846,7 @@ export function SitePage({ domain, jobs }: { domain: string; jobs: Record<string
           Couldn’t load {domain}: {error}
         </div>
       ) : null}
-      {data ? <SitePageView workspace={data} jobs={jobs} now={now} generate={generate} onGenerate={onGenerate} onUpdateReport={onUpdateReport} checklist={checklist} onVerify={onVerify} onMarkDone={onMarkDone} rescan={rescan} onRescan={onRescan} /> : error ? null : <div className="skeleton" aria-busy="true" aria-label="Loading site"><div className="skeleton-card" /></div>}
+      {data ? <SitePageView workspace={data} jobs={jobs} now={now} generate={generate} onGenerate={onGenerate} onUpdateReport={onUpdateReport} checklist={checklist} onVerify={onVerify} onMarkDone={onMarkDone} rescan={rescan} onRescan={onRescan} stats={stats} statsError={statsError} /> : error ? null : <div className="skeleton" aria-busy="true" aria-label="Loading site"><div className="skeleton-card" /></div>}
     </>
   );
 }

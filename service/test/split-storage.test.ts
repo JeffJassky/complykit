@@ -33,7 +33,7 @@ afterEach(stopAll);
 async function splitStorage(): Promise<{ storage: Storage; blobDir: string }> {
   const blobDir = tempDir();
   const records = await mongoRecords({ url: mongo.getUri(), db: `ck_split_${crypto.randomBytes(4).toString('hex')}` });
-  const storage: Storage = { kind: 'cloud', blobs: new FsBlobs(blobDir), jobs: records.jobs, workspaces: records.workspaces, consentRecords: records.consentRecords, configSnapshots: records.configSnapshots, close: records.close };
+  const storage: Storage = { kind: 'cloud', blobs: new FsBlobs(blobDir), jobs: records.jobs, workspaces: records.workspaces, consentRecords: records.consentRecords, configSnapshots: records.configSnapshots, consentStats: records.consentStats, close: records.close };
   return { storage, blobDir };
 }
 

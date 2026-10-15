@@ -113,6 +113,23 @@ export interface ConfigSnapshotRecords {
   get(hash: string): Promise<ConfigSnapshot | undefined>;
 }
 
+/** One (domain, day, config hash) document of banner counters (plans/hosted-script.md "Counters"). Counters only. */
+export interface ConsentStatsDoc {
+  domain: string;
+  /** UTC YYYY-MM-DD. */
+  day: string;
+  hash: string;
+  /** Flat counter map; keys contain letters, digits, `:`, `-`, `_` only. */
+  n: Record<string, number>;
+}
+
+export interface ConsentStatsRecords {
+  /** Add each doc's counts to the stored document for its (domain, day, hash), creating it when absent. */
+  add(docs: ConsentStatsDoc[]): Promise<void>;
+  /** Every document of the site with fromDay <= day <= toDay (UTC YYYY-MM-DD, inclusive), any order. */
+  read(domain: string, fromDay: string, toDay: string): Promise<ConsentStatsDoc[]>;
+}
+
 export interface Storage {
   readonly kind: 'fs' | 'cloud';
   blobs: Blobs;
@@ -120,6 +137,7 @@ export interface Storage {
   workspaces: WorkspaceRecords;
   consentRecords: ConsentRecordRecords;
   configSnapshots: ConfigSnapshotRecords;
+  consentStats: ConsentStatsRecords;
   /** Close connections (shutdown, tests). */
   close(): Promise<void>;
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SiteWorkspace, SitesResponse } from '../../shared/api';
+import type { ConsentStatsResponse, SiteWorkspace, SitesResponse } from '../../shared/api';
 import { api } from './api';
 
 /** One fetch with newest-wins ordering (same shape as useKb). */
@@ -32,6 +32,12 @@ export const useSites = () => useFetched<SitesResponse>(api.sites, 'sites');
 export function useSiteWorkspace(domain: string) {
   const load = useCallback(() => api.siteWorkspace(domain), [domain]);
   return useFetched<SiteWorkspace>(load, domain);
+}
+
+/** Banner stats for a site (last 30 days). A failure is the hook's `error`; the panel says so without breaking the page. */
+export function useSiteStats(domain: string) {
+  const load = useCallback(() => api.siteStats(domain, 30), [domain]);
+  return useFetched<ConsentStatsResponse>(load, `stats:${domain}`);
 }
 
 type Listenable = Pick<EventTarget, 'addEventListener' | 'removeEventListener'>;
