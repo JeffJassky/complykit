@@ -166,3 +166,31 @@ describe('POST /api/sites/:domain/remediation/:id/verify', () => {
     await request(s.app).post('/api/sites/example.com/remediation/install/verify').expect(200);
   });
 });
+
+describe('a changed PUBLIC_ORIGIN (hosted URLs follow it)', () => {
+  it('rehomeHostedUrl rewrites only /s/<domain>.js paths', async () => {
+    const { rehomeHostedUrl } = await import('../src/server/remediation.js');
+    const now = 'https://ck.new.test';
+    expect(rehomeHostedUrl('https://old.ondigitalocean.app/s/example.com.js', now)).toBe('https://ck.new.test/s/example.com.js');
+    expect(rehomeHostedUrl('/ck.js', now)).toBe('/ck.js');
+    expect(rehomeHostedUrl('https://other.test/assets/complykit-consent.js', now)).toBe('https://other.test/assets/complykit-consent.js');
+  });
+
+  it('the remediation view and the workspace show the install snippet and verify spec on the current origin', async () => {
+    const OLD = 'https://old.ondigitalocean.app/s/example.com.js';
+    const s = await startService({ publicOrigin: 'https://ck.new.test' });
+    const install = task('install', 0, { check: 'install', method: 'static', mode: 'hosted', page: 'https://example.com/', scriptSrc: OLD }, { snippet: { after: `<script src="${OLD}" referrerpolicy="no-referrer"></script>` } });
+    await request(s.app)
+      .patch('/api/sites/example.com/workspace')
+      .send({ config: { value: { config: {}, snippet: '', changeList: '', notes: [], hostedScriptUrl: OLD, tasks: [install] }, runId: 'run-a' } })
+      .expect(200);
+    const view = (await request(s.app).get('/api/sites/example.com/remediation').expect(200)).body as RemediationResponse;
+    expect(view.tasks[0].verify.scriptSrc).toBe('https://ck.new.test/s/example.com.js');
+    expect(view.tasks[0].snippet?.after).toContain('https://ck.new.test/s/example.com.js');
+    expect(view.tasks[0].snippet?.after).not.toContain('old.ondigitalocean');
+    const ws = (await request(s.app).get('/api/sites/example.com/workspace').expect(200)).body as SiteWorkspace;
+    const value = ws.config!.value as { hostedScriptUrl: string; tasks: RemediationTask[] };
+    expect(value.hostedScriptUrl).toBe('https://ck.new.test/s/example.com.js');
+    expect(value.tasks[0].verify.scriptSrc).toBe('https://ck.new.test/s/example.com.js');
+  });
+});

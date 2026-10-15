@@ -8,7 +8,7 @@ import { api } from '../lib/api';
 import { notifyJobsChanged } from '../lib/useJobs';
 import { configDownloads, configStoredOf, generatableRuns, siteRuns, generateErrorText, REPORT_REFRESH_FAILED, summarizeWorkspace } from '../lib/sites';
 import { PHASE_LABEL } from '../lib/format';
-import { checklistFromWorkspace, checklistProgress, hostedScriptUrlOf, installSnippet, openDecisions, reportChecklistHref, reportTaskHref, taskStatusLabel, TASK_CHANGE_PREFIX } from '../lib/checklist';
+import { COMPANION_INSTALL_SUMMARY, checklistFromWorkspace, checklistProgress, hostedScriptUrlOf, installSnippet, openDecisions, reportChecklistHref, reportTaskHref, taskStatusLabel, TASK_CHANGE_PREFIX } from '../lib/checklist';
 import { COMPANION_LIST_NOTE, categoryIdsOf, consentSettingsOf, detectedCmpOf, settingsDefaultsOf } from '../lib/consentSettings';
 import { ConsentSettingsForm } from './ConsentSettingsForm';
 import { reportHref, siteHref } from '../lib/useHashView';
@@ -215,13 +215,13 @@ function DecisionItem({ task, tasks, report }: { task: RemediationTask; tasks: R
 }
 
 /** The install line with a Copy button: all a site owner pastes (first in <head>). */
-function InstallLine({ hostedScriptUrl }: { hostedScriptUrl: string }) {
+function InstallLine({ hostedScriptUrl, companion }: { hostedScriptUrl: string; companion?: boolean }) {
   const text = installSnippet(hostedScriptUrl);
   const [copied, setCopied] = useState<boolean | null>(null);
   return (
     <div className="checklist-snippet" data-testid="install-snippet">
       <div className="site-downloads">
-        <span>Paste first in &lt;head&gt;</span>
+        <span>{companion ? 'Paste in <head>' : 'Paste first in <head>'}</span>
         <button type="button" className="btn btn-sm btn-secondary" onClick={() => void copyText(text).then(setCopied)}>
           {copied === true ? 'Copied ✓' : copied === false ? 'Copy failed' : 'Copy'}
         </button>
@@ -243,7 +243,7 @@ function ChecklistItem({ task, tasks, hostedScriptUrl, state, onVerify, onMarkDo
         <strong className="checklist-title">{task.title}</strong>
         <span className={`pill ${STATUS_PILL[task.status]}`}>{taskStatusLabel(task)}</span>
       </div>
-      <p className="muted">{task.summary}</p>
+      <p className="muted">{task.kind === 'install' && workspace && consentSettingsOf(workspace).mode === 'companion' ? COMPANION_INSTALL_SUMMARY : task.summary}</p>
       {waiting.length ? (
         <p className="checklist-waiting" data-testid="waiting-on">
           <strong>Waiting on:</strong> your decision on what {waiting.map((d) => d.tools[0] ?? d.title).join(', ')} {waiting.length === 1 ? 'is' : 'are'} (above). This change applies only if {waiting.length === 1 ? 'it tracks' : 'they track'} visitors.
@@ -284,7 +284,7 @@ function ChecklistItem({ task, tasks, hostedScriptUrl, state, onVerify, onMarkDo
           ))}
         </ol>
       ) : null}
-      {task.kind === 'install' && hostedScriptUrl ? <InstallLine hostedScriptUrl={hostedScriptUrl} /> : null}
+      {task.kind === 'install' && hostedScriptUrl ? <InstallLine hostedScriptUrl={hostedScriptUrl} companion={!!workspace && consentSettingsOf(workspace).mode === 'companion'} /> : null}
       {task.kind === 'install' && workspace && onSaveSettings ? (
         <ConsentSettingsForm
           // The form restarts from what is stored whenever that changes.

@@ -1,7 +1,7 @@
 // The hosted consent script (plans/hosted-script.md "Hosted script", "UI file").
 //
 //   GET /s/<host>.js              the site's config + the core bundle, one file
-//   GET /s/complykit-consent-ui.js the UI bundle (version-pinned URL: immutable)
+//   GET /s/complykit-consent-ui.js the UI bundle (build-pinned URL: immutable)
 //   GET /s/complykit-consent-companion.js the add-on mode bundle (same caching as the UI bundle)
 //
 // Public by design: a visitor's browser on a client's site requests it, mounted
@@ -26,6 +26,8 @@ export const UI_FILE = 'complykit-consent-ui.js';
 /** The UI bundle's URL path segment: no TLD, so it can never be a site. */
 export const UI_NAME = 'complykit-consent-ui';
 export const COMPANION_FILE = 'complykit-consent-companion.js';
+/** `{"build":"<12 hex>"}` written by the client build: the id the core puts in `?v=`. */
+export const BUILD_FILE = 'complykit-build.json';
 /** The add-on (companion) bundle's URL path segment; like UI_NAME it can never be a site. */
 export const COMPANION_NAME = 'complykit-consent-companion';
 
@@ -76,10 +78,10 @@ class BundleFile {
   }
 }
 
-/** sha-256 over core + UI + companion bundle + public origin: the boot purge compares it with the last one. */
+/** sha-256 over core + UI + companion bundle + build file + public origin: the boot purge compares it with the last one. */
 export function hostedBundleHash(dist: string, publicOrigin: string): string {
   const h = crypto.createHash('sha256');
-  for (const f of [CORE_FILE, UI_FILE, COMPANION_FILE]) {
+  for (const f of [CORE_FILE, UI_FILE, COMPANION_FILE, BUILD_FILE]) {
     try {
       h.update(fs.readFileSync(path.join(dist, f)));
     } catch {
@@ -122,6 +124,18 @@ export function hostedScript(deps: HostedScriptDeps): HostedScript {
   const core = new BundleFile(path.join(config.consentClientDist, CORE_FILE));
   const ui = new BundleFile(path.join(config.consentClientDist, UI_FILE));
   const companion = new BundleFile(path.join(config.consentClientDist, COMPANION_FILE));
+  const buildFile = new BundleFile(path.join(config.consentClientDist, BUILD_FILE));
+  /** The client build id, or undefined when the file is missing or unreadable. */
+  const buildId = (): string | undefined => {
+    try {
+      const b = buildFile.read();
+      if (!b) return undefined;
+      const v: unknown = JSON.parse(b.body.toString('utf8'));
+      return isObj(v) && typeof v.build === 'string' && v.build ? v.build : undefined;
+    } catch {
+      return undefined;
+    }
+  };
   const rendered = new Map<string, Rendered>();
   const snapshotted = new Set<string>();
   const cdn = Boolean(config.cdn);
@@ -172,7 +186,8 @@ export function hostedScript(deps: HostedScriptDeps): HostedScript {
     if (name === UI_NAME || name === COMPANION_NAME) {
       const bundle = (name === UI_NAME ? ui : companion).read();
       if (!bundle) return unavailable(res);
-      const pinned = req.query.v === config.version;
+      const build = buildId();
+      const pinned = build !== undefined && req.query.v === build;
       send(req, res, bundle.body, etagOf(bundle.body), pinned ? CACHE_IMMUTABLE : CACHE_SHORT);
       return;
     }

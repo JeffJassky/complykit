@@ -10,7 +10,7 @@ import { COMPANION_LIST_NOTE } from '../lib/consentSettings';
 import { lawRows, type LawRow } from '../lib/laws';
 import { tabReport } from '../lib/lawReport';
 import { formatAbsolute, formatClock, jobDuration, STATUS_LABEL as JOB_STATUS_LABEL } from '../lib/format';
-import { installSnippet, openDecisions, STATUS_LABEL as TASK_STATUS_LABEL, TASK_CHANGE_PREFIX } from '../lib/checklist';
+import { COMPANION_INSTALL_SUMMARY, installSnippet, openDecisions, STATUS_LABEL as TASK_STATUS_LABEL, TASK_CHANGE_PREFIX } from '../lib/checklist';
 import { copyText, useReviewer } from '../lib/useKb';
 import { createRerenderQueue, useJobReport } from '../lib/useJobReport';
 import { reportHref } from '../lib/useHashView';
@@ -554,7 +554,7 @@ function ChangeTodo({ task, tasks, data, ui, actions, current }: { task: Remedia
         <strong>{task.title}</strong>
         <span className={`pill ${STATUS_PILL[task.status]}`}>{TASK_STATUS_LABEL[task.status]}</span>
       </div>
-      <p className="muted">{task.summary}</p>
+      <p className="muted">{companion ? COMPANION_INSTALL_SUMMARY : task.summary}</p>
       {waiting.length ? (
         <p className="rp-note">Waiting on your answer about {waiting.map((d) => d.tools[0] ?? d.title).join(', ')} (above).</p>
       ) : (
@@ -568,9 +568,9 @@ function ChangeTodo({ task, tasks, data, ui, actions, current }: { task: Remedia
             </ol>
           ) : null}
           {task.kind === 'install' && data.hostedScriptUrl ? (
-            <SnippetBlock text={installSnippet(data.hostedScriptUrl)} label="Paste first in <head>" onCopy={actions.onCopy} />
+            <SnippetBlock text={installSnippet(data.hostedScriptUrl)} label={companion ? 'Paste in <head>' : 'Paste first in <head>'} onCopy={actions.onCopy} />
           ) : task.snippet?.after ? (
-            <SnippetBlock text={task.snippet.after} label={task.kind === 'install' ? 'Paste first in <head>' : 'Change it to'} onCopy={actions.onCopy} />
+            <SnippetBlock text={task.snippet.after} label={task.kind === 'install' ? (companion ? 'Paste in <head>' : 'Paste first in <head>') : 'Change it to'} onCopy={actions.onCopy} />
           ) : null}
           {task.kind === 'install' && cs && actions.onSaveSettings ? (
             <ConsentSettingsForm key={JSON.stringify(cs.settings)} settings={cs.settings} defaults={cs.defaults ?? {}} detectedCmp={cs.detectedCmp} categoryIds={cs.categoryIds} onSave={actions.onSaveSettings} />

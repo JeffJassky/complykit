@@ -97,3 +97,6 @@ export function hostedScriptUrlOf(ws: SiteWorkspace): string | undefined {
   const v = ws.config?.value as { hostedScriptUrl?: unknown } | null | undefined;
   return typeof v?.hostedScriptUrl === 'string' && v.hostedScriptUrl ? v.hostedScriptUrl : undefined;
 }
+
+/** The install task's summary in add-on mode (the task's own summary is the full-mode text). */
+export const COMPANION_INSTALL_SUMMARY = 'One line in <head>. Your banner keeps the choice; complykit deletes the cookies of whatever the visitor withdraws.';

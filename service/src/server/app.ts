@@ -17,6 +17,7 @@ import {
   type KbDismissRequest,
   type KbRejectRequest,
   type KbResearchRequest,
+  type RemediationTask,
   type RerenderRequest,
   type RescanRequest,
   type SitesResponse,
@@ -37,7 +38,7 @@ import { WorkspaceError, WorkspaceStore } from './workspace.js';
 import { serveReports } from './report-config.js';
 import { assertCanGenerate } from './history.js';
 import { generateConsentConfigForJob } from './consent-config.js';
-import { checklistProgress, RemediationVerifier, remediationView } from './remediation.js';
+import { checklistProgress, RemediationVerifier, rehomeHostedUrl, rehomeTasks, remediationView } from './remediation.js';
 import { rescanSite } from './rescan.js';
 import { parseLaws } from './law-input.js';
 import { rerenderJob } from './rerender.js';
@@ -150,7 +151,17 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
 
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', true);
+  // One hop: the platform's proxy. `true` would trust the leftmost, client-supplied
+  // X-Forwarded-For entry, which resets any per-IP limit by changing a header.
+  app.set('trust proxy', 1);
+  // The per-IP limiters' key (memory only). Behind Cloudflare the edge sets cf-connecting-ip itself.
+  const limiterIp = (req: express.Request): string => {
+    if (config.trustCfGeo) {
+      const cfIp = req.get('cf-connecting-ip');
+      if (cfIp) return cfIp.slice(0, 64);
+    }
+    return req.ip ?? '';
+  };
 
   // Activity for idle shutdown: everything except the health check. The SSE
   // connect counts once; the open stream and its pings don't.
@@ -222,7 +233,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
         res.status(403).json({ error: 'this service does not accept consent records for that site' });
         return;
       }
-      const wait = Math.max(consentLimitIp.hit(req.ip ?? ''), consentLimitSite.hit(domain));
+      const wait = Math.max(consentLimitIp.hit(limiterIp(req)), consentLimitSite.hit(domain));
       if (wait) {
         res.set('Retry-After', String(wait)).status(429).json({ error: 'too many consent records; slow down' });
         return;
@@ -254,7 +265,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     '/e',
     (req, res, next) => {
       consentCors(req, res);
-      const wait = beaconLimitIp.hit(req.ip ?? '');
+      const wait = beaconLimitIp.hit(limiterIp(req));
       if (wait) {
         res.set('Retry-After', String(wait)).status(429).end();
         return;
@@ -413,7 +424,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     siteRoute(async (_req, res) => {
       const job = res.locals.job as JobDetail;
       res.set('Cache-Control', 'no-store');
-      res.json(await jobReport(job, { files: store.files, workspaces, maker: checklists, jobs: store.list() }));
+      res.json(await jobReport(job, { files: store.files, workspaces, maker: checklists, jobs: store.list(), publicOrigin: config.publicOrigin }));
     }),
   );
 
@@ -547,7 +558,17 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
   app.get(
     '/api/sites/:domain/workspace',
     siteRoute(async (req, res) => {
-      res.json(await workspaces.get(req.params.domain));
+      const ws = await workspaces.get(req.params.domain);
+      // The stored hosted URL (and the install task's snippet and verify spec) follow a changed PUBLIC_ORIGIN.
+      const v = ws.config?.value;
+      if (ws.config && v && typeof v === 'object' && !Array.isArray(v)) {
+        const value: Record<string, unknown> = { ...(v as Record<string, unknown>) };
+        if (typeof value.hostedScriptUrl === 'string') value.hostedScriptUrl = rehomeHostedUrl(value.hostedScriptUrl, config.publicOrigin);
+        if (Array.isArray(value.tasks)) value.tasks = rehomeTasks(value.tasks as RemediationTask[], config.publicOrigin);
+        res.json({ ...ws, config: { ...ws.config, value } });
+        return;
+      }
+      res.json(ws);
     }),
   );
 
@@ -586,7 +607,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
   app.get(
     '/api/sites/:domain/remediation',
     siteRoute(async (req, res) => {
-      res.json(remediationView(await workspaces.get(req.params.domain)));
+      res.json(remediationView(await workspaces.get(req.params.domain), config.publicOrigin));
     }),
   );
 

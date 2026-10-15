@@ -17,12 +17,14 @@ const EXAMPLE = path.join(__dirname, '..', '..', 'test', 'fixtures', 'consent-co
 const example = (): Record<string, any> => JSON.parse(fs.readFileSync(EXAMPLE, 'utf8'));
 const ORIGIN = 'https://ck.example-host.test';
 const DOMAIN = 'example-shop.test';
+const BUILD = 'a1b2c3d4e5f6';
 
 function fakeDist(): string {
   const d = tempDir();
   fs.writeFileSync(path.join(d, 'complykit-consent.js'), '!function(){window.ComplyKit={version:"9.9.9"}}();\n');
   fs.writeFileSync(path.join(d, 'complykit-consent-ui.js'), '!function(){/*ui*/}();\n');
   fs.writeFileSync(path.join(d, 'complykit-consent-companion.js'), '!function(){/*companion*/}();\n');
+  fs.writeFileSync(path.join(d, 'complykit-build.json'), JSON.stringify({ build: BUILD }));
   return d;
 }
 
@@ -125,30 +127,44 @@ describe('GET /s/<domain>.js', () => {
 });
 
 describe('GET /s/complykit-consent-ui.js', () => {
-  it('immutable for the current version, short otherwise', async () => {
+  it('immutable for the current build id, short otherwise', async () => {
     const { s } = await service();
     const plain = await request(s.app).get('/s/complykit-consent-ui.js').expect(200);
     expect(plain.text).toBe('!function(){/*ui*/}();\n');
     expect(plain.headers['cache-control']).toBe('public, max-age=60');
     expect(plain.headers['set-cookie']).toBeUndefined();
-    const version = (await import('../src/server/config.js')).readVersion();
-    const pinned = await request(s.app).get(`/s/complykit-consent-ui.js?v=${encodeURIComponent(version)}`).expect(200);
+    const pinned = await request(s.app).get(`/s/complykit-consent-ui.js?v=${BUILD}`).expect(200);
     expect(pinned.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+    const version = (await import('../src/server/config.js')).readVersion();
+    const byPackageVersion = await request(s.app).get(`/s/complykit-consent-ui.js?v=${encodeURIComponent(version)}`).expect(200);
+    expect(byPackageVersion.headers['cache-control']).toBe('public, max-age=60');
     const other = await request(s.app).get('/s/complykit-consent-ui.js?v=0.0.0-old').expect(200);
     expect(other.headers['cache-control']).toBe('public, max-age=60');
   });
 });
 
+describe('the build file', () => {
+  it('a missing build file means nothing is immutable', async () => {
+    const dist = fakeDist();
+    fs.rmSync(path.join(dist, 'complykit-build.json'));
+    const s = await startService({ consentClientDist: dist, publicOrigin: ORIGIN }, {}, { purger: noopPurger });
+    const r = await request(s.app).get(`/s/complykit-consent-ui.js?v=${BUILD}`).expect(200);
+    expect(r.headers['cache-control']).toBe('public, max-age=60');
+  });
+});
+
 describe('GET /s/complykit-consent-companion.js', () => {
-  it('served like the UI file: immutable for the current version, short otherwise', async () => {
+  it('served like the UI file: immutable for the current build id, short otherwise', async () => {
     const { s } = await service();
     const plain = await request(s.app).get('/s/complykit-consent-companion.js').expect(200);
     expect(plain.text).toBe('!function(){/*companion*/}();\n');
     expect(plain.headers['cache-control']).toBe('public, max-age=60');
     expect(plain.headers['set-cookie']).toBeUndefined();
-    const version = (await import('../src/server/config.js')).readVersion();
-    const pinned = await request(s.app).get(`/s/complykit-consent-companion.js?v=${encodeURIComponent(version)}`).expect(200);
+    const pinned = await request(s.app).get(`/s/complykit-consent-companion.js?v=${BUILD}`).expect(200);
     expect(pinned.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+    const version = (await import('../src/server/config.js')).readVersion();
+    const byPackageVersion = await request(s.app).get(`/s/complykit-consent-companion.js?v=${encodeURIComponent(version)}`).expect(200);
+    expect(byPackageVersion.headers['cache-control']).toBe('public, max-age=60');
     const other = await request(s.app).get('/s/complykit-consent-companion.js?v=0.0.0-old').expect(200);
     expect(other.headers['cache-control']).toBe('public, max-age=60');
   });
