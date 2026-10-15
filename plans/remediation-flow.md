@@ -2,7 +2,7 @@
 
 Status: contract + pure core built (2026-10-07; this document, `src/record/remediation.ts`,
 `src/remediation.ts`, `src/rules/remediation/verify.ts`, ids on the change list). The
-UI, service, browser spot-check, install bundle, e2e and docs are parallel builds (§9).
+UI, service, browser spot-check, install task, e2e and docs are parallel builds (§9).
 Design authority stays `client-consent-design.md`; this plan adds the owner-facing loop on
 top of B2 (change list), D8 (generator), C1–C4 (workspace), D10 (proof).
 The owner-facing page that carries this loop (live matrix, one to-do list, no Generate /
@@ -55,7 +55,7 @@ The checklist never promotes one to the other.
 | Recompute-in-place after a classification | R2 | service + report JS |
 | Checklist UI (report + site page) | R3 | `src/report/…`, `service/src/client/components/Sites.tsx` |
 | Verify endpoints + browser spot check | R4 | service, `src/collect/browser`, CLI |
-| Install task + zip | R5 | service |
+| Install task (zip dropped 2026-10-14; hosted one-line install, plans/hosted-script.md) | R5 | service |
 | e2e | R6 | `service/test`, `test/` |
 | Docs | R7 | `docs/guide` |
 
@@ -218,8 +218,8 @@ done-unverified (it stays a button, never a verdict). Optional items collapsed u
 by `data-change-id`.
 
 **Site page (R3).** `Sites.tsx` gains the same checklist for the latest config (counts in
-the site row; the full list on the site), Generate config, download the install zip
-(R5), and the rescan button. The site page is where the owner lands between scans.
+the site row; the full list on the site), Generate config, copy the one-line hosted install
+(R5; the zip was removed 2026-10-14, see plans/hosted-script.md), and the rescan button. The site page is where the owner lands between scans.
 
 Wording rules carry over: never "compliant"; a static pass says "the served HTML carries
 the change"; a spot-check pass names the page and the visit.
@@ -233,7 +233,7 @@ the change"; a spot-check pass names the page and the visit.
 | `POST /api/sites/:domain/remediation/:id/verify` | (as built, R4) writes the stored task to a temp file and runs `complykit verify-change --task task.json --site <domain> --json`, which fetches what the spec needs itself (static: the page's served HTML or the container, through a browser context; browser: the spot check) → `{ result, message, evidence, at, check, fetched?, observation? }`; then PATCHes `task:change:<id>` with `{ status, note (kept), lastVerify }` by `verify` and returns `{ task, outcome, stale }`. One verify per site at a time (409 while one runs); a manual task is a 409 |
 | `POST /api/jobs/:id/consent-config` (exists) | now also returns `tasks` and `scriptSrc` in `value` (the CLI prints them; the service's `ConsentConfigValue` type gains the two fields) |
 | `POST /api/jobs/:id/rerender` (R2, built) | regenerates the stored config when it came from this run, then `complykit report --format consent-html --workspace ws.json [--previous <run>]` on the saved run; the new report replaces `<run>/consent-report.html` (+ `change-list.md`, `.json`), the old one kept as `*.prev.*`; → `{ ok, at, runId, reportUrl, previousReportUrl, classifications, config: { regenerated, stale? } }`. The report embeds `<script id="ck-render">` (the `class:` stamps it applied); the workbench compares them with the workspace's and highlights "Update report with my classifications" (click → endpoint → reload at the same scroll). Offline: the command + a workspace-file download. |
-| `GET /api/sites/:domain/install.zip` (R5) | `complykit-consent.js`, `complykit-consent-ui.js`, `complykit-config.json`, `snippet.html`, `change-list.md`, `checklist.md` |
+| ~~`GET /api/sites/:domain/install.zip` (R5)~~ | **Removed 2026-10-14.** Was a zip of the two client files, config, snippet, change list and checklist. Replaced by the hosted script `GET /s/<domain>.js` (plans/hosted-script.md); the self-hosted files remain a CLI output (`consent-config` without `--hosted`). |
 | `POST /api/sites/:domain/rescan` (R6) | the checklist's last step: a new consent job with the URL, checks and quick flag of the site's latest job (else the workspace's newest run URL); body `{ quick? }` picks full or quick (the location is fixed text in the UI: the service scans from its own connection only); 409 while a scan of the site is queued or running → `{ domain, job, from }`. Both checklists follow the new job inline (the jobs stream) and, when done, link to `<report>#consent-tool-proof` |
 | `POST /api/jobs/:id/rerender` `{ generate: true }` (R6) | the report's and the site page's **Generate**: makes the config from this run (even when the stored one came from elsewhere), then re-renders, so config, change list and both checklists agree in one step; the report reloads at the same scroll. When the config was stored but the report step failed, the error body carries `configStored: true` (+ `configAt`) and both surfaces say "Your checklist was generated; the report couldn’t refresh — reload or press Update report", with that button (a rerender without `generate`) |
 | `GET /api/sites` (R6) | each row carries `checklist: { verified, required, doneUnverified, failed }` over the required tasks |
@@ -283,8 +283,7 @@ reads "compliant" and never counts "not observed" as controlled.
   `SpotCheckObservation`; the service endpoint that fetches, runs, stores. Chrome channel
   via `COMPLYKIT_BROWSER_CHANNEL=chrome`. Tests: the judge is already covered; the driver
   gets a fixture site test like `test/consent-browser.test.ts`.
-- **R5 install task + zip.** Service config for the client build folder; the zip
-  endpoint; `checklist.md` rendered from the tasks (R3's markdown renderer or a small
+- **R5 install task** (the zip endpoint was removed 2026-10-14; see plans/hosted-script.md). `checklist.md` rendered from the tasks (R3's markdown renderer or a small
   one); the install task's Verify is `verifyInstall` through R4's endpoint.
 - **R6 e2e.** Service test: scan a fixture site (`test/fixtures/tracking-site.ts`),
   classify one tool, see the config and tasks regenerate (R2), apply the snippet and a

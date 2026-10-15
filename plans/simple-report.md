@@ -22,7 +22,7 @@ In this order, and nothing else on the page:
    The legend is one line.
 4. **Your to-do list** — one numbered list: the decisions (what is X for? —
    Necessary / Functional / Analytics / Advertising), then the install and the code
-   changes (steps, snippet + Copy, before, pages, install zip on the install item,
+   changes (steps, snippet + Copy, before, pages, the one-line hosted install on the install item (no zip; plans/hosted-script.md),
    **Verify** where a check exists, "Mark done without checking" / "I've done this"),
    optional items folded, and last **Run the final scan** (enabled when every required
    item is verified, decided or marked done; it calls the rescan endpoint and opens the
@@ -87,7 +87,7 @@ classified takes the tool's purpose (judged on the same facts).
 ## 4. Service
 
 - `GET /api/jobs/:id/report → JobReportResponse { job, domain, report, todo, updating,
-  technicalReportUrl?, accessibilityReportUrl?, installZipUrl? }`. `report` is the job's
+  technicalReportUrl?, accessibilityReportUrl? }`. `report` is the job's
   `owner-report.json` (beside the report once done; while running, the newest in its
   run directory), null until written. `todo.state`: waiting (scan running) / preparing
   (list being made) / ready (`tasks` = the site's checklist with status from the

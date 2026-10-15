@@ -71,13 +71,17 @@ a theme change cannot remove it. The same `add_action` body works in a theme's
 
 ```php
 <?php
-// Load the consent tool first, synchronously, with the inline config.
+// Load the consent tool first, synchronously. The hosted script carries the config.
 add_action('wp_head', function () {
-  $config = file_get_contents(__DIR__ . '/complykit-config.json'); // the generated config
-  echo '<script type="application/json" id="complykit-config">' . $config . '</script>';
-  echo '<script src="https://YOUR-HOST/complykit-consent.js"></script>';
+  echo '<script src="https://YOUR-COMPLYKIT-HOST/s/your-site.example.js" referrerpolicy="no-referrer"></script>';
 }, 0); // priority 0: before every other script printed in the head
 ```
+
+Use the line from the install task ([Installing the consent
+tool](./consent-tool.md)) as it is. If your site sends a Content Security Policy,
+`script-src` must allow the complykit host. Self-hosting from the CLI instead: print the
+generated config inline and load `complykit-consent.js` from your own domain, as before
+(`file_get_contents` on `complykit-config.json`, then the script tag).
 
 Then check:
 
