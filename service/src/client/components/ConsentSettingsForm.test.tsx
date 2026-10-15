@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { JobReportResponse, RemediationTask, SiteWorkspace } from '../../shared/api';
 import { checklistFromWorkspace } from '../lib/checklist';
-import { categoryIdsOf, consentSettingsOf, detectedBannerOf, detectedCmpOf, manualSyncCode, settingsFromDraft } from '../lib/consentSettings';
+import { bannerFromCmp, categoryIdsOf, consentSettingsOf, detectedBannerOf, detectedCmpOf, manualSyncCode, settingsFromDraft } from '../lib/consentSettings';
 import { ConsentSettingsForm, ConsentSettingsFormView } from './ConsentSettingsForm';
 import { TodoList } from './ReportPage';
 import { ChecklistPanel } from './Sites';
@@ -142,6 +142,9 @@ describe('the site page checklist and the settings', () => {
     expect(detectedCmpOf(ws())).toBe('onetrust');
     // an old workspace with only detectedCmp: the label comes from the banner list
     expect(detectedBannerOf(ws())).toEqual({ label: 'OneTrust', cmp: 'onetrust' });
+    // Old stored data with only a mechanism (no product name): a generic name, never "WordPress Consent API".
+    expect(bannerFromCmp('wordpress')).toEqual({ label: 'your WordPress consent plugin', cmp: 'wordpress' });
+    expect(bannerFromCmp('manual')).toEqual({ label: 'your current banner', cmp: 'manual' });
     expect(categoryIdsOf(ws())).toEqual(['necessary', 'analytics', 'advertising']);
   });
 

@@ -98,10 +98,18 @@ export function detectedBannerOf(ws: Pick<SiteWorkspace, 'config'>): DetectedBan
   return bannerFromCmp(detectedCmpOf(ws));
 }
 
+// A bare cmp that names a mechanism, not a product: "Fully replace WordPress Consent API with ComplyKit" reads wrong.
+const GENERIC_LABEL: Partial<Record<CompanionCmp, string>> = {
+  wordpress: 'your WordPress consent plugin',
+  tcf: 'your current banner',
+  'consent-mode': 'your current banner',
+  manual: 'your current banner',
+};
+
 /** A banner for a bare CompanionCmp (old stored data, the report's detectedCmp): named from COMPANION_BANNERS. */
 export function bannerFromCmp(cmp: CompanionCmp | undefined): DetectedBanner | undefined {
   const hit = COMPANION_BANNERS.find((x) => x.cmp === cmp);
-  return hit ? { label: hit.label, cmp: hit.cmp } : undefined;
+  return hit ? { label: GENERIC_LABEL[hit.cmp] ?? hit.label, cmp: hit.cmp } : undefined;
 }
 
 /** The site's category ids from its stored config. */
