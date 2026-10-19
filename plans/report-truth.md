@@ -141,3 +141,37 @@ answer reaches the classify task as `refused`.
 - No change to the generator's treatment of unknown parties (config stays strictest).
 - No new owner cell state; "Couldn't test" stays for genuine gaps.
 - Full HTML report's in-page reclassification JS unchanged beyond A's server-side rows.
+
+---
+
+## Review round 1 (Fable, 2026-10-19) — amendments
+
+Core:
+- **A1 amended** (no-false-green): a site classification of a cookie no longer wins
+  outright. Tool unclassified → cookie `[]` regardless. Tool classified →
+  `union(site cookie categories ∪ KB name categories ∪ tool categories)`.
+- **C1 amended**: refused tool categories = `p.categories` (after refusal: KB categories,
+  or `unknown`) minus `unknown`, ∪ `other`. Purpose label: unknown party → "Needs
+  consent (behaves like a tracker)"; KB party → `categoryLabel(KB categories)`.
+- **C1 scan-time**: `analyzeConsentCollection` (src/pipeline.ts ~396-414) must call
+  `refuseNecessaryTrackers(evaluation, baseKb)` (the KB *without* the site override)
+  after the workspace is applied, before compatibility/consent-tool proof — today only
+  the re-render and the generator refuse, so the first report after a rescan shows a
+  false green and `answer.applied: true`.
+- B: a sandboxed frame whose URL has no host (about:srcdoc, data:) hides activity for
+  every party (conservative).
+- Nits: research.ts:34 mangled comment; hoist `toolCategories(p)`.
+
+Service:
+- **C2 lost update (blocker)**: a class write while a re-render is running must not be
+  dropped. Keep at most one queued re-render per job; when a run finishes, re-check
+  the workspace's newest class stamp against the stamp that run read, and run again if
+  newer.
+- Stale compare clamps the class stamp to server `now` (future `at` up to 5 min skew
+  must not loop re-renders).
+- A re-render that resolves but leaves the report still stale is memoised as failed for
+  that stamp (`updateError`), not retried each poll.
+- Client: "(saved)" marker cleared only when the report has the answer AND
+  `!data.updating`; a `refresh()` failure after a successful PATCH is not shown as a
+  classification error.
+- `app.stop()` / idle awaits `classRerendersSettled()`.

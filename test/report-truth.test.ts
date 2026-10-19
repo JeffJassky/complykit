@@ -63,11 +63,17 @@ describe('A. a cookie is never judged better than its tool', () => {
     expect(cookie.cells.some((c) => c.state === 'needs-decision')).toBe(true);
   });
 
-  it('the site’s own classification of the cookie still wins (a fact the site supplied)', () => {
-    const ws = { appliedAt: 'now', classifications: [{ key: 'class:x', kind: 'storage', partyId: forms.partyId, domain: 'forms.example', storageKind: 'cookie', name: '__cf_bm', categories: ['necessary'] }], doneTasks: [] };
-    const m2 = buildConsentReportModel(evaluation({ ...ev, siteWorkspace: ws }), []);
-    expect(rowOf(m2, 'storage', '__cf_bm').categories).toEqual(['necessary']);
-    expect(cellOf(m2, 'storage', '__cf_bm', 'de:do-nothing').status).toBe('match');
+  it('a cookie can’t be classified greener than its tool: the site’s cookie answer joins the tool’s purpose, and waits for an unclassified tool', () => {
+    const cookieAnswer = { key: 'class:x', kind: 'storage', partyId: forms.partyId, domain: 'forms.example', storageKind: 'cookie', name: '__cf_bm', categories: ['necessary'] };
+    // Tool unclassified: the cookie still depends on it.
+    const m1 = buildConsentReportModel(evaluation({ ...ev, siteWorkspace: { appliedAt: 'now', classifications: [cookieAnswer], doneTasks: [] } }), []);
+    expect(cellOf(m1, 'storage', '__cf_bm', 'de:do-nothing').status).toBe('review');
+    // Tool classified advertising: "necessary" on its cookie doesn't make the cookie green where the tool is red.
+    const toolAnswer = { key: 'class:t', kind: 'tool', partyId: forms.partyId, domain: 'forms.example', categories: ['advertising'] };
+    const m2 = buildConsentReportModel(evaluation({ ...ev, inventory: [{ ...forms, categories: ['advertising'] }], siteWorkspace: { appliedAt: 'now', classifications: [toolAnswer, cookieAnswer], doneTasks: [] } }), []);
+    expect(rowOf(m2, 'storage', '__cf_bm').categories).toEqual(expect.arrayContaining(['advertising', 'necessary']));
+    expect(cellOf(m2, 'tool', 'forms.example', 'de:do-nothing').status).toBe('mismatch');
+    expect(cellOf(m2, 'storage', '__cf_bm', 'de:do-nothing').status).toBe('mismatch');
   });
 
   it('a classified tool’s cookie takes the stricter of the tool’s purpose and its name’s: an ad tool’s __cf_bm is off before consent like the tool', () => {
@@ -192,5 +198,21 @@ describe('C. a refused answer is recorded, shown and judged', () => {
     const t = owner(ev).matrix.tools.find((x) => x.partyId === pay.partyId)!;
     expect(t.answer).toEqual({ categories: ['payments'], applied: true });
     expect(t.purpose).toBe('Payments');
+  });
+
+  // Review finding 2026-10-19: a KB-known tool whose "necessary" answer is refused keeps its KB purpose (strictest of both).
+  it('a refused answer on a known tool keeps the knowledge base’s purpose: GA4 called "necessary" still waits for consent in a wiretap state', () => {
+    const ga4 = party({ partyId: 'google.analytics', label: 'Google Analytics 4', domain: 'google-analytics.com', hosts: ['google-analytics.com'], recognized: true, categories: ['necessary'], behavesLikeTracker: true });
+    const answer = { appliedAt: 'now', classifications: [{ key: 'class:ga', kind: 'tool' as const, partyId: 'google.analytics', domain: 'google-analytics.com', categories: ['necessary'] }], doneTasks: [] };
+    const ev = evaluation({ locations: [CA], inventory: [ga4], siteWorkspace: answer, behaviorObservations: [seen('us-ca', 'do-nothing', [{ partyId: 'google.analytics', requests: 3 }])] });
+    refuseNecessaryTrackers(ev, DEFAULT_KB);
+    expect(ev.siteWorkspace!.classifications[0].refused).toMatch(/knowledge-base entry/);
+    const m = buildConsentReportModel(ev, []);
+    expect(rowOf(m, 'tool', 'Google Analytics 4').categories).toEqual(expect.arrayContaining(['analytics']));
+    expect(cellOf(m, 'tool', 'Google Analytics 4', 'us-ca:do-nothing').status).toBe('mismatch');
+    const t = owner(ev).matrix.tools.find((x) => x.partyId === 'google.analytics')!;
+    expect(t.answer).toMatchObject({ applied: false });
+    expect(t.purpose).toMatch(/Analytics/);
+    expect(t.purpose).not.toMatch(/behaves like a tracker/);
   });
 });
