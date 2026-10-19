@@ -5,6 +5,7 @@ import path from 'node:path';
 import { runConsentScan, type ConsentScanResult } from '../src/pipeline.js';
 import { asRunId, runDir, writeTrackingEvaluation, type LocationSpec } from '../src/record/index.js';
 import { buildConsentReportModel, diffConsentModels, renderConsentHtml, type ConsentReportModel } from '../src/report/index.js';
+import { buildOwnerReport } from '../src/report/owner-report.js';
 import { workspaceId } from '../src/report/workspace.js';
 import { assembleAndWrite } from '../src/cli/write-run.js';
 import { findPreviousConsentRun, readWorkspaceFile } from '../src/cli/previous-run.js';
@@ -114,4 +115,26 @@ suite('rescan with the site workspace (fixture storefront, DE)', () => {
     expect(html).toContain('_uw: unclassified → advertising');
     expect(html).toContain('Tasks your team marked done');
   });
+
+  // Review 2026-10-19 (report-truth C1): the first report after a rescan must not show a false green.
+  it('rescan: a tracker the team called "necessary" is refused at scan time and reported as needing consent', async () => {
+    const widget = first.evaluation.inventory.find((p) => p.partyId === 'unknown:widget.test')!;
+    const ws = {
+      version: 1,
+      domain: first.evaluation.site.registrableDomain,
+      entries: { ['class:' + workspaceId('tool', [widget.partyId, widget.domain])]: { value: { category: 'necessary', categoryChosen: true }, at: '2026-10-06T10:00:00Z', by: 'Dana' } },
+      runs: [],
+    };
+    const file = path.join(cwd, 'workspace-necessary.json');
+    fs.writeFileSync(file, JSON.stringify(ws));
+    const third = await scan('run-3', undefined, file);
+    const answer = third.evaluation.siteWorkspace?.classifications.find((c) => c.kind === 'tool' && c.partyId === widget.partyId);
+    expect(answer?.refused).toMatch(/behaved like a tracker/);
+    const row = buildConsentReportModel(third.evaluation, third.findings).behaviorMatrix!.rows.find((r) => r.kind === 'tool' && r.partyId === widget.partyId)!;
+    expect(row.categories).toContain('advertising');
+    const ev = third.evaluation;
+    const owner = buildOwnerReport({ model: buildConsentReportModel(ev, third.findings), stage: 'final', runId: 'run-3', site: ev.site, startedAt: ev.startedAt, finishedAt: ev.finishedAt });
+    const tool = owner.matrix.tools.find((t) => t.partyId === widget.partyId)!;
+    expect(tool.answer).toMatchObject({ categories: ['necessary'], applied: false });
+  }, 180000);
 });

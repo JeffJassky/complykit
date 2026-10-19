@@ -1995,7 +1995,7 @@ export function elementMatches(el: MarkupElement, sig: ElementSignature): boolea
 export interface SiteWorkspaceRecord {
   domain?: string;
   appliedAt: string;
-  classifications: Array<{ key: string; kind: 'tool' | 'storage'; partyId: string; domain: string; storageKind?: string; name?: string; categories: string[]; at?: string; by?: string }>;
+  classifications: Array<{ key: string; kind: 'tool' | 'storage'; partyId: string; domain: string; storageKind?: string; name?: string; categories: string[]; at?: string; by?: string; refused?: string }>;
   doneTasks: Array<{ key: string; at?: string; by?: string }>;
 }
 

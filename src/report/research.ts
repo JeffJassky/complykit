@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ResearchWorkflow, ResearchItem, ConsentReportModel } from '../../types/index.js';
 import { actionQuestions } from './questions.js';
-import { DEFAULT_KB, lookupStore } from '../registry/index.js';
 export type { ResearchWorkflow, ResearchItem } from '../../types/index.js';
 
 const id = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 32);
@@ -32,11 +31,10 @@ export function consentResearch(m: ConsentReportModel): ResearchWorkflow {
   const items = m.findings.map((f, i) => researchAction({kind:'finding',pointer:'/findings/'+i,label:f.message}, f.ruleId, f.requirementId, ['/findings/'+i, '/evidenceIndex', '/locations', '/notTested'], JSON.stringify([f.fingerprint,f.scope,f.kind])));
   // Research only what the scan can't explain: an unidentified tool, a tool
   // that behaved differently than its library entry (drift), and a cookie
-  // nobody can attribute — a cookie of an identified tool inherits its
-  // classification, and a known cookie name classifies itself.
+  // of an unidentified tool (a cookie name in the library does not classify it).
   m.inventory.forEach((p, i) => {
     const toolKnown = p.recognized && p.categories.length > 0 && !p.categories.includes('unknown') && !m.researchQueue.some((q) => q.partyId === p.partyId);
-    const unknownStores = p.stores.map((s, j) => ({ s, j })).filter(({ s }) => !(p.recognized && p.categories.length && !p.categories.includes('unknown')) && !lookupStore(DEFAULT_KB, s.name));
+    const unknownStores = p.stores.map((s, j) => ({ s, j })).filter(() => !(p.recognized && p.categories.length && !p.categories.includes('unknown')));
     if (toolKnown && !unknownStores.length) return;
     const refs = ['/inventory/'+i, '/evidenceIndex', '/locations', '/notTested', ...(m.behaviorObservations ? ['/behaviorObservations'] : []), ...(m.behaviorMatrix ? ['/behaviorMatrix'] : [])];
     m.findings.forEach((f, j) => {const party = (f.details?.party ?? {}) as {id?:string;domain?:string};if(party.id===p.partyId||party.domain===p.domain||f.party===p.label)refs.push('/findings/'+j);});

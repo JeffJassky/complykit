@@ -27,6 +27,7 @@ import { buildVueScopeMap, enrichFindingsWithVueSource } from './enrich/vue-scop
 import { supersedeByMeasurement } from './enrich/supersede.js';
 import { applyWorkspace, type WorkspaceSnapshot } from './site-workspace.js';
 import { reconcileCompatibility } from './consent-compatibility.js';
+import { refuseNecessaryTrackers } from './consent-generator.js';
 import type { RouteDiscoveryOptions } from './collect/browser/routes.js';
 import { localCopyRecord, type LocalCopy } from './collect/browser/evaluation/local-copy.js';
 
@@ -412,6 +413,9 @@ function analyzeConsentCollection(
     kb,
   });
   if (site) evaluation.siteWorkspace = site.record;
+  // A tracker is never necessary, whatever the site's answer: refuse against the KB *without* the site
+  // override (which would otherwise vouch for the tracker), before compatibility is decided.
+  if (site) refuseNecessaryTrackers(evaluation, baseKb);
   if (opts.localCopy) evaluation.localCopy = localCopyRecord(opts.localCopy);
   // complykit's own tool, when installed (D10): the deployed config against
   // what happened, and whether it is the workspace's latest. Its denied-state

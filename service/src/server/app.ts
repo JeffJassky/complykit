@@ -42,7 +42,7 @@ import { checklistProgress, RemediationVerifier, rehomeHostedUrl, rehomeTasks, r
 import { rescanSite } from './rescan.js';
 import { parseLaws } from './law-input.js';
 import { rerenderJob } from './rerender.js';
-import { ChecklistMaker, jobReport } from './job-report.js';
+import { ChecklistMaker, afterClassWrite, classRerendersPending, classRerendersSettled, jobReport } from './job-report.js';
 import { sendJobZip } from './zip.js';
 import { KbSync } from './kb-sync.js';
 import { openStorage, type Storage } from './storage/index.js';
@@ -62,6 +62,8 @@ export interface Service {
   stats: { flush(): Promise<void> };
   /** Epoch ms of the last request that counts as activity (see lifecycle.idleReason). */
   lastActivity(): number;
+  /** A check is running or a classification re-render is in flight. */
+  busy(): boolean;
   /** Makes the to-do list after a consent scan (config.autoChecklist). */
   checklists: ChecklistMaker;
   /** Resolves once every in-flight publish of a finished job's files, knowledge-base upload and to-do list is done. */
@@ -424,7 +426,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     siteRoute(async (_req, res) => {
       const job = res.locals.job as JobDetail;
       res.set('Cache-Control', 'no-store');
-      res.json(await jobReport(job, { files: store.files, workspaces, maker: checklists, jobs: store.list(), publicOrigin: config.publicOrigin }));
+      res.json(await jobReport(job, { files: store.files, workspaces, maker: checklists, jobs: store.list(), publicOrigin: config.publicOrigin, rerender: { config, workspaces, files: store.files } }));
     }),
   );
 
@@ -575,7 +577,13 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
   app.patch(
     '/api/sites/:domain/workspace',
     siteRoute(async (req, res) => {
-      res.json(await workspaces.patch(req.params.domain, req.body));
+      const out = await workspaces.patch(req.params.domain, req.body);
+      // A classification changes what the report says: the server re-renders the newest scan's report (no rescan, no generate).
+      const entries = (req.body as { entries?: unknown } | null)?.entries;
+      if (entries && typeof entries === 'object' && Object.keys(entries).some((k) => k.startsWith('class:'))) {
+        await afterClassWrite(out.workspace.domain, store.list(), { config, workspaces, files: store.files }).catch((e: unknown) => console.warn(`[report] re-render after classification: ${(e as Error).message}`));
+      }
+      res.json(out);
     }),
   );
 
@@ -712,10 +720,12 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     stats: { flush: () => stats.flush() },
     checklists,
     lastActivity: () => lastActivity,
+    /** Work the process must stay up for: a check running, or a report being re-rendered for a classification. */
+    busy: () => runner.isBusy() || classRerendersPending(),
     async settled() {
       // A to-do list waits for a publish and a publish can follow a to-do list's rerender (consent-config files), so loop until quiet.
       do {
-        await Promise.all([store.files.settled(), checklists.settled(), kbSync.settled(), store.flush()]);
+        await Promise.all([classRerendersSettled(), store.files.settled(), checklists.settled(), kbSync.settled(), store.flush()]);
       } while (store.files.pending() > 0);
     },
     saveKb: () => kbSync.save(),
@@ -724,6 +734,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
       clearInterval(consentSweep);
       await Promise.all([runner.shutdown(killGraceMs), kb.stop(killGraceMs), bootPurge]);
       // Stopped jobs are failed ("server stopped"); their partial files are published too.
+      await classRerendersSettled();
       await store.files.settled();
       await checklists.settled();
       hub.closeAll();

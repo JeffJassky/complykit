@@ -68,7 +68,11 @@ function ownerReport({ stage, url, done, current, widget, ws }) {
   const widgetDecided = decided(ws?.entries?.['class:fake-widget']?.value);
   if (widget && (stage === 'final' || done.length >= 2)) {
     const judged = widgetDecided ? 'ok' : 'needs-decision';
-    tools.push({ id: 'tool:unknown:widgets.test', partyId: 'unknown:widgets.test', label: 'widgets.test', domain: 'widgets.test', purpose: widgetDecided ? 'Analytics' : 'Unclassified', categories: widgetDecided ? ['analytics'] : [], classified: widgetDecided, recognized: widgetDecided, classKey: 'class:fake-widget', cells: [cell(0, judged), cell(1, judged), cell(2, judged)], cookies: [] });
+    // A "necessary" answer is refused (the fake widget behaves like a tracker), as the real generator's tracker guard does.
+    const chosen = ws?.entries?.['class:fake-widget']?.value?.category;
+    const refused = widgetDecided && chosen === 'necessary';
+    const answer = !widgetDecided ? undefined : refused ? { categories: ['other'], applied: false, reason: 'sends a stored id before consent' } : { categories: [chosen], applied: true };
+    tools.push({ id: 'tool:unknown:widgets.test', partyId: 'unknown:widgets.test', label: 'widgets.test', domain: 'widgets.test', purpose: refused ? 'Needs consent (behaves like a tracker)' : widgetDecided ? 'Analytics' : 'Unclassified', categories: refused ? ['other'] : widgetDecided ? ['analytics'] : [], classified: widgetDecided, recognized: widgetDecided, classKey: 'class:fake-widget', ...(answer ? { answer } : {}), cells: [cell(0, judged), cell(1, judged), cell(2, judged)], cookies: [] });
   }
   const counts = { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0 };
   const key = { ok: 'ok', mismatch: 'mismatch', 'needs-decision': 'needsDecision', pending: 'pending', 'not-checked': 'notChecked' };
@@ -263,6 +267,7 @@ async function consentReport() {
     process.stderr.write(`run ${opts.run} has no consent evaluation (tracking.json).\n`);
     process.exit(2);
   }
+  if (process.env.FAKE_REPORT_DELAY_MS) await sleep(Number(process.env.FAKE_REPORT_DELAY_MS));
   if (process.env.FAKE_REPORT_FAIL) {
     process.stderr.write('complykit: report crashed\n');
     process.exit(1);
@@ -281,7 +286,10 @@ async function consentReport() {
   fs.writeFileSync(opts.out.replace(/\.html?$/i, '') + '.json', JSON.stringify({ runId: opts.run, classes }));
   // The owner report, final, with the workspace's classifications applied.
   const tracking = JSON.parse(fs.readFileSync(path.join(dir, 'tracking.json'), 'utf8'));
-  fs.writeFileSync(path.join(path.dirname(opts.out), 'owner-report.json'), JSON.stringify(ownerReport({ stage: 'final', url: tracking.url ?? tracking.site?.url ?? 'https://example.com/', done: SCENARIOS, widget: !!tracking.unknownTool, ws }), null, 2));
+  const owner = ownerReport({ stage: 'final', url: tracking.url ?? tracking.site?.url ?? 'https://example.com/', done: SCENARIOS, widget: !!tracking.unknownTool, ws });
+  // FAKE_REPORT_STALE: a re-render that resolves yet leaves the report as old as before.
+  if (process.env.FAKE_REPORT_STALE) owner.generatedAt = '2000-01-01T00:00:00.000Z';
+  fs.writeFileSync(path.join(path.dirname(opts.out), 'owner-report.json'), JSON.stringify(owner, null, 2));
   process.stdout.write(`wrote ${opts.out}\n`);
 }
 

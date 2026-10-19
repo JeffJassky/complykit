@@ -13,7 +13,7 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { RUN_ID_RE, isFinal, type JobFiles } from './job-files.js';
-import { firstScan, newerScan, siteHistory } from './history.js';
+import { firstScan, latestScan, newerScan, siteHistory } from './history.js';
 import { scoreReport } from '../shared/score.js';
 import type { CompanionCmp, JobDetail, JobReportResponse, OwnerReport, SiteWorkspace } from '../shared/api.js';
 import { toSummary } from './store.js';
@@ -155,6 +155,113 @@ export class ChecklistMaker {
   }
 }
 
+// --- Classifications reach the report (plans/report-truth.md C2) -----------------
+// The server owns the re-render: a `class:` write re-renders the newest scan's
+// report, and a report older than the newest `class:` entry (written from another
+// tab, a failed earlier try, a restart) is re-rendered when someone reads it.
+
+/** The newest `class:` entry stamp of the workspace (a cleared one counts: the report changes too). */
+export function newestClassAt(ws: SiteWorkspace): string | undefined {
+  let best: string | undefined;
+  for (const [k, e] of Object.entries(ws.entries)) {
+    if (!k.startsWith('class:') || Number.isNaN(Date.parse(e.at))) continue;
+    if (best === undefined || Date.parse(e.at) > Date.parse(best)) best = e.at;
+  }
+  return best;
+}
+
+/** Re-renders that failed, by "<jobId>|<class stamp>": not retried for that stamp (a later classification is a new stamp). */
+const failedClassRerenders = new Map<string, string>();
+const FAILED_MAX = 200;
+const failKey = (jobId: string, stamp: string): string => `${jobId}|${stamp}`;
+/** When the last successful re-render for "<jobId>|<stamp>" started: a stamp in the future (clock skew) is satisfied by a report made after that. */
+const renderedAt = new Map<string, number>();
+/** Re-renders started by a classification, for shutdown and tests. */
+const classPending = new Set<Promise<unknown>>();
+/**
+ * Jobs whose re-render loop is active. `again` is set by a classification written while the loop runs
+ * (at most one re-render is queued per job); the loop re-checks before it ends, so no write is lost.
+ */
+const classLoops = new Map<string, { again: boolean }>();
+
+/** Wait for every classification re-render in flight. */
+export async function classRerendersSettled(): Promise<void> {
+  while (classPending.size) await Promise.allSettled([...classPending]);
+}
+
+/** A classification re-render is running or queued (the process must stay up for it). */
+export function classRerendersPending(): boolean {
+  return classPending.size > 0 || classLoops.size > 0;
+}
+
+function remember<V>(map: Map<string, V>, key: string, value: V): void {
+  map.set(key, value);
+  while (map.size > FAILED_MAX) map.delete(map.keys().next().value as string);
+}
+
+/** The class stamp as the staleness test reads it: never later than the server's clock (or when the last re-render for it began). */
+function effectiveStampMs(jobId: string, stamp: string, now = Date.now()): number {
+  return Math.min(Date.parse(stamp), renderedAt.get(failKey(jobId, stamp)) ?? now);
+}
+
+/**
+ * Re-render the job's report for its workspace's newest classification, until the report has caught up.
+ * Fire and forget. Already running: nothing starts (a classification write, `fromWrite`, queues one more pass
+ * instead); the stamp already failed: nothing starts.
+ */
+function startClassRerender(job: JobDetail, deps: RerenderDeps, fromWrite: boolean): void {
+  const running = classLoops.get(job.id);
+  if (running) {
+    if (fromWrite) running.again = true;
+    return;
+  }
+  const state = { again: false };
+  classLoops.set(job.id, state);
+  const domain = deps.workspaces.domain(new URL(job.url).hostname);
+  const p = (async () => {
+    try {
+      for (let pass = 0; pass < 20; pass++) {
+        state.again = false;
+        const stamp = newestClassAt(await deps.workspaces.get(domain));
+        if (!stamp || failedClassRerenders.has(failKey(job.id, stamp))) return;
+        const started = Date.now();
+        try {
+          await rerenderJob(job, { by: 'complykit' }, deps);
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`[report] re-render of job ${job.id} for classifications: ${message}`);
+          remember(failedClassRerenders, failKey(job.id, stamp), message);
+          if (state.again) continue; // a newer classification came in meanwhile: that is a new stamp
+          return;
+        }
+        remember(renderedAt, failKey(job.id, stamp), started);
+        // Did the report catch up? A classification written meanwhile (newer stamp, or a queued pass) goes round again.
+        const after = newestClassAt(await deps.workspaces.get(domain));
+        const newer = !!after && after !== stamp && Date.parse(after) > Date.parse(stamp);
+        if (newer || state.again) continue;
+        const report = await readOwnerReport(job, deps.files, await ownerReportRel(job, deps.files));
+        if (state.again) continue; // no await from here to the end of the loop: a write is either seen here or starts its own
+        if (report && Date.parse(report.generatedAt) < effectiveStampMs(job.id, stamp)) {
+          remember(failedClassRerenders, failKey(job.id, stamp), 'the report was re-rendered but does not include your latest classification');
+        }
+        return;
+      }
+    } finally {
+      classLoops.delete(job.id);
+    }
+  })()
+    .catch((err: unknown) => console.error(`[report] re-render of job ${job.id} for classifications: ${err instanceof Error ? err.message : String(err)}`))
+    .finally(() => classPending.delete(p));
+  classPending.add(p);
+}
+
+/** A workspace write that touched `class:` entries: re-render the site's newest finished scan (queued behind one already running). */
+export async function afterClassWrite(domain: string, jobs: JobDetail[], deps: RerenderDeps): Promise<void> {
+  const job = latestScan(domain, jobs, (h) => deps.workspaces.domain(h));
+  if (!job) return;
+  startClassRerender(job, deps, true);
+}
+
 /** First-scan scores by job id, kept while the owner report is unchanged (a re-render with new classifications rewrites it). */
 const baselineCache = new Map<string, { etag: string; score: number | undefined }>();
 
@@ -170,7 +277,7 @@ async function baselineScore(job: JobDetail, files: JobFiles): Promise<number | 
   return score;
 }
 
-export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspaces: WorkspaceStore; maker?: ChecklistMaker; jobs?: JobDetail[]; publicOrigin?: string }): Promise<JobReportResponse> {
+export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspaces: WorkspaceStore; maker?: ChecklistMaker; jobs?: JobDetail[]; publicOrigin?: string; rerender?: RerenderDeps }): Promise<JobReportResponse> {
   const consent = job.checks.includes('consent');
   const domain = deps.workspaces.domain(new URL(job.url).hostname);
   const report = consent ? await readOwnerReport(job, deps.files, await ownerReportRel(job, deps.files)) : null;
@@ -186,8 +293,29 @@ export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspa
         )
       : undefined;
   const ws = await deps.workspaces.get(domain);
-  const tasks = mergeTaskStatus(storedTasks(ws, deps.publicOrigin), ws).sort((a, b) => a.order - b.order);
+  const refusals = new Map<string, string>();
+  for (const t of report?.matrix.tools ?? []) if (t.answer?.applied === false) refusals.set(t.classKey, t.answer.reason ?? 'complykit treats it as needing consent');
+  // A decided classification complykit did not apply (the tool behaves like a tracker): the task says so.
+  const tasks = mergeTaskStatus(storedTasks(ws, deps.publicOrigin), ws)
+    .map((t) => {
+      if (!t.classKey || !refusals.has(t.classKey)) return t;
+      const v = ws.entries[t.classKey]?.value;
+      const category = isObj(v) && typeof v.category === 'string' ? v.category : undefined;
+      return { ...t, refused: refusals.get(t.classKey), ...(category ? { answered: category } : {}) };
+    })
+    .sort((a, b) => a.order - b.order);
   const runId = job.result?.consent?.runId;
+
+  // A report older than the newest classification is stale: update it now (once per stamp).
+  let updateError: string | undefined;
+  if (consent && job.status === 'done' && runId && report && deps.rerender) {
+    const stamp = newestClassAt(ws);
+    const made = Date.parse(report.generatedAt);
+    if (stamp && !Number.isNaN(made) && made < effectiveStampMs(job.id, stamp)) {
+      updateError = failedClassRerenders.get(failKey(job.id, stamp));
+      if (updateError === undefined) startClassRerender(job, deps.rerender, false);
+    }
+  }
   const auto = deps.maker?.state(job.id);
 
   let state: JobReportResponse['todo']['state'];
@@ -221,7 +349,8 @@ export async function jobReport(job: JobDetail, deps: { files: JobFiles; workspa
       ...(ready && ws.config?.at ? { configAt: ws.config.at } : {}),
       ...(ready && ws.config?.runId ? { runId: ws.config.runId, fromThisRun: ws.config.runId === runId } : {}),
     },
-    updating: rerenderRunning(job.id),
+    updating: rerenderRunning(job.id) || classLoops.has(job.id),
+    ...(updateError !== undefined ? { updateError } : {}),
     ...(job.result?.consent?.reportUrl ? { technicalReportUrl: job.result.consent.reportUrl } : {}),
     ...(job.result?.accessibility?.reportUrl ? { accessibilityReportUrl: job.result.accessibility.reportUrl } : {}),
     ...((await jsonReportExists(job, deps.files)) && job.result?.consent ? { jsonReportUrl: job.result.consent.reportUrl.replace(/\.html$/, '.json') } : {}),

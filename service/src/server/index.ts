@@ -91,7 +91,7 @@ async function main(): Promise<void> {
 
   if (config.idleShutdownMinutes > 0) {
     setInterval(() => {
-      const reason = idleReason({ idleMinutes: config.idleShutdownMinutes, busy: service.runner.isBusy(), lastActivity: service.lastActivity() });
+      const reason = idleReason({ idleMinutes: config.idleShutdownMinutes, busy: service.busy(), lastActivity: service.lastActivity() });
       // exit(0): fly.toml's restart policy is on-failure, so the Machine stays
       // stopped until the next request wakes it.
       if (reason) void shutdown(reason);

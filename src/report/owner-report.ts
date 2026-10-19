@@ -5,7 +5,6 @@ import type { ConsentReportModel } from './consent-model.js';
 import { buildBehaviorMatrix, categoryLabel, regimeFor } from './consent-matrix.js';
 import { skipKindOf, SKIP_LEAD, type SkipKind } from './skip-kind.js';
 import { workspaceId } from './workspace.js';
-import { compareCookieBehavior } from './cookie-purpose.js';
 import { hostedOn, isWiretapJurisdiction } from '../registry/index.js';
 
 // The owner report (plans/simple-report.md): the one page a site owner reads.
@@ -89,6 +88,8 @@ export interface OwnerToolRow {
   cookies: OwnerCookieRow[];
   /** What the scan saw the tool do: requests only, or storing cookies / storage too. */
   activity: OwnerToolActivity;
+  /** What complykit did with the answer your team gave for this tool (absent when none was given). */
+  answer?: { categories: string[]; applied: boolean; reason?: string };
 }
 
 export interface OwnerToolActivity {
@@ -388,19 +389,18 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
   for (const p of unreachableReason ? [] : m?.inventory ?? []) {
     const toolRow = bm?.rows.find((r) => r.kind === 'tool' && r.partyId === p.partyId);
     const categories = (toolRow?.categories ?? p.categories).filter((c) => c && c !== 'unknown');
-    const purpose = categoryLabel(categories);
+    // What the team answered for this tool, and whether complykit applied it (a tracker is never necessary).
+    const site = m?.siteWorkspace?.classifications.find((c) => c.kind === 'tool' && c.partyId === p.partyId);
+    const refused = site?.refused;
+    const answer: OwnerToolRow['answer'] = site ? { categories: [...site.categories], applied: !refused, ...(refused ? { reason: refused } : {}) } : undefined;
+    // A refused unknown tracker is judged as advertising (the strictest purpose); its label says why, not "Advertising".
+    const purpose = refused ? (p.categories.some((c) => c && c !== 'unknown') ? categoryLabel(categories) : 'Needs consent (behaves like a tracker)') : categoryLabel(categories);
+    // A cookie's categories come from the matrix row alone (cookie rows already follow their tool, report-truth A).
     const cookies: OwnerCookieRow[] = (bm?.rows ?? [])
       .filter((r) => r.kind === 'storage' && r.partyId === p.partyId)
       .map((r) => {
-        let cats = r.categories.filter((c) => c && c !== 'unknown');
-        let row = r;
-        // A cookie of a tool your team classified takes the tool's purpose (the full
-        // report's rule for a recognized tool), judged on the same facts.
-        if (!cats.length && categories.length) {
-          cats = categories;
-          row = { ...r, cells: r.cells.map((c) => (c.comparisonFacts && c.status === 'review' ? { ...c, ...compareCookieBehavior(c.comparisonFacts as Parameters<typeof compareCookieBehavior>[0], { categories }) } : c)) };
-        }
-        return { id: r.id, name: r.label, kind: r.storageKind ?? 'cookie', purpose: categoryLabel(cats), classified: cats.length > 0, cells: cellsFor(row) };
+        const cats = r.categories.filter((c) => c && c !== 'unknown');
+        return { id: r.id, name: r.label, kind: r.storageKind ?? 'cookie', purpose: cats.length ? categoryLabel(cats) : `Depends on what ${p.label} is for`, classified: cats.length > 0, cells: cellsFor(r) };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
     tools.push({
@@ -416,6 +416,7 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
       cells: cellsFor(toolRow),
       cookies,
       activity: activityOf(p, cookies, input.site.registrableDomain),
+      ...(answer ? { answer } : {}),
     });
   }
 

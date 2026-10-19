@@ -19,12 +19,14 @@ export function isMoving(r: JobReportResponse | null): boolean {
  * would keep the server from its idle shutdown. Newest response wins.
  */
 export function useJobReport(jobId: string) {
+  // Set by the poll effect: starts the loop again when a refresh found something moving (a classification the server is re-rendering).
+  const wake = useRef<(() => void) | undefined>(undefined);
   const [data, setData] = useState<JobReportResponse | null>(null);
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
   const seq = useRef(0);
   const dataRef = useRef<JobReportResponse | null>(null);
 
-  const refresh = useCallback(async () => {
+  const read = useCallback(async () => {
     const n = ++seq.current;
     try {
       const next = await api.jobReport(jobId);
@@ -36,6 +38,10 @@ export function useJobReport(jobId: string) {
       if (n === seq.current) setError({ message: err instanceof Error ? err.message : String(err), status: (err as { status?: number }).status });
     }
   }, [jobId]);
+  const refresh = useCallback(async () => {
+    await read();
+    wake.current?.();
+  }, [read]);
 
   useEffect(() => {
     let stopped = false;
@@ -48,72 +54,31 @@ export function useJobReport(jobId: string) {
     const loop = async () => {
       if (stopped) return;
       polling = true;
-      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') await refresh();
+      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') await read();
       if (stopped) return;
       timer = isMoving(dataRef.current) ? setTimeout(loop, ACTIVE_POLL_MS) : undefined;
       polling = !!timer;
+    };
+    wake.current = () => {
+      if (!stopped && !polling && isMoving(dataRef.current)) void loop();
     };
     void loop();
     const onVisible = () => {
       if (document.visibilityState === 'hidden') return;
       // Moving: re-read now, the loop keeps polling. Settled: one loop pass, which polls again only if something started moving.
-      if (polling) void refresh();
+      if (polling) void read();
       else void loop();
     };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onVisible);
     return () => {
       stopped = true;
+      wake.current = undefined;
       if (timer) clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onVisible);
     };
-  }, [refresh]);
+  }, [read]);
 
   return { data, error, refresh };
-}
-
-/**
- * Re-renders after classifications, coalesced: `request()` waits `delayMs` for
- * more decisions, then runs once; a request while one runs queues exactly one
- * more after it. No "Update report" button — this is what replaces it.
- */
-export function createRerenderQueue(run: () => Promise<void>, opts: { delayMs?: number; onState?: (s: 'idle' | 'scheduled' | 'running') => void; onError?: (err: unknown) => void } = {}) {
-  const delay = opts.delayMs ?? 800;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let running = false;
-  let again = false;
-  const state = (s: 'idle' | 'scheduled' | 'running') => opts.onState?.(s);
-  const fire = async (): Promise<void> => {
-    timer = undefined;
-    if (running) {
-      again = true;
-      return;
-    }
-    running = true;
-    state('running');
-    try {
-      await run();
-    } catch (err) {
-      opts.onError?.(err);
-    } finally {
-      running = false;
-    }
-    if (again) {
-      again = false;
-      return fire();
-    }
-    state(timer ? 'scheduled' : 'idle');
-  };
-  return {
-    request(): void {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => void fire(), delay);
-      if (!running) state('scheduled');
-    },
-    cancel(): void {
-      if (timer) clearTimeout(timer);
-      timer = undefined;
-    },
-  };
 }
