@@ -35,6 +35,17 @@ export function newerScan(job: JobDetail, jobs: JobDetail[], domainOf: DomainOf)
   return newest;
 }
 
+/** The site's newest finished consent scan (the one whose report the owner works in), if any. */
+export function latestScan(domain: string, jobs: JobDetail[], domainOf: DomainOf): JobDetail | undefined {
+  let newest: JobDetail | undefined;
+  for (const j of jobs) {
+    if (j.status !== 'done' || !j.checks.includes('consent') || !j.result?.consent?.runId) continue;
+    if (jobDomain(j, domainOf) !== domain) continue;
+    if (!newest || j.createdAt > newest.createdAt) newest = j;
+  }
+  return newest;
+}
+
 /**
  * The site's first finished consent scan (the score baseline): the oldest, or the job itself
  * when nothing finished before it. Undefined when the job isn't finished and none other is.

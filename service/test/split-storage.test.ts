@@ -9,6 +9,7 @@ import type { CreateBatchResponse, JobReportResponse, RerenderResponse } from '.
 import { FsBlobs } from '../src/server/storage/fs-blobs.js';
 import { mongoRecords } from '../src/server/storage/mongo.js';
 import type { Storage } from '../src/server/storage/types.js';
+import { classRerendersSettled } from '../src/server/job-report.js';
 import { binaryParser, startService, stopAll, tempDir, waitForStatus } from './helpers.js';
 
 // Phase 2 contract (plans/do-hosting.md, "Storage"): the host keeps nothing it
@@ -116,13 +117,16 @@ describe('split storage: the host disk is scratch', () => {
     expect(names.some((n) => n.endsWith('/consent/consent-report.html'))).toBe(true);
 
     await request(s.app).patch('/api/sites/example.com/workspace').send({ entries: { 'class:tool-abc': { value: { category: 'analytics', categoryChosen: true } } } }).expect(200);
+    // The write itself re-renders the report (the server owns that); the explicit re-render below replaces that copy.
+    await classRerendersSettled();
+    const served = (await request(s.app).get(job.result!.consent!.reportUrl).expect(200)).text;
     const rr = (await request(s.app).post(`/api/jobs/${id}/rerender`).send({}).expect(200)).body as RerenderResponse;
     expect(rr).toMatchObject({ ok: true, classifications: 1 });
     // The re-rendered report is what blobs now serve (and the scratch used for it is gone again).
     const after = (await request(s.app).get(job.result!.consent!.reportUrl).expect(200)).text;
     expect(after).toContain('Re-rendered');
     expect(after).toContain('class:tool-abc');
-    expect((await request(s.app).get(rr.previousReportUrl).expect(200)).text).toBe(html.text);
+    expect((await request(s.app).get(rr.previousReportUrl).expect(200)).text).toBe(served);
     expect(fs.existsSync(path.join(s.config.dataDir, 'jobs', id, 'consent', '.comply'))).toBe(false);
   });
 
