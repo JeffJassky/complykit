@@ -42,7 +42,7 @@ import { checklistProgress, RemediationVerifier, rehomeHostedUrl, rehomeTasks, r
 import { rescanSite } from './rescan.js';
 import { parseLaws } from './law-input.js';
 import { rerenderJob } from './rerender.js';
-import { ChecklistMaker, jobReport } from './job-report.js';
+import { ChecklistMaker, afterClassWrite, jobReport } from './job-report.js';
 import { sendJobZip } from './zip.js';
 import { KbSync } from './kb-sync.js';
 import { openStorage, type Storage } from './storage/index.js';
@@ -424,7 +424,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     siteRoute(async (_req, res) => {
       const job = res.locals.job as JobDetail;
       res.set('Cache-Control', 'no-store');
-      res.json(await jobReport(job, { files: store.files, workspaces, maker: checklists, jobs: store.list(), publicOrigin: config.publicOrigin }));
+      res.json(await jobReport(job, { files: store.files, workspaces, maker: checklists, jobs: store.list(), publicOrigin: config.publicOrigin, rerender: { config, workspaces, files: store.files } }));
     }),
   );
 
@@ -575,7 +575,13 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
   app.patch(
     '/api/sites/:domain/workspace',
     siteRoute(async (req, res) => {
-      res.json(await workspaces.patch(req.params.domain, req.body));
+      const out = await workspaces.patch(req.params.domain, req.body);
+      // A classification changes what the report says: the server re-renders the newest scan's report (no rescan, no generate).
+      const entries = (req.body as { entries?: unknown } | null)?.entries;
+      if (entries && typeof entries === 'object' && Object.keys(entries).some((k) => k.startsWith('class:'))) {
+        await afterClassWrite(out.workspace.domain, store.list(), { config, workspaces, files: store.files }).catch((e: unknown) => console.warn(`[report] re-render after classification: ${(e as Error).message}`));
+      }
+      res.json(out);
     }),
   );
 

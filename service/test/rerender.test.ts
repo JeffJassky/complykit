@@ -3,6 +3,7 @@ import path from 'node:path';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CreateBatchResponse, RerenderResponse, SiteWorkspace } from '../src/shared/api.js';
+import { classRerendersSettled } from '../src/server/job-report.js';
 import { startService, stopAll, waitForStatus } from './helpers.js';
 
 afterEach(stopAll);
@@ -34,7 +35,11 @@ describe('POST /api/jobs/:id/rerender', () => {
 
     // Classified AFTER the scan; a cleared one is not applied.
     await request(s.app).patch('/api/sites/example.com/workspace').send({ entries: { 'class:tool-abc': { value: { category: 'analytics', categoryChosen: true } }, 'class:tool-gone': { value: null } } }).expect(200);
-    const res = await request(s.app).post(`/api/jobs/${id}/rerender`).send({}).expect(200);
+    // The write itself re-renders the report (the server owns that); the explicit re-render below replaces that copy.
+    await classRerendersSettled();
+    const served = (await request(s.app).get(reportUrl).expect(200)).text;
+    expect(served).toContain('Re-rendered');
+    const res =await request(s.app).post(`/api/jobs/${id}/rerender`).send({}).expect(200);
     const body = res.body as RerenderResponse;
     expect(body).toMatchObject({ ok: true, runId: job.result!.consent!.runId, reportUrl, classifications: 1, config: { regenerated: false } });
     expect(Date.parse(body.at)).not.toBeNaN();
@@ -43,7 +48,7 @@ describe('POST /api/jobs/:id/rerender', () => {
     expect(after).toContain('Re-rendered');
     expect(after).toContain('class:tool-abc');
     expect(after).not.toContain('tool-gone');
-    expect((await request(s.app).get(body.previousReportUrl).expect(200)).text).toBe(before);
+    expect((await request(s.app).get(body.previousReportUrl).expect(200)).text).toBe(served);
     expect((await request(s.app).get(job.result!.consent!.changeListUrl!).expect(200)).text).toMatch(/re-rendered with 1 classification/);
 
     const [argv] = calls(s, id);

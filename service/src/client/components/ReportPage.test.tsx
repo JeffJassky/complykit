@@ -5,7 +5,7 @@ import type { JobReportResponse, JobSummary, LawScanProgress, OwnerReport, Remed
 import { LAWS, type LawId } from '../../shared/laws';
 import { reportSeverity, scoreReport } from '../../shared/score';
 import { parseHash, reportHref } from '../lib/useHashView';
-import { createRerenderQueue, isMoving } from '../lib/useJobReport';
+import { isMoving } from '../lib/useJobReport';
 import { HomeView, siteRows, siteStatus } from './Home';
 import { BannerLine, LawTabsView, Matrix, Overview, ReportPageView, pagesVisited, pdfTitle, ScanHistory, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
 
@@ -212,7 +212,7 @@ describe('c. the matrix', () => {
     expect(text(<Matrix data={done({ report: unverified })} />)).toContain('We could not confirm where the scan was running from (exit in US), so nothing was checked.');
   });
   it('a tool classified on this page shows as saved until the next report arrives', () => {
-    expect(text(<Matrix data={running()} ui={{ saved: { 'class:w': 'analytics' } }} />)).toContain('Analytics (saved)');
+    expect(text(<Matrix data={running()} ui={{ saved: { 'class:w': 'analytics' } }} />)).toContain('Measures visits (saved)');
   });
 });
 
@@ -292,7 +292,9 @@ describe('d. the to-do list', () => {
   });
 
   it('says so while the report updates with new answers, and when the list came from an earlier scan', () => {
-    expect(html(<TodoList data={done()} ui={{ rerender: 'running' }} />)).toContain('data-testid="updating"');
+    expect(html(<TodoList data={done()} ui={{}} />)).not.toContain('data-testid="updating"');
+    expect(html(<TodoList data={done({ updating: true })} ui={{}} />)).toContain('data-testid="updating"');
+    expect(text(<TodoList data={done({ updateError: 'report crashed' })} ui={{}} />)).toContain('could not be updated with your latest answer (report crashed)');
     expect(text(<TodoList data={done({ todo: { ...done().todo, fromThisRun: false } })} />)).toContain('This list comes from an earlier scan of this site');
   });
 });
@@ -310,30 +312,27 @@ describe('routing, polling and the re-render queue', () => {
     expect(isMoving(done({ todo: { state: 'preparing', tasks: [] } }))).toBe(true);
     expect(isMoving(done({ updating: true }))).toBe(true);
   });
-  it('coalesces decisions into one re-render, and runs one more if asked while running', async () => {
-    vi.useFakeTimers();
-    try {
-      let resolve: () => void = () => {};
-      const run = vi.fn(() => new Promise<void>((r) => (resolve = r)));
-      const states: string[] = [];
-      const q = createRerenderQueue(run, { delayMs: 100, onState: (s) => states.push(s) });
-      q.request();
-      q.request();
-      await vi.advanceTimersByTimeAsync(100);
-      expect(run).toHaveBeenCalledTimes(1);
-      q.request(); // while running
-      await vi.advanceTimersByTimeAsync(100);
-      expect(run).toHaveBeenCalledTimes(1);
-      resolve();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(run).toHaveBeenCalledTimes(2);
-      resolve();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(states.at(-1)).toBe('idle');
-      expect(states).toContain('running');
-    } finally {
-      vi.useRealTimers();
-    }
+});
+
+describe('facts, not verdicts, and decided is not applied', () => {
+  it('the picker asks what the tool does: the eight fact options, in order', () => {
+    const out = html(<TodoList data={done({ todo: { state: 'ready', tasks: [decision], fromThisRun: true } })} ui={{}} actions={{ onClassify: () => {} }} />);
+    const ids = [...out.matchAll(/data-purpose="([a-z]+)"/g)].map((m) => m[1]);
+    expect(ids).toEqual(['payments', 'necessary', 'chat', 'embed', 'reviews', 'functional', 'analytics', 'advertising']);
+    expect(out).toContain('>Payments or checkout<');
+    expect(out).toContain('>Video, maps or other embedded content<');
+    expect(out).toContain('>Another feature visitors use<');
+  });
+  it('a refused answer says what the owner answered and that complykit treats it as needing consent', () => {
+    const refused = { ...decision, status: 'verified' as const, refused: 'sends a stored id to a third party', answered: 'necessary' };
+    const out = text(<TodoList data={done({ todo: { state: 'ready', tasks: [refused], fromThisRun: true } })} ui={{}} />);
+    expect(html(<TodoList data={done({ todo: { state: 'ready', tasks: [refused], fromThisRun: true } })} ui={{}} />)).toContain('Answered: <strong>Security, login or cart</strong>. complykit treats it as needing consent: sends a stored id to a third party.');
+    expect(out).not.toContain('Decided ✓');
+    expect(out).not.toContain('Saved as');
+  });
+  it('an applied answer still reads Decided', () => {
+    const decided = { ...decision, status: 'verified' as const };
+    expect(text(<TodoList data={done({ todo: { state: 'ready', tasks: [decided], fromThisRun: true } })} ui={{}} />)).toContain('Decided ✓');
   });
 });
 

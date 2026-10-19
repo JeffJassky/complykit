@@ -468,6 +468,10 @@ export interface RemediationTask {
   classifyFirst?: boolean;
   /** A 'classify' task (a decision: what an unrecognized tool is for): the workspace key (`class:<id>`) whose classification decides it. Its status is 'verified' ("Decided") when that entry holds a purpose (classificationDecided), else 'todo' — never a task:change:<id> entry. */
   classKey?: string;
+  /** A decided 'classify' task whose answer complykit did not apply (the tool behaves like a tracker): why. Set from the owner report's `answer`. */
+  refused?: string;
+  /** With `refused`: the category id the owner chose (the workspace entry's `category`), so the page can say what was answered. */
+  answered?: string;
   /** The 'classify' tasks this change waits on. */
   waitingOn?: string[];
   notes: string[];
@@ -672,6 +676,8 @@ export interface OwnerToolRow {
   recognized: boolean;
   /** The workspace key its classification is saved under (`class:<id>`). */
   classKey: string;
+  /** What complykit did with the site's classification of this tool; set when one exists. */
+  answer?: { categories: string[]; applied: boolean; reason?: string };
   cells: OwnerCell[];
   cookies: OwnerCookieRow[];
   /** What the scan saw the tool do (absent in reports made before it was added). */
@@ -772,6 +778,8 @@ export interface JobReportResponse {
   };
   /** A re-render of this report with new classifications is running. */
   updating: boolean;
+  /** The re-render for the newest classification failed (not retried until the next one): why. */
+  updateError?: string;
   /** The full HTML report (legal scope, evidence, limits): "Technical details". */
   technicalReportUrl?: string;
   accessibilityReportUrl?: string;
