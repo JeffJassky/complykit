@@ -682,8 +682,6 @@ export interface OwnerToolRow {
   cookies: OwnerCookieRow[];
   /** What the scan saw the tool do (absent in reports made before it was added). */
   activity?: OwnerToolActivity;
-  /** What complykit did with the answer your team gave for this tool (absent when none was given). */
-  answer?: { categories: string[]; applied: boolean; reason?: string };
 }
 
 export interface OwnerToolActivity {
