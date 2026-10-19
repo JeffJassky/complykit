@@ -19,7 +19,7 @@ const loc = (id: string, label: string, country: string, jurisdictions: string[]
 const DE = loc('de', 'Germany', 'DE', ['eu', 'eu-de']);
 const CA = loc('us-ca', 'California', 'US', ['us', 'us-ca']);
 
-const party = (o: Record<string, unknown>) => ({ hosts: [o.domain], kbStatus: 'proposed', behavesLikeTracker: false, trackerSignals: [], sends: [], stores: [], sources: ['injected'], loadedBy: [], seenIn: [], ...o });
+const party = (o: Record<string, unknown>): Record<string, any> => ({ hosts: [o.domain], kbStatus: 'proposed', behavesLikeTracker: false, trackerSignals: [], sends: [], stores: [], sources: ['injected'], loadedBy: [], seenIn: [], ...o });
 const store = (name: string, o: Record<string, unknown> = {}) => ({ name, kind: 'cookie', writePhase: 'before-choice', writePhases: ['before-choice'], presentAtEnd: true, attribution: 'observed', ...o });
 const seen = (location: string, scenario: string, parties: Array<{ partyId: string; requests?: number; stores?: unknown[] }>) => ({
   location, scenario, durationMs: 10000, knownPartyIds: parties.map((p) => p.partyId),
