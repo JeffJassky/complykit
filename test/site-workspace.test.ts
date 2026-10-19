@@ -112,12 +112,14 @@ describe('run-to-run diff', () => {
 
   it('lists a classified cookie and the checks it flipped', () => {
     const ev = evaluation('r2', '2026-10-06T09:00:00Z');
-    ev.siteWorkspace = { appliedAt: 'now', classifications: [{ key: cookieKey, kind: 'storage', partyId: 'unknown:widget.test', domain: 'widget.test', storageKind: 'cookie', name: '_uw', categories: ['advertising'] }], doneTasks: [] };
+    // A cookie is never judged better than its tool (report-truth A): the team classifies the tool as well.
+    ev.inventory.find((p) => p.partyId === 'unknown:widget.test')!.categories = ['advertising'];
+    ev.siteWorkspace = { appliedAt: 'now', classifications: [{ key: toolKey, kind: 'tool', partyId: 'unknown:widget.test', domain: 'widget.test', categories: ['advertising'] }, { key: cookieKey, kind: 'storage', partyId: 'unknown:widget.test', domain: 'widget.test', storageKind: 'cookie', name: '_uw', categories: ['advertising'] }], doneTasks: [] };
     const head = buildConsentReportModel(ev, []);
     const row = head.behaviorMatrix!.rows.find((r) => r.kind === 'storage' && r.label === '_uw')!;
     expect(row).toMatchObject({ categories: ['advertising'], categorySource: 'your team’s site classification' });
     const d = diffConsentModels(base, head);
-    expect(d.classified).toEqual([expect.objectContaining({ row: '_uw', from: [], to: ['advertising'] })]);
+    expect(d.classified).toContainEqual(expect.objectContaining({ row: '_uw', from: [], to: ['advertising'] }));
     expect(d.cells.some((c) => c.row === '_uw' && c.from === 'review' && c.to === 'mismatch')).toBe(true);
     expect(d.parties.added).toEqual([]);
     expect(renderSinceMarkdown(d)).toMatch(/^## Since 2026-10-01 09:00 UTC/);

@@ -7,7 +7,7 @@ import { reportSeverity, scoreReport } from '../../shared/score';
 import { parseHash, reportHref } from '../lib/useHashView';
 import { isMoving } from '../lib/useJobReport';
 import { HomeView, siteRows, siteStatus } from './Home';
-import { BannerLine, LawTabsView, Matrix, Overview, ReportPageView, pagesVisited, pdfTitle, ScanHistory, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
+import { BannerLine, LawTabsView, Matrix, Overview, ReportPageView, pagesVisited, pdfTitle, ScanHistory, ScanStatus, TodoList, activityLine, readyForFinalScan, savedAfter, saveClassification } from './ReportPage';
 
 // The report page (plans/simple-report.md), rendered per section and state.
 
@@ -333,6 +333,27 @@ describe('facts, not verdicts, and decided is not applied', () => {
   it('an applied answer still reads Decided', () => {
     const decided = { ...decision, status: 'verified' as const };
     expect(text(<TodoList data={done({ todo: { state: 'ready', tasks: [decided], fromThisRun: true } })} ui={{}} />)).toContain('Decided ✓');
+  });
+});
+
+describe('saving a classification', () => {
+  const answered = (over: Partial<JobReportResponse> = {}) => done({ report: owner({ matrix: { ...owner().matrix, tools: owner().matrix.tools.map((t) => (t.classKey === 'class:w' ? { ...t, classified: true, answer: { categories: ['analytics'], applied: true } } : t)) } }), ...over });
+  it('the saved marker stays while the report is still updating, even if the current one already answers the tool', () => {
+    const saved = { 'class:w': 'analytics' };
+    expect(savedAfter(saved, answered({ updating: true }))).toEqual(saved);
+    expect(savedAfter(saved, answered({ updating: false }))).toEqual({});
+    expect(savedAfter(saved, done({ updating: false }))).toEqual(saved); // a report that does not answer it yet
+  });
+  it('a failed report read after a successful save is not a classification error', async () => {
+    const refresh = vi.fn().mockRejectedValue(new Error('network'));
+    expect(await saveClassification(async () => undefined, refresh)).toEqual({ saved: true });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+  it('a failed save is reported and reads nothing', async () => {
+    const refresh = vi.fn();
+    const boom = new Error('409');
+    expect(await saveClassification(async () => { throw boom; }, refresh)).toEqual({ saved: false, error: boom });
+    expect(refresh).not.toHaveBeenCalled();
   });
 });
 

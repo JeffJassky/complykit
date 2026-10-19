@@ -31,7 +31,7 @@ export function consentResearch(m: ConsentReportModel): ResearchWorkflow {
   const items = m.findings.map((f, i) => researchAction({kind:'finding',pointer:'/findings/'+i,label:f.message}, f.ruleId, f.requirementId, ['/findings/'+i, '/evidenceIndex', '/locations', '/notTested'], JSON.stringify([f.fingerprint,f.scope,f.kind])));
   // Research only what the scan can't explain: an unidentified tool, a tool
   // that behaved differently than its library entry (drift), and a cookie
-  //   // classification; a cookie name in the library does not classify a cookie of an unidentified tool.
+  // of an unidentified tool (a cookie name in the library does not classify it).
   m.inventory.forEach((p, i) => {
     const toolKnown = p.recognized && p.categories.length > 0 && !p.categories.includes('unknown') && !m.researchQueue.some((q) => q.partyId === p.partyId);
     const unknownStores = p.stores.map((s, j) => ({ s, j })).filter(() => !(p.recognized && p.categories.length && !p.categories.includes('unknown')));

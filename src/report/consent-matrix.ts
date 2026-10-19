@@ -51,17 +51,18 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
   // tracker, so it needs consent; else what the party carries. Empty or `unknown` = the tool is unclassified.
   const toolCategories=(p:(typeof m.inventory)[number]):{categories:string[];source:string}=>{
     const site=siteClass(m,p.partyId);
-    if(site?.refused)return {categories:['other'],source:`complykit: behaves like a tracker (${site.refused})`};
+    if(site?.refused)return {categories:[...new Set([...p.categories.filter(c=>c&&c!=='unknown'),'other'])],source:`complykit: behaves like a tracker (${site.refused})`};
     return {categories:p.categories,source:site?SITE_SOURCE:p.recognized?'tool library':'unknown'};
   };
+  const judged=new Map(m.inventory.map(p=>[p.partyId,toolCategories(p)]));
   const rows = m.inventory.flatMap((p,i)=>[
-    {id:'tool:'+p.partyId,kind:'tool' as const,label:p.label,tool:p.label,partyId:p.partyId,categories:toolCategories(p).categories,categorySource:toolCategories(p).source,link:'#tool-'+(i+1)},
+    {id:'tool:'+p.partyId,kind:'tool' as const,label:p.label,tool:p.label,partyId:p.partyId,categories:judged.get(p.partyId)!.categories,categorySource:judged.get(p.partyId)!.source,link:'#tool-'+(i+1)},
     // A cookie is never judged better than its tool (plans/report-truth.md A): the site's own answer for the
     // cookie wins; under an unclassified tool a known cookie name does not make it classified (it depends on
     // what the tool is for); under a classified tool the strictest of the tool's and the name's categories drives.
-    ...[...new Map(p.stores.map(s=>[JSON.stringify([s.kind,s.name]),s])).values()].map(s=>{const site=siteClass(m,p.partyId,s.kind,s.name);const entry=lookupStore(DEFAULT_KB,s.name);const tool=toolCategories(p).categories;const toolKnown=tool.length>0&&!tool.includes('unknown');
-      const categories=site?site.categories:!toolKnown?[]:[...new Set([...tool,...(entry?.categories??[])])];
-      const categorySource=site?SITE_SOURCE:!toolKnown?(entry?`${entry.vendor} by name; depends on what ${p.label} is for`:'not classified (unidentified tool)'):entry&&!entry.categories.every(c=>tool.includes(c))?`set by ${p.label}; known cookie name (${entry.vendor})`:`set by ${p.label}`;
+    ...[...new Map(p.stores.map(s=>[JSON.stringify([s.kind,s.name]),s])).values()].map(s=>{const site=siteClass(m,p.partyId,s.kind,s.name);const entry=lookupStore(DEFAULT_KB,s.name);const tool=judged.get(p.partyId)!.categories;const toolKnown=tool.length>0&&!tool.includes('unknown');
+      const categories=!toolKnown?[]:[...new Set([...tool,...(site?.categories??[]),...(entry?.categories??[])])];
+      const categorySource=!toolKnown?(entry?`${entry.vendor} by name; depends on what ${p.label} is for`:'not classified (unidentified tool)'):site?SITE_SOURCE:entry&&!entry.categories.every(c=>tool.includes(c))?`set by ${p.label}; known cookie name (${entry.vendor})`:`set by ${p.label}`;
       return {id:JSON.stringify([p.partyId,s.kind,s.name]),kind:'storage' as const,label:s.name,storageKind:s.kind,tool:p.label,partyId:p.partyId,
       categories,categorySource,link:'#'+workspaceId('storage',[p.partyId,p.domain,s.kind,s.name])};}),
   ].map(row=>({...row,purposeCategories:cookiePurposes(row.categories),cells:columns.map(col=>{

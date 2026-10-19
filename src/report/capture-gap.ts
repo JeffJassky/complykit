@@ -61,6 +61,8 @@ export function hidesActivity(note: CoverageNote, party?: NotePartyScope): boole
     } catch {
       return true;
     }
+    // No host (about:srcdoc, data:): can't tell whose storage it hid — conservatively every party's.
+    if (!host) return true;
     const site = registrableDomain(host);
     return [party.domain, ...party.hosts].some((h) => !!h && registrableDomain(h) === site);
   }

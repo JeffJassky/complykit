@@ -1144,6 +1144,35 @@ export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: Job
   );
 }
 
+/**
+ * The "(saved)" markers still owed: one goes once a report that answers its tool has arrived AND no report is still
+ * being made (the report before this answer may already hold an older answer for the tool).
+ */
+export function savedAfter(saved: Record<string, string>, data: JobReportResponse): Record<string, string> {
+  if (!data.report || data.updating) return saved;
+  const answered = new Set(data.report.matrix.tools.filter((t) => t.classified || t.answer).map((t) => t.classKey));
+  return Object.fromEntries(Object.entries(saved).filter(([k]) => !answered.has(k)));
+}
+
+/**
+ * Save a classification, then read the report. The server re-renders a finished scan's report itself, and the page
+ * polls while it updates. Failing to read afterwards is not a failed classification (the answer is saved): the next
+ * poll picks the report up.
+ */
+export async function saveClassification(save: () => Promise<unknown>, refresh: () => Promise<unknown>): Promise<{ saved: true } | { saved: false; error: unknown }> {
+  try {
+    await save();
+  } catch (error) {
+    return { saved: false, error };
+  }
+  try {
+    await refresh();
+  } catch {
+    /* saved; the next poll reads the report */
+  }
+  return { saved: true };
+}
+
 export function ReportPage({ jobId }: { jobId: string }) {
   const { data, error, refresh } = useJobReport(jobId);
   const [reviewer] = useReviewer();
@@ -1158,10 +1187,8 @@ export function ReportPage({ jobId }: { jobId: string }) {
 
   // A fresh report that classifies the tool replaces the local "saved" marker.
   useEffect(() => {
-    if (!data?.report || !ui.saved) return;
-    // The server re-renders; the marker goes once a report that answers the tool arrives.
-    const answered = new Set(data.report.matrix.tools.filter((t) => t.classified || t.answer).map((t) => t.classKey));
-    const left = Object.fromEntries(Object.entries(ui.saved).filter(([k]) => !answered.has(k)));
+    if (!data || !ui.saved) return;
+    const left = savedAfter(ui.saved, data);
     if (Object.keys(left).length !== Object.keys(ui.saved).length) setUi((u) => ({ ...u, saved: left }));
   }, [data, ui.saved]);
 
@@ -1197,16 +1224,13 @@ export function ReportPage({ jobId }: { jobId: string }) {
       if (!d) return;
       clear(classKey);
       setUi((u) => ({ ...u, saving: classKey }));
-      try {
-        await api.patchWorkspace(d.domain, { ...(by ? { by } : {}), entries: { [classKey]: { value: { category: purpose, categoryChosen: true, source: 'report-page' } } } });
-        setUi((u) => ({ ...u, saved: { ...u.saved, [classKey]: purpose } }));
-        // The server re-renders a finished scan's report itself; read it now and poll while it updates.
-        await refresh();
-      } catch (e) {
-        err(classKey, e);
-      } finally {
-        setUi((u) => ({ ...u, saving: undefined }));
-      }
+      const out = await saveClassification(
+        () => api.patchWorkspace(d.domain, { ...(by ? { by } : {}), entries: { [classKey]: { value: { category: purpose, categoryChosen: true, source: 'report-page' } } } }),
+        refresh,
+      );
+      if (out.saved) setUi((u) => ({ ...u, saved: { ...u.saved, [classKey]: purpose } }));
+      else err(classKey, out.error);
+      setUi((u) => ({ ...u, saving: undefined }));
     },
     onVerify: async (task) => {
       const d = dataRef.current;

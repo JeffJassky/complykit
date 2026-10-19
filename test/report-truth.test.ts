@@ -130,6 +130,14 @@ describe('B. only a note that could hide activity is a capture gap', () => {
     expect(hidesActivity(turnstile, { domain: 'cloudflare.com', hosts: ['cloudflare.com'] })).toBe(true);
   });
 
+  it('a sandboxed frame with no host (about:srcdoc, data:) hides every party’s storage', () => {
+    for (const url of ['about:srcdoc', 'data:text/html,x']) {
+      const n = note(`storage inside sandboxed frame ${url} (opaque origin, unreadable)`);
+      expect(hidesActivity(n, ga)).toBe(true);
+      expect(hidesActivity(n, { domain: 'cloudflare.com', hosts: [] })).toBe(true);
+    }
+  });
+
   // allen-heath.com's shape: a California visit with a cross-origin video frame and no search box;
   // the banner holds GA4, which therefore sends nothing before a choice.
   it('a tool held before a choice in a wiretap state passes, frame and missing search box notwithstanding', () => {

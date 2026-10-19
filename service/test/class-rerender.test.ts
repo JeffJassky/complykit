@@ -13,6 +13,7 @@ import { startService, stopAll, waitForStatus } from './helpers.js';
 afterEach(async () => {
   delete process.env.FAKE_REPORT_FAIL;
   delete process.env.FAKE_REPORT_DELAY_MS;
+  delete process.env.FAKE_REPORT_STALE;
   await classRerendersSettled();
   await stopAll();
 });
@@ -119,6 +120,56 @@ describe('GET /api/jobs/:id/report on a stale report', () => {
     expect(ok.report!.matrix.tools[1]).toMatchObject({ classified: true });
     await classRerendersSettled();
     expect(calls(s, id)).toBe(n + 2);
+  });
+});
+
+describe('classifications written while a re-render runs', () => {
+  it('the latest one wins: a write during a running re-render queues one more pass', async () => {
+    const s = await startService({ autoChecklist: true });
+    const id = await scan(s, 'widget.example-shop.test');
+    const n = calls(s, id);
+    process.env.FAKE_REPORT_DELAY_MS = '600';
+    await classify(s, 'analytics');
+    await sleep(200);
+    await classify(s, 'necessary'); // B arrives while A's re-render (which read A) is running
+    expect((await get(s, id)).updating).toBe(true);
+    await classRerendersSettled();
+    const r = await get(s, id);
+    expect(r.updating).toBe(false);
+    expect(r.updateError).toBeUndefined();
+    expect(r.report!.matrix.tools[1].answer).toMatchObject({ categories: ['other'], applied: false }); // B ("necessary", refused), not A
+    expect(calls(s, id)).toBe(n + 2); // one running, one queued, never more
+  });
+
+  it('a classification stamped in the future (clock skew) does not re-render again once the first has finished', async () => {
+    const s = await startService({ autoChecklist: true });
+    const id = await scan(s, 'widget.example-shop.test');
+    const at = new Date(Date.now() + 4 * 60_000).toISOString();
+    await request(s.app).patch('/api/sites/example-shop.test/workspace').send({ entries: { 'class:fake-widget': { value: { category: 'analytics', categoryChosen: true }, at } } }).expect(200);
+    await classRerendersSettled();
+    const n = calls(s, id);
+    const r = await get(s, id);
+    expect(r.updating).toBe(false);
+    expect(r.updateError).toBeUndefined();
+    await get(s, id);
+    await classRerendersSettled();
+    expect(calls(s, id)).toBe(n);
+  });
+
+  it('a re-render that resolves but leaves the report stale is not retried each poll, and says so', async () => {
+    const s = await startService({ autoChecklist: true });
+    const id = await scan(s, 'widget.example-shop.test');
+    process.env.FAKE_REPORT_STALE = '1'; // the fake's re-render succeeds but the report keeps an old generatedAt
+    await classify(s, 'analytics');
+    await classRerendersSettled();
+    const n = calls(s, id);
+    const r = await get(s, id);
+    expect(r.updating).toBe(false);
+    expect(r.updateError).toMatch(/does not include/);
+    await get(s, id);
+    await classRerendersSettled();
+    expect(calls(s, id)).toBe(n);
+    delete process.env.FAKE_REPORT_STALE;
   });
 });
 

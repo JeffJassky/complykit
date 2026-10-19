@@ -286,7 +286,10 @@ async function consentReport() {
   fs.writeFileSync(opts.out.replace(/\.html?$/i, '') + '.json', JSON.stringify({ runId: opts.run, classes }));
   // The owner report, final, with the workspace's classifications applied.
   const tracking = JSON.parse(fs.readFileSync(path.join(dir, 'tracking.json'), 'utf8'));
-  fs.writeFileSync(path.join(path.dirname(opts.out), 'owner-report.json'), JSON.stringify(ownerReport({ stage: 'final', url: tracking.url ?? tracking.site?.url ?? 'https://example.com/', done: SCENARIOS, widget: !!tracking.unknownTool, ws }), null, 2));
+  const owner = ownerReport({ stage: 'final', url: tracking.url ?? tracking.site?.url ?? 'https://example.com/', done: SCENARIOS, widget: !!tracking.unknownTool, ws });
+  // FAKE_REPORT_STALE: a re-render that resolves yet leaves the report as old as before.
+  if (process.env.FAKE_REPORT_STALE) owner.generatedAt = '2000-01-01T00:00:00.000Z';
+  fs.writeFileSync(path.join(path.dirname(opts.out), 'owner-report.json'), JSON.stringify(owner, null, 2));
   process.stdout.write(`wrote ${opts.out}\n`);
 }
 

@@ -42,7 +42,7 @@ import { checklistProgress, RemediationVerifier, rehomeHostedUrl, rehomeTasks, r
 import { rescanSite } from './rescan.js';
 import { parseLaws } from './law-input.js';
 import { rerenderJob } from './rerender.js';
-import { ChecklistMaker, afterClassWrite, jobReport } from './job-report.js';
+import { ChecklistMaker, afterClassWrite, classRerendersPending, classRerendersSettled, jobReport } from './job-report.js';
 import { sendJobZip } from './zip.js';
 import { KbSync } from './kb-sync.js';
 import { openStorage, type Storage } from './storage/index.js';
@@ -62,6 +62,8 @@ export interface Service {
   stats: { flush(): Promise<void> };
   /** Epoch ms of the last request that counts as activity (see lifecycle.idleReason). */
   lastActivity(): number;
+  /** A check is running or a classification re-render is in flight. */
+  busy(): boolean;
   /** Makes the to-do list after a consent scan (config.autoChecklist). */
   checklists: ChecklistMaker;
   /** Resolves once every in-flight publish of a finished job's files, knowledge-base upload and to-do list is done. */
@@ -718,10 +720,12 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
     stats: { flush: () => stats.flush() },
     checklists,
     lastActivity: () => lastActivity,
+    /** Work the process must stay up for: a check running, or a report being re-rendered for a classification. */
+    busy: () => runner.isBusy() || classRerendersPending(),
     async settled() {
       // A to-do list waits for a publish and a publish can follow a to-do list's rerender (consent-config files), so loop until quiet.
       do {
-        await Promise.all([store.files.settled(), checklists.settled(), kbSync.settled(), store.flush()]);
+        await Promise.all([classRerendersSettled(), store.files.settled(), checklists.settled(), kbSync.settled(), store.flush()]);
       } while (store.files.pending() > 0);
     },
     saveKb: () => kbSync.save(),
@@ -730,6 +734,7 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
       clearInterval(consentSweep);
       await Promise.all([runner.shutdown(killGraceMs), kb.stop(killGraceMs), bootPurge]);
       // Stopped jobs are failed ("server stopped"); their partial files are published too.
+      await classRerendersSettled();
       await store.files.settled();
       await checklists.settled();
       hub.closeAll();
