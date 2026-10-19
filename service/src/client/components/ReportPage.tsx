@@ -397,7 +397,7 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
                 const isOpen = expanded.has(t.id);
                 const rows = [
                   { key: t.id, name: t.label, sub: purposeOf(t), cells: t.cells, tool: true, unclassified: !t.classified },
-                  ...(isOpen ? t.cookies : []).map((k) => ({ key: k.id, name: k.name, sub: k.kind === 'cookie' ? 'cookie' : `${k.kind} storage`, cells: k.cells, tool: false, unclassified: false })),
+                  ...(isOpen ? t.cookies : []).map((k) => ({ key: k.id, name: k.name, sub: k.kind === 'cookie' ? 'cookie' : `${k.kind} storage`, cells: k.cells, tool: false, unclassified: !k.classified })),
                 ];
                 return (
                   <Fragment key={t.id}>

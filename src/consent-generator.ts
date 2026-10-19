@@ -276,6 +276,9 @@ export function refuseNecessaryTrackers(ev: TrackingEvaluation, kb: KnowledgeBas
     const e = kb.entries.find((x) => x.id === p.partyId);
     const was = p.categories.join(', ');
     p.categories = e ? [...e.categories] : ['unknown'];
+    // Remember the refusal on the site's answer so the report can say what complykit did with it.
+    const answer = ev.siteWorkspace?.classifications.find((c) => c.kind === 'tool' && c.partyId === p.partyId);
+    if (answer) answer.refused = why;
     notes.push({
       code: 'refused-necessary',
       level: 'refused',

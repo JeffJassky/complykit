@@ -159,7 +159,8 @@ export function storageReviewCards(m: ConsentReportModel, groups: ActionGroup[])
     const exact = linked.some(g => s.kind === 'cookie' && g.kind === 'violation' && g.findings.some(f => f.evidence.some(e => e.kind === 'cookie' && e.name === s.name && (e.domain.replace(/^\./, '') === p.domain || p.hosts.includes(e.domain.replace(/^\./, ''))))));
     // Classified for this site in its workspace (C3): no longer asked.
     const site = m.siteWorkspace?.classifications.find(c => c.kind === 'storage' && c.partyId === p.partyId && c.storageKind === s.kind && c.name === s.name);
-    const required = !site && (!entry || !entry.categories.length || entry.categories.some(c => String(c) === 'unknown'));
+    const toolKnown = p.categories.length > 0 && !p.categories.includes('unknown');
+    const required = !site && (!entry || !toolKnown || !entry.categories.length || entry.categories.some(c => String(c) === 'unknown'));
     const state = [exact ? 'problem' : 'none', required ? 'classify' : ''].filter(Boolean).join(' ');
     return `<article id="${key}" class="human-card" data-cookie-state="${state}" data-original-cookie-state="${state}" data-class-key="${key}" data-class-required="${required}" data-matrix-managed>
     <h3>Classify ${esc(s.name)}</h3><span class="classification-badge" data-class-badge></span>

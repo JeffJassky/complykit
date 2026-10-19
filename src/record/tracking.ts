@@ -989,6 +989,8 @@ export const TrackingEvaluation = z.object({
           categories: z.array(z.string()),
           at: z.string().optional(),
           by: z.string().optional(),
+          // Set when complykit refused the answer (a tracker is never necessary): why.
+          refused: z.string().optional(),
         }),
       ),
       doneTasks: z.array(z.object({ key: z.string(), at: z.string().optional(), by: z.string().optional() })), // keys without 'task:'

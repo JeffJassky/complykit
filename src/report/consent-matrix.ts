@@ -5,12 +5,10 @@ import { skipKindOf, SKIP_LEAD, type SkipKind } from './skip-kind.js';
 import { workspaceId } from './workspace.js';
 import { compareCookieBehavior, cookiePurposes, type ComparisonFacts, type PrivacyRegime } from './cookie-purpose.js';
 import { ScenarioId as ScenarioIds, SAID_NO_SCENARIOS } from '../record/index.js';
+import { hidesActivity } from './capture-gap.js';
 
 
 
-// Coverage notes that say nothing about whether requests or cookies were captured: they must not
-// turn an expected absence into "not checked" (every GPC visit carries the worker note).
-const NOT_A_CAPTURE_GAP = /globalPrivacyControl inside workers|^banner design:|^no visible (?:search|email) field/;
 const CHOICE = new Set(['reject','accept','partial','withdraw','opt-out-all','opt-out-link']);
 const PHASE_LABEL: Record<string,string> = {'no-banner':'while no consent banner was shown','before-banner':'before the banner appeared','before-choice':'before a privacy choice','after-reject':'after rejection','after-accept':'after acceptance','after-withdraw':'after withdrawal','after-dismiss':'after closing the banner'};
 const SCENARIO_LABEL: Record<string,string> = {'do-nothing':'Before a choice',browse:'Browse without choosing',dismiss:'Banner closed without choosing',reject:'After rejection',accept:'After acceptance',partial:'After accepting analytics only',withdraw:'After withdrawal','return-visit':'Returning after rejection',gpc:'Privacy signal (GPC)','opt-out-all':'After opting out every way','opt-out-link':'After the opt-out link',markers:'Sample information test'};
@@ -49,13 +47,23 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
     return undefined;
   };
   const columns = m.locations.filter((l) => scenarios.some((sc) => m.grid[l.id]?.[sc]?.status === 'tested')).flatMap(l=>scenarios.map(s=>{const gap=columnGap(l.id,s);return {id:l.id+':'+s,location:l.id,scenario:s,label:SCENARIO_LABEL[s]??s,locationLabel:`${l.label} · ${(regimes.get(l.id)??{label:''}).label}`,...(gap?{unavailable:gap}:{})};}));
+  // The tool's categories as judged: a refused answer (a tracker the team called necessary) behaves like a
+  // tracker, so it needs consent; else what the party carries. Empty or `unknown` = the tool is unclassified.
+  const toolCategories=(p:(typeof m.inventory)[number]):{categories:string[];source:string}=>{
+    const site=siteClass(m,p.partyId);
+    if(site?.refused)return {categories:['other'],source:`complykit: behaves like a tracker (${site.refused})`};
+    return {categories:p.categories,source:site?SITE_SOURCE:p.recognized?'tool library':'unknown'};
+  };
   const rows = m.inventory.flatMap((p,i)=>[
-    {id:'tool:'+p.partyId,kind:'tool' as const,label:p.label,tool:p.label,partyId:p.partyId,categories:p.categories,categorySource:siteClass(m,p.partyId)?SITE_SOURCE:p.recognized?'tool library':'unknown',link:'#tool-'+(i+1)},
-    // A cookie inherits its tool's classification; a known cookie-name pattern
-    // refines it. Only a cookie of an unidentified tool, with no known name,
-    // stays unclassified.
-    ...[...new Map(p.stores.map(s=>[JSON.stringify([s.kind,s.name]),s])).values()].map(s=>{const site=siteClass(m,p.partyId,s.kind,s.name);const entry=lookupStore(DEFAULT_KB,s.name);const inherit=p.recognized&&p.categories.length&&!p.categories.includes('unknown');return {id:JSON.stringify([p.partyId,s.kind,s.name]),kind:'storage' as const,label:s.name,storageKind:s.kind,tool:p.label,partyId:p.partyId,
-      categories:site?.categories??entry?.categories??(inherit?p.categories:[]),categorySource:site?SITE_SOURCE:entry?'known cookie name':inherit?`set by ${p.label}`:'not classified (unidentified tool)',link:'#'+workspaceId('storage',[p.partyId,p.domain,s.kind,s.name])};}),
+    {id:'tool:'+p.partyId,kind:'tool' as const,label:p.label,tool:p.label,partyId:p.partyId,categories:toolCategories(p).categories,categorySource:toolCategories(p).source,link:'#tool-'+(i+1)},
+    // A cookie is never judged better than its tool (plans/report-truth.md A): the site's own answer for the
+    // cookie wins; under an unclassified tool a known cookie name does not make it classified (it depends on
+    // what the tool is for); under a classified tool the strictest of the tool's and the name's categories drives.
+    ...[...new Map(p.stores.map(s=>[JSON.stringify([s.kind,s.name]),s])).values()].map(s=>{const site=siteClass(m,p.partyId,s.kind,s.name);const entry=lookupStore(DEFAULT_KB,s.name);const tool=toolCategories(p).categories;const toolKnown=tool.length>0&&!tool.includes('unknown');
+      const categories=site?site.categories:!toolKnown?[]:[...new Set([...tool,...(entry?.categories??[])])];
+      const categorySource=site?SITE_SOURCE:!toolKnown?(entry?`${entry.vendor} by name; depends on what ${p.label} is for`:'not classified (unidentified tool)'):entry&&!entry.categories.every(c=>tool.includes(c))?`set by ${p.label}; known cookie name (${entry.vendor})`:`set by ${p.label}`;
+      return {id:JSON.stringify([p.partyId,s.kind,s.name]),kind:'storage' as const,label:s.name,storageKind:s.kind,tool:p.label,partyId:p.partyId,
+      categories,categorySource,link:'#'+workspaceId('storage',[p.partyId,p.domain,s.kind,s.name])};}),
   ].map(row=>({...row,purposeCategories:cookiePurposes(row.categories),cells:columns.map(col=>{
     // One observation per visit: run 1, plus throttled repeats (A7). The cell is built per visit;
     // a party active in any visit is active, and the cell says in how many.
@@ -82,7 +90,7 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
     const limited = facts ? phases.reduce((n,phase)=>n+(facts.limitedRequestsByPhase[phase]??0),0) : 0;
     // A gap scoped to a visitor action belongs to that action's column alone — including an action that
     // could not run anywhere (so has no column), which must not spill over every other column at its location.
-    const captureGap=m.notTested.filter(g=>(!g.location||g.location===col.location)&&(!['flow','scenario'].includes(g.scope)||!ScenarioIds.options.includes(g.id as ScenarioId)||g.id===col.scenario)).some(g=>['frame','page','flow','scenario'].includes(g.scope)&&!['server-to-server','vendor-processing','contracts','consent-records','unvisited'].includes(g.id)&&!NOT_A_CAPTURE_GAP.test(g.reason));
+    const captureGap=m.notTested.filter(g=>(!g.location||g.location===col.location)&&(!['flow','scenario'].includes(g.scope)||!ScenarioIds.options.includes(g.id as ScenarioId)||g.id===col.scenario)).some(g=>['frame','page','flow','scenario'].includes(g.scope)&&hidesActivity(g,{domain:p.domain,hosts:p.hosts}));
     const rg = regimes.get(col.location) ?? { regime: 'unknown' as const, label: 'this location' };
     const comparisonFacts: ComparisonFacts = {scenario:col.scenario,regime:rg.regime,regimeLabel:rg.label,wiretap:isWiretapJurisdiction(m.locations.find(l=>l.id===col.location)?.jurisdictions??[]),unavailable,hasActivity,limitedOnly:row.kind==='tool'&&requests>0&&limited===requests&&!facts?.stores.some(isActiveStore),captureGap};
     const verdict=compareCookieBehavior(comparisonFacts,{categories:row.categories});
