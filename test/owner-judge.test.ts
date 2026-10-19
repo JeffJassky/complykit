@@ -56,7 +56,7 @@ const answeredEv = (answers: Record<string, string>) => {
 };
 const answersByKey = (answers: Record<string, string>) => Object.fromEntries(Object.entries(answers).map(([partyId, c]) => [keyOf([pay, reviews, ga4].find((p) => p.partyId === partyId)!.label), c]));
 /** What the browser shows versus what the server renders — the part that must never differ. */
-const judged = (r: OwnerReport) => ({ counts: r.matrix.counts, decisions: r.matrix.decisions.map((d) => d.classKey), tools: r.matrix.tools.map((t) => ({ label: t.label, purpose: t.purpose, categories: t.categories, classified: t.classified, answer: t.answer, cells: t.cells.map((c) => ({ state: c.state, expected: c.expected, reason: c.reason, observed: c.observed })), cookies: t.cookies.map((k) => ({ name: k.name, purpose: k.purpose, classified: k.classified, cells: k.cells.map((c) => c.state) })) })) });
+const judged = (r: OwnerReport) => ({ counts: r.matrix.counts, decisions: r.decisions.map((d) => d.classKey), tools: r.matrix.tools.map((t) => ({ label: t.label, purpose: t.purpose, categories: t.categories, classified: t.classified, answer: t.answer, cells: t.cells.map((c) => ({ state: c.state, expected: c.expected, reason: c.reason, observed: c.observed })), cookies: t.cookies.map((k) => ({ name: k.name, purpose: k.purpose, classified: k.classified, cells: k.cells.map((c) => c.state) })) })) });
 
 describe('D. the owner report ships its facts', () => {
   it('every cell of a finished column carries the comparison facts; cells of a skipped column do not', () => {
@@ -128,7 +128,7 @@ describe('D. judgeOwnerReport is the server’s judgement, run anywhere', () => 
     // Skipped columns stay as they were.
     expect(cell(out, 'reviews.example', 'de:reject').state).toBe('not-checked');
     // Nothing left to decide; the counts follow.
-    expect(out.matrix.decisions).toEqual([]);
+    expect(out.decisions).toEqual([]);
     expect(out.matrix.counts.needsDecision).toBe(0);
     expect(base.matrix.counts.needsDecision).toBeGreaterThan(0);
   });
@@ -140,7 +140,7 @@ describe('D. judgeOwnerReport is the server’s judgement, run anywhere', () => 
     expect(r.answer).toBeUndefined();
     expect(cell(out, 'reviews.example', 'de:do-nothing').state).toBe('needs-decision');
     expect(r.cookies[0]).toMatchObject({ classified: false, purpose: 'Depends on what reviews.example is for' });
-    expect(out.matrix.decisions.map((d) => d.label)).toEqual(['paylater.example', 'reviews.example']);
+    expect(out.decisions.map((d) => d.label)).toEqual(['paylater.example', 'reviews.example']);
   });
 });
 
