@@ -45,7 +45,7 @@
   --radius-sm: 8px;
 }
 
-@media (prefers-color-scheme: dark) {
+@media screen and (prefers-color-scheme: dark) {
   :root {
     --bg: #0c0c0e;
     --surface: #141417;
@@ -2378,7 +2378,7 @@ textarea.input {
   --focus:#246451;
   --radius:16px;
 }
-@media(prefers-color-scheme:dark) {
+@media screen and (prefers-color-scheme: dark) {
   :root {
     --bg:#101714;
     --surface:#18201c;
@@ -2905,6 +2905,15 @@ textarea.input {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 18px;
+}
+.rp-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.rp-topline .eyebrow {
+  margin: 0;
 }
 .rp-header .eyebrow a,
 .rp .eyebrow a {
@@ -4478,5 +4487,79 @@ span.rp-cell {
   .guide-law,
   .guide-policy {
     padding: 16px;
+  }
+}
+
+/* Save as PDF (the report's print): the page as it stands, light, without controls.
+   Open folds stay open and closed ones closed; only the scrolling and the chrome go.
+   Dark tokens are screen-only, so print always gets the light ones. */
+@media print {
+  :root {
+    color-scheme: light;
+  }
+  @page {
+    margin: 14mm 12mm;
+  }
+  html,
+  body {
+    background: #fff;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    box-shadow: none !important;
+    animation: none !important;
+    transition: none !important;
+  }
+  .header,
+  .skip-link,
+  .toasts,
+  .btn,
+  .rp-delete,
+  .rp-footer,
+  .rp-spinner,
+  .rp-todo-toggle,
+  [data-print='hide'] {
+    display: none !important;
+  }
+  .rp-layout {
+    max-width: none;
+    padding: 0;
+  }
+  .rp {
+    gap: 12px;
+  }
+  /* Scroll boxes print in full instead of cutting off. */
+  .rp-table-wrap,
+  .rp-history-list,
+  .rp-before pre,
+  .law-tabs [role='tablist'],
+  pre {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+  pre,
+  pre code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .rp-matrix th:first-child {
+    position: static;
+  }
+  .law-tabs [role='tablist'] {
+    flex-wrap: wrap;
+  }
+  .rp-matrix tr,
+  pre {
+    break-inside: avoid;
+  }
+  h1,
+  h2,
+  h3,
+  summary {
+    break-after: avoid;
+  }
+  a {
+    color: inherit;
   }
 }

@@ -1021,15 +1021,46 @@ export function LawTabs({ data, ui, actions }: { data: JobReportResponse; ui?: R
 
 // --- the page -----------------------------------------------------------------------
 
+/** The PDF's file name: the browser's "Save as PDF" suggests the document title. */
+export function pdfTitle(host: string, at: string | undefined): string {
+  return `complykit-${host}${at ? `-${at.slice(0, 10)}` : ''}`;
+}
+
+/**
+ * Save as PDF: the browser's own print, so the PDF is the page as it stands — every
+ * open or closed fold, expanded tool row and selected law tab — with real text and
+ * links. The print stylesheet hides the controls (`.btn`, `data-print="hide"`).
+ */
+function SavePdfButton({ host, at }: { host: string; at?: string }) {
+  const onClick = () => {
+    const title = document.title;
+    const restore = () => {
+      document.title = title;
+      window.removeEventListener('afterprint', restore);
+    };
+    window.addEventListener('afterprint', restore);
+    document.title = pdfTitle(host, at);
+    window.print();
+  };
+  return (
+    <button type="button" className="btn btn-sm btn-secondary rp-save-pdf" onClick={onClick} title="Opens print — choose “Save as PDF”. The PDF shows the page as it is now: open sections stay open, closed ones stay closed.">
+      Save as PDF
+    </button>
+  );
+}
+
 export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: JobReportResponse; now: number; ui?: ReportUiState; actions?: ReportActions }) {
   const { job } = data;
   const consent = job.checks.includes('consent');
   return (
     <div className="rp" data-job-status={job.status}>
       <header className="rp-header">
-        <p className="eyebrow">
-          <a href="#">← Home</a>
-        </p>
+        <div className="rp-topline">
+          <p className="eyebrow" data-print="hide">
+            <a href="#">← Home</a>
+          </p>
+          <SavePdfButton host={job.host} at={job.createdAt} />
+        </div>
         <h1 className="rp-h1">{job.host}</h1>
         <ScanHistory history={data.history ?? []} />
         <JobLaws job={job} />

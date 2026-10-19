@@ -163,6 +163,30 @@ suite('the report page, end to end (real CLI, service, browser, fixture site)', 
       await page.waitForFunction(() => Array.from(document.querySelectorAll('.rp-tool th')).some((th) => th.textContent?.includes('e2e-widgets.test') && th.textContent.includes('Analytics')));
       expect((await report(jobId)).todo.tasks[0]).toMatchObject({ kind: 'classify', status: 'verified' });
 
+      // --- Save as PDF: print is the page as it stands, light, without controls -------
+      // Expand one tool's cookies; the to-do fold is open. Then print, in a dark system theme.
+      const toolFold = page.locator('button.rp-fold').first();
+      if (await toolFold.count()) await toolFold.click();
+      expect(await page.getByRole('button', { name: 'Save as PDF' }).isVisible()).toBe(true);
+      await page.emulateMedia({ media: 'print', colorScheme: 'dark' });
+      const printed = await page.evaluate(() => {
+        const shown = (el: Element | null) => !!el && el.checkVisibility();
+        const closed = Array.from(document.querySelectorAll('details:not([open])'));
+        return {
+          header: shown(document.querySelector('.header')),
+          buttons: Array.from(document.querySelectorAll('.btn')).filter(shown).length,
+          footer: shown(document.querySelector('.rp-footer')),
+          todoFoldOpen: shown(document.querySelector('[data-testid="todo"] ol.rp-todos')),
+          closedContentShown: closed.some((d) => Array.from(d.children).some((c) => c.tagName !== 'SUMMARY' && shown(c))),
+          expandedCookieRow: shown(document.querySelector('.rp-matrix tr.rp-cookie')),
+          surface: getComputedStyle(document.querySelector('.rp-section')!).backgroundColor,
+        };
+      });
+      expect(printed).toMatchObject({ header: false, buttons: 0, footer: false, todoFoldOpen: true, closedContentShown: false, surface: 'rgb(255, 255, 255)' });
+      if (await toolFold.count()) expect(printed.expandedCookieRow).toBe(true);
+      if (process.env.COMPLYKIT_PDF_OUT) await page.pdf({ path: process.env.COMPLYKIT_PDF_OUT, format: 'Letter', printBackground: true });
+      await page.emulateMedia({ media: 'screen', colorScheme: null });
+
       // --- 2. Install on the site (the owner's hands), then Verify on the page -----
       const install = (await report(jobId)).todo.tasks.find((t) => t.id === 'install')!;
       site.state.head = install.snippet!.after;

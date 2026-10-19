@@ -7,7 +7,7 @@ import { reportSeverity, scoreReport } from '../../shared/score';
 import { parseHash, reportHref } from '../lib/useHashView';
 import { createRerenderQueue, isMoving } from '../lib/useJobReport';
 import { HomeView, siteRows, siteStatus } from './Home';
-import { BannerLine, LawTabsView, Matrix, Overview, ReportPageView, pagesVisited, ScanHistory, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
+import { BannerLine, LawTabsView, Matrix, Overview, ReportPageView, pagesVisited, pdfTitle, ScanHistory, ScanStatus, TodoList, activityLine, readyForFinalScan } from './ReportPage';
 
 // The report page (plans/simple-report.md), rendered per section and state.
 
@@ -570,3 +570,15 @@ describe('completed tasks', () => {
   });
 });
 
+
+describe('Save as PDF', () => {
+  it('names the file after the site and the scan day', () => {
+    expect(pdfTitle('shop.example', '2026-10-07T11:58:00Z')).toBe('complykit-shop.example-2026-10-07');
+    expect(pdfTitle('shop.example', undefined)).toBe('complykit-shop.example');
+  });
+
+  it('the report header carries the button; the Home link is hidden in print', () => {
+    const out = renderToStaticMarkup(<ReportPageView data={done()} now={NOW} />);
+    expect(out).toMatch(/<p class="eyebrow" data-print="hide"><a href="#">← Home<\/a><\/p><button type="button" class="btn btn-sm btn-secondary rp-save-pdf"[^>]*>Save as PDF<\/button>/);
+  });
+});
