@@ -13,7 +13,8 @@ import {
   type ConsentTheme,
 } from './record/consent-config-guard.js';
 import { parseConsentToolConfig, withConsentConfigHash, type ConsentToolConfigInput } from './record/consent-config.js';
-import { COMPLYKIT_PARTY_ID, CONSENT_CATEGORIES, CONSENT_PLUGIN_LABELS, DEFAULT_KB, type KnowledgeBase, type KnowledgeEntry } from './registry/index.js';
+import { COMPLYKIT_PARTY_ID, CONSENT_PLUGIN_LABELS, DEFAULT_KB, type KnowledgeBase, type KnowledgeEntry } from './registry/index.js';
+import { knownTrackerReason } from './registry/kb/tracker-reason.js';
 import { purposeScopeOf } from './rules/tracking/compatibility.js';
 import {
   buildConsentReportModel,
@@ -251,14 +252,8 @@ export function applyWorkspaceToRecord(ev: TrackingEvaluation, ws: WorkspaceSnap
   ev.siteWorkspace = { ...(ws.domain ? { domain: ws.domain } : {}), appliedAt: at, classifications, doneTasks: doneTasks(ws) };
 }
 
-/** Why this party is a known tracker, or undefined. Decided from the knowledge base and behavior — never from a site classification. */
-export function knownTrackerReason(p: Pick<PartyInventoryItem, 'partyId' | 'behavesLikeTracker' | 'trackerSignals'>, kb: KnowledgeBase): string | undefined {
-  const e = kb.entries.find((x) => x.id === p.partyId);
-  const consent = (e?.categories ?? []).filter((c) => CONSENT_CATEGORIES.has(c));
-  if (consent.length) return `its knowledge-base entry classifies it as ${consent.join(', ')}`;
-  if (!e && p.behavesLikeTracker) return `it is not in the knowledge base and behaved like a tracker (${p.trackerSignals.join(', ') || 'tracker signals'})`;
-  return undefined;
-}
+// The rule lives in the registry (the owner report shares it); re-exported here for the generator's callers.
+export { knownTrackerReason };
 
 /**
  * Refuse 'necessary-only' categories for a known tracker (a workspace

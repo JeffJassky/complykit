@@ -21,7 +21,7 @@ import {
 import { reconcileRecord } from '../../consent-compatibility.js';
 import { applyWorkspaceToRecord, refuseNecessaryTrackers } from '../../consent-generator.js';
 import { tracking } from '../../rules/index.js';
-import { buildKnowledgeBase, type KnowledgeEntryInput } from '../../registry/index.js';
+import { buildKnowledgeBase, type KnowledgeBase, type KnowledgeEntryInput } from '../../registry/index.js';
 import { KbStore, defaultKbDir } from '../../research/index.js';
 import { readWorkspaceFile, readConsentRunDir, findPreviousConsentRun, type PreviousRun } from '../previous-run.js';
 import { buildOwnerReport, OWNER_REPORT_FILE } from '../../report/owner-report.js';
@@ -118,19 +118,21 @@ export async function cmdReport(argv: string[], loadConfig?: LoadConfig): Promis
       }));
       evaluation.behaviorObservations = summarizeBehavior(timelines);
     }
+    // The base knowledge base — the seed plus the store's confirmed entries, same as the scan: what the owner
+    // report says each tool is before the site's answers (and what the workspace is applied against).
+    const kbStore = new KbStore(values['kb-dir'] ? path.resolve(values.cwd ?? process.cwd(), values['kb-dir']) : defaultKbDir());
+    let stored: KnowledgeEntryInput[] = [];
+    try {
+      stored = kbStore.confirmedEntries();
+    } catch (err) {
+      process.stderr.write(`knowledge-base store ${kbStore.dir}: ${err instanceof Error ? err.message : String(err)} — using the seed entries only\n`);
+    }
+    const ownerKb: KnowledgeBase = buildKnowledgeBase({ extra: stored });
     if (workspace) {
       // The site's classifications as of now, applied to the saved record the
       // way the generator applies them (consent-config), so the report, the
-      // change list and the generated config agree. Same KB as the scan: the
-      // seed plus the store's confirmed entries.
-      const kbStore = new KbStore(values['kb-dir'] ? path.resolve(values.cwd ?? process.cwd(), values['kb-dir']) : defaultKbDir());
-      let stored: KnowledgeEntryInput[] = [];
-      try {
-        stored = kbStore.confirmedEntries();
-      } catch (err) {
-        process.stderr.write(`knowledge-base store ${kbStore.dir}: ${err instanceof Error ? err.message : String(err)} — using the seed entries only\n`);
-      }
-      const kb = buildKnowledgeBase({ extra: stored });
+      // change list and the generated config agree.
+      const kb = ownerKb;
       applyWorkspaceToRecord(evaluation, workspace, kb, new Date().toISOString());
       for (const n of refuseNecessaryTrackers(evaluation, kb)) process.stderr.write(`refused: ${n.message}\n`);
       // Is the deployed tool's config the workspace's latest (D10)? Re-read against the current workspace.
@@ -173,7 +175,7 @@ export async function cmdReport(argv: string[], loadConfig?: LoadConfig): Promis
         process.stdout.write(`wrote ${cl}\n`);
         // The owner report (plans/simple-report.md), final, with this rendering's classifications.
         const owner = path.join(path.dirname(values.out), OWNER_REPORT_FILE);
-        fs.writeFileSync(owner, JSON.stringify(buildOwnerReport({ model, stage: 'final', runId: String(runId), site: evaluation.site, startedAt: evaluation.startedAt, finishedAt: evaluation.finishedAt }), null, 2));
+        fs.writeFileSync(owner, JSON.stringify(buildOwnerReport({ model, stage: 'final', runId: String(runId), site: evaluation.site, startedAt: evaluation.startedAt, finishedAt: evaluation.finishedAt, kb: ownerKb }), null, 2));
         process.stdout.write(`wrote ${owner}\n`);
       }
     } else process.stdout.write(text.endsWith('\n') ? text : text + '\n');

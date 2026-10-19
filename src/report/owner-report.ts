@@ -1,11 +1,14 @@
 import type { ScenarioId } from '../record/index.js';
-import type { RemediationTask } from '../record/index.js';
 import type { BehaviorMatrix, BehaviorMatrixCell } from '../../types/index.js';
 import type { ConsentReportModel } from './consent-model.js';
-import { buildBehaviorMatrix, categoryLabel, regimeFor } from './consent-matrix.js';
+import { buildBehaviorMatrix, regimeFor } from './consent-matrix.js';
+import { categoryLabel, cookieCategories } from './cookie-purpose.js';
+import type { OwnerCell, OwnerCellState, OwnerColumn, OwnerCookieRow, OwnerLocationSummary, OwnerReport, OwnerToolActivity, OwnerToolRow } from './owner-types.js';
+import { judgeOwnerReport } from './owner-judge.js';
 import { skipKindOf, SKIP_LEAD, type SkipKind } from './skip-kind.js';
 import { workspaceId } from './workspace.js';
-import { hostedOn, isWiretapJurisdiction } from '../registry/index.js';
+import { DEFAULT_KB, hostedOn, isWiretapJurisdiction, lookupStore, type KnowledgeBase } from '../registry/index.js';
+import { knownTrackerReason } from '../registry/kb/tracker-reason.js';
 
 // The owner report (plans/simple-report.md): the one page a site owner reads.
 // Four parts, in order — scan status, consent banner, the matrix, the to-do
@@ -31,143 +34,16 @@ import { hostedOn, isWiretapJurisdiction } from '../registry/index.js';
 
 export const OWNER_REPORT_FILE = 'owner-report.json';
 
-export type OwnerCellState = 'pending' | 'ok' | 'mismatch' | 'needs-decision' | 'not-checked' | 'not-applicable' | 'blocked';
-
-export interface OwnerCell {
-  state: OwnerCellState;
-  /** What the rules expect here ("Off after the visitor refused"). */
-  expected?: string;
-  /** What the scan saw ("2 data request(s) observed …"). */
-  observed?: string;
-  /** Why the state (a mismatch, a gap, what to decide). */
-  reason?: string;
-  /** Repeat visits: active in `active` of `total`. */
-  runs?: { total: number; active: number };
-}
-
-export interface OwnerColumn {
-  /** `<location>:<scenario>` — the full report's matrix column id. */
-  id: string;
-  location: string;
-  scenario: string;
-  /** Plain name of the visitor action ("After rejection"). */
-  label: string;
-  /** Set only when the scan covers more than one location. */
-  locationLabel?: string;
-  /** pending = still to visit; running = being visited now; done; not-checked = the scan could not complete the visit; not-applicable = nothing to test; blocked = the site stopped the visitor, a problem (see note). */
-  state: 'pending' | 'running' | 'done' | 'not-checked' | 'not-applicable' | 'blocked';
-  /** Why the whole column is skipped — said once, not per cell. */
-  note?: string;
-}
-
-export interface OwnerCookieRow {
-  id: string;
-  name: string;
-  /** cookie | local | session */
-  kind: string;
-  purpose: string;
-  classified: boolean;
-  cells: OwnerCell[];
-}
-
-export interface OwnerToolRow {
-  /** `tool:<partyId>` */
-  id: string;
-  partyId: string;
-  label: string;
-  domain: string;
-  /** Plain purpose ("Advertising") or "Unclassified". */
-  purpose: string;
-  categories: string[];
-  classified: boolean;
-  /** Known to the tool library (or classified by your team). */
-  recognized: boolean;
-  /** The site-workspace key a classification of this tool is saved under (class:<id>), as the full report writes it. */
-  classKey: string;
-  cells: OwnerCell[];
-  cookies: OwnerCookieRow[];
-  /** What the scan saw the tool do: requests only, or storing cookies / storage too. */
-  activity: OwnerToolActivity;
-  /** What complykit did with the answer your team gave for this tool (absent when none was given). */
-  answer?: { categories: string[]; applied: boolean; reason?: string };
-}
-
-export interface OwnerToolActivity {
-  /** Requests to the tool across the finished visits, and how many visits saw it. */
-  requests: number;
-  visits: number;
-  /** Cookies and browser-storage keys it set (the rows under the tool). */
-  cookies: number;
-  storage: number;
-  /** Example addresses it loaded: host + path, query keys only (values are data, never shown). */
-  samples: string[];
-  /** The scripts that loaded it, nearest first. */
-  loadedBy: string[];
-  /** On a shared cloud or hosting platform: who hosts it, the tenant's name, and whether that name matches the site's. */
-  hostedOn?: { provider: string; name: string; matchesSite: boolean };
-}
-
-/** One location of the scan: its verdict, its visits, and the banner its visits saw. */
-export interface OwnerLocationSummary {
-  id: string;
-  label: string;
-  verified: boolean;
-  observed?: string;
-  note?: string;
-  visitsDone: number;
-  visitsTotal: number;
-  banner: { state: 'pending' | 'detected' | 'none'; provider?: string; visitsWithBanner: number; visitsChecked: number };
-}
-
-export interface OwnerReport {
-  version: 1;
-  /** live: built from the visits finished so far; final: the finished run (re-rendered with the site's classifications). */
-  stage: 'live' | 'final';
-  runId: string;
-  generatedAt: string;
-  site: { url: string; host: string; domain: string };
-  scan: {
-    startedAt: string;
-    finishedAt?: string;
-    visitsDone: number;
-    visitsTotal: number;
-    /** Distinct pages the visits loaded so far. */
-    pagesVisited: number;
-    /** The visit running now, in plain words ("After rejection"). */
-    current?: string;
-    location?: { id: string; label: string; observed?: string; verified: boolean; note?: string };
-    /**
-     * Set on a finished scan when no visit reached the site (blocked, down, refused).
-     * The report then carries no tools, decisions or to-do list: there is nothing to
-     * judge, and the page says so once instead of per column.
-     */
-    unreachable?: { reason: string };
-  };
-  banner: {
-    /** pending = no visit has finished yet. */
-    state: 'pending' | 'detected' | 'none';
-    /** Display name of the banner's provider (CMP), when recognized. */
-    provider?: string;
-    visitsWithBanner: number;
-    visitsChecked: number;
-    /** Consent tools the scan saw loading (e.g. OneTrust), banner or not. */
-    consentTools?: string[];
-    /** The consent tool is installed but its script crashed before drawing a banner (record cause 'tool-broken'): the scan's reason, error included. */
-    broken?: { reason: string };
-  };
-  matrix: {
-    columns: OwnerColumn[];
-    tools: OwnerToolRow[];
-    /** Per cell. notChecked = the scan could not; notApplicable = nothing to test; blocked = the site stopped the visitor (a problem). */
-    counts: Record<'ok' | 'mismatch' | 'needsDecision' | 'pending' | 'notChecked' | 'notApplicable' | 'blocked', number>;
-  };
-  /** Tools whose purpose is not known yet: the first to-do items, before the checklist exists. */
-  decisions: Array<{ partyId: string; label: string; domain: string; classKey: string }>;
-  /** The checklist this run's report carries (the generated config's tasks), when there is one. The service replaces it with the site workspace's, with live status. */
-  todo?: { tasks: RemediationTask[]; configAt?: string; runId?: string };
-  /** Every location of the scan, in plan order. Absent on reports written before it existed. */
-  locations?: OwnerLocationSummary[];
-}
+export type {
+  OwnerCellState,
+  OwnerCell,
+  OwnerColumn,
+  OwnerCookieRow,
+  OwnerToolRow,
+  OwnerToolActivity,
+  OwnerLocationSummary,
+  OwnerReport,
+} from './owner-types.js';
 
 type InventoryItem = ConsentReportModel['inventory'][number];
 
@@ -211,6 +87,8 @@ export interface OwnerReportInput {
   /** Locations announced before any of their visits finished (their plan, verdict). */
   locations?: Array<{ id: string; label?: string; verdict: string; observed?: string; note?: string }>;
   generatedAt?: string;
+  /** The base knowledge base (the seed plus confirmed store entries, never the site's own answers): what each tool is before the site answers. Default: the bundled one. */
+  kb?: KnowledgeBase;
 }
 
 /** Plain column names (the full report's matrix headings). */
@@ -268,7 +146,7 @@ function cellOf(c: BehaviorMatrixCell | undefined): OwnerCell {
   if (!c) return { state: 'not-checked', reason: 'Nothing was recorded for this visit.' };
   const state: OwnerCellState =
     c.skip === 'not-applicable' ? 'not-applicable' : c.skip === 'blocked' ? 'blocked' : c.status === 'match' || c.status === 'allowed' ? 'ok' : c.status === 'mismatch' ? 'mismatch' : c.status === 'review' ? 'needs-decision' : 'not-checked';
-  return { state, expected: c.expected, observed: c.observed, reason: c.reason, ...(c.runs ? { runs: c.runs } : {}) };
+  return { state, expected: c.expected, observed: c.observed, reason: c.reason, ...(c.runs ? { runs: c.runs } : {}), ...(c.comparisonFacts ? { facts: c.comparisonFacts } : {}), ...(c.skip === 'not-applicable' || c.skip === 'blocked' ? { skip: c.skip } : {}) };
 }
 
 /** The coverage-gap suffix the scanner appends; the owner page says it once, in its own words. */
@@ -385,22 +263,26 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
   // not an unverified test location). Said once; the rows, decisions and to-do list are dropped.
   const unreachableReason = input.stage === 'final' ? unreachableOf(m, columns) : undefined;
 
+  // The BASE report: every tool as the base knowledge base has it, before any site answer. The site's answers are
+  // then applied by judgeOwnerReport — the same function the browser runs — so server and browser cannot disagree.
+  // The matrix's own categories (the inventory's, which at scan time are already the site's answers) are not used here.
+  const kb = input.kb ?? DEFAULT_KB;
   const tools: OwnerToolRow[] = [];
+  const answers: Record<string, string> = {};
   for (const p of unreachableReason ? [] : m?.inventory ?? []) {
     const toolRow = bm?.rows.find((r) => r.kind === 'tool' && r.partyId === p.partyId);
-    const categories = (toolRow?.categories ?? p.categories).filter((c) => c && c !== 'unknown');
-    // What the team answered for this tool, and whether complykit applied it (a tracker is never necessary).
+    const classKey = 'class:' + workspaceId('tool', [p.partyId, p.domain]);
+    const base = (kb.entries.find((e) => e.id === p.partyId)?.categories ?? []).map(String).filter((c) => c && c !== 'unknown');
+    const trackerReason = knownTrackerReason(p, kb);
+    // What the team answered for this tool (the first category; judgeOwnerReport decides whether it applies).
     const site = m?.siteWorkspace?.classifications.find((c) => c.kind === 'tool' && c.partyId === p.partyId);
-    const refused = site?.refused;
-    const answer: OwnerToolRow['answer'] = site ? { categories: [...site.categories], applied: !refused, ...(refused ? { reason: refused } : {}) } : undefined;
-    // A refused unknown tracker is judged as advertising (the strictest purpose); its label says why, not "Advertising".
-    const purpose = refused ? (p.categories.some((c) => c && c !== 'unknown') ? categoryLabel(categories) : 'Needs consent (behaves like a tracker)') : categoryLabel(categories);
-    // A cookie's categories come from the matrix row alone (cookie rows already follow their tool, report-truth A).
+    if (site?.categories[0]) answers[classKey] = site.categories[0];
     const cookies: OwnerCookieRow[] = (bm?.rows ?? [])
       .filter((r) => r.kind === 'storage' && r.partyId === p.partyId)
       .map((r) => {
-        const cats = r.categories.filter((c) => c && c !== 'unknown');
-        return { id: r.id, name: r.label, kind: r.storageKind ?? 'cookie', purpose: cats.length ? categoryLabel(cats) : `Depends on what ${p.label} is for`, classified: cats.length > 0, cells: cellsFor(r) };
+        const judge = { name: lookupStore(DEFAULT_KB, r.label)?.categories.map(String) ?? [], site: m?.siteWorkspace?.classifications.find((c) => c.kind === 'storage' && c.partyId === p.partyId && c.storageKind === r.storageKind && c.name === r.label)?.categories ?? [] };
+        const cats = cookieCategories(base, judge);
+        return { id: r.id, name: r.label, kind: r.storageKind ?? 'cookie', purpose: cats.length ? categoryLabel(cats) : `Depends on what ${p.label} is for`, classified: cats.length > 0, judge, cells: cellsFor(r) };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
     tools.push({
@@ -408,21 +290,20 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
       partyId: p.partyId,
       label: p.label,
       domain: p.domain,
-      purpose,
-      categories,
-      classified: categories.length > 0,
+      purpose: categoryLabel(base),
+      categories: base,
+      classified: base.length > 0,
       recognized: p.recognized,
-      classKey: 'class:' + workspaceId('tool', [p.partyId, p.domain]),
+      classKey,
+      judge: { base, ...(trackerReason ? { trackerReason } : {}) },
       cells: cellsFor(toolRow),
       cookies,
       activity: activityOf(p, cookies, input.site.registrableDomain),
-      ...(answer ? { answer } : {}),
     });
   }
 
+  // Counts and decisions are the judge's to compute (they follow the answers); placeholders until it runs.
   const counts = { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0, notApplicable: 0, blocked: 0 };
-  const KEY: Record<OwnerCellState, keyof typeof counts> = { ok: 'ok', mismatch: 'mismatch', 'needs-decision': 'needsDecision', pending: 'pending', 'not-checked': 'notChecked', 'not-applicable': 'notApplicable', blocked: 'blocked' };
-  for (const t of tools) for (const c of [...t.cells, ...t.cookies.flatMap((k) => k.cells)]) counts[KEY[c.state]]++;
 
   // The banner: seen in any finished visit, and by whom.
   const visits = m ? m.locations.flatMap((l) => Object.values(m.grid[l.id] ?? {}).filter((c) => c && c.status !== 'not-run' && c.banner !== undefined)) : [];
@@ -468,7 +349,7 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
     };
   });
 
-  return {
+  const base: OwnerReport = {
     version: 1,
     stage: input.stage,
     runId: input.runId,
@@ -487,7 +368,9 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
     banner,
     locations: locationSummaries,
     matrix: { columns, tools, counts },
-    decisions: tools.filter((t) => !t.classified).map((t) => ({ partyId: t.partyId, label: t.label, domain: t.domain, classKey: t.classKey })),
+    decisions: [],
+    answers: {},
     ...(!unreachableReason && m?.remediation?.tasks.length ? { todo: { tasks: m.remediation.tasks, ...(m.remediation.configAt ? { configAt: m.remediation.configAt } : {}), ...(m.remediation.runId ? { runId: m.remediation.runId } : {}) } } : {}),
   };
+  return judgeOwnerReport(base, answers);
 }

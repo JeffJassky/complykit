@@ -80,7 +80,10 @@ describe('owner report: live', () => {
   it('a cookie of a tool your team classified takes the tool’s purpose (no lingering "?")', () => {
     const classified = { ...widget, categories: ['analytics'], stores: [{ name: '_w', kind: 'cookie', lifetimeDays: 30 }] };
     const wObs = { ...widgetActive, stores: [{ name: '_w', kind: 'cookie', writePhase: 'before-choice', writePhases: ['before-choice'], presentAtEnd: true, attribution: 'observed' }] };
-    const model = buildConsentReportModel(evaluation({ scenarios: [doNothing], inventory: [classified], observations: [obs('do-nothing', [wObs])] }), []);
+    const ev = evaluation({ scenarios: [doNothing], inventory: [classified], observations: [obs('do-nothing', [wObs])] });
+    // The team's answer arrives as a site classification (the pipeline also applies it to the inventory); the owner report judges from the answer, not the inventory.
+    ev.siteWorkspace = { appliedAt: 'now', classifications: [{ key: 'class:w', kind: 'tool', partyId: classified.partyId, domain: classified.domain, categories: ['analytics'] }], doneTasks: [] };
+    const model = buildConsentReportModel(ev, []);
     const r = buildOwnerReport({ ...base, stage: 'final', model });
     const t = r.matrix.tools[0];
     expect(t.classified).toBe(true);
@@ -175,7 +178,7 @@ describe('owner report: the service’s mirror (service/src/shared/api.ts)', () 
   it('accepts the builder’s output (compile-time) and names the same top-level parts', () => {
     const model = buildConsentReportModel(evaluation({ scenarios: [doNothing], inventory: [meta, widget], observations: [obs('do-nothing', [fbpBeforeChoice])] }), []);
     const r: ServiceOwnerReport = buildOwnerReport({ ...base, model, done: [{ location: 'de', scenario: 'do-nothing' }] });
-    expect(Object.keys(r).sort()).toEqual(['banner', 'decisions', 'generatedAt', 'locations', 'matrix', 'runId', 'scan', 'site', 'stage', 'version']);
+    expect(Object.keys(r).sort()).toEqual(['answers', 'banner', 'decisions', 'generatedAt', 'locations', 'matrix', 'runId', 'scan', 'site', 'stage', 'version']);
     expect(Object.keys(r.matrix.counts).sort()).toEqual(['blocked', 'mismatch', 'needsDecision', 'notApplicable', 'notChecked', 'ok', 'pending']);
   });
 });

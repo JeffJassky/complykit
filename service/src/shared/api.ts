@@ -642,6 +642,28 @@ export interface OwnerCell {
   observed?: string;
   reason?: string;
   runs?: { total: number; active: number };
+  /** What the scan observed here (the matrix cell's comparison facts): with a category, all a verdict needs (owner-judge.ts). Absent on cells of a column that is not done. */
+  facts?: ComparisonFacts;
+  /** The matrix cell's skip, when the scan could not check it or nothing applied. */
+  skip?: 'not-applicable' | 'blocked';
+}
+
+export type PrivacyRegime = 'opt-in' | 'opt-out-signal' | 'opt-out' | 'unknown';
+
+/** Mirrors complykit's src/report/cookie-purpose.ts. */
+export interface ComparisonFacts {
+  scenario: string;
+  unavailable?: {status: 'unknown' | 'not-tested'; reason: string};
+  hasActivity: boolean;
+  /** Every request was a consent-denied or restricted-mode request (Google
+   *  Consent Mode denied, rdp / LDU), with no storage. */
+  limitedOnly: boolean;
+  captureGap: boolean;
+  /** Absent in reports saved before regimes existed: treated as 'opt-in', the old behavior. */
+  regime?: PrivacyRegime;
+  regimeLabel?: string;
+  /** The location carries wiretap-litigation exposure (CA, FL, PA): ad, analytics, recording, chat and identity tools are expected off until the visitor accepts. Absent in reports saved before this posture: today's behavior. */
+  wiretap?: boolean;
 }
 
 export interface OwnerColumn {
@@ -662,6 +684,8 @@ export interface OwnerCookieRow {
   kind: string;
   purpose: string;
   classified: boolean;
+  /** The categories this cookie's own purpose comes from: its known name, and a site classification of it ([] when none). */
+  judge: { name: string[]; site: string[] };
   cells: OwnerCell[];
 }
 
@@ -676,6 +700,8 @@ export interface OwnerToolRow {
   recognized: boolean;
   /** The workspace key its classification is saved under (`class:<id>`). */
   classKey: string;
+  /** The tool before any site answer: the base knowledge base's categories for it (`[]` when unknown), and why it counts as a tracker (decided from the base knowledge base, never the site's). */
+  judge: { base: string[]; trackerReason?: string };
   /** What complykit did with the site's classification of this tool; set when one exists. */
   answer?: { categories: string[]; applied: boolean; reason?: string };
   cells: OwnerCell[];
@@ -739,6 +765,8 @@ export interface OwnerReport {
   todo?: { tasks: RemediationTask[]; configAt?: string; runId?: string };
   /** Every location of the scan, in plan order. Absent on reports written before it existed. */
   locations?: OwnerLocationSummary[];
+  /** The answers (classKey → category) this report is judged with: the site's classifications of its tools. */
+  answers: Record<string, string>;
 }
 
 /** GET /api/jobs/:id/report — everything the report page shows, in one poll. */
