@@ -393,8 +393,8 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
     const site = m?.siteWorkspace?.classifications.find((c) => c.kind === 'tool' && c.partyId === p.partyId);
     const refused = site?.refused;
     const answer: OwnerToolRow['answer'] = site ? { categories: [...site.categories], applied: !refused, ...(refused ? { reason: refused } : {}) } : undefined;
-    const kbCategories = categories.filter((c) => c !== 'other');
-    const purpose = refused ? (kbCategories.length ? categoryLabel(kbCategories) : 'Needs consent (behaves like a tracker)') : categoryLabel(categories);
+    // A refused unknown tracker is judged as advertising (the strictest purpose); its label says why, not "Advertising".
+    const purpose = refused ? (p.categories.some((c) => c && c !== 'unknown') ? categoryLabel(categories) : 'Needs consent (behaves like a tracker)') : categoryLabel(categories);
     // A cookie's categories come from the matrix row alone (cookie rows already follow their tool, report-truth A).
     const cookies: OwnerCookieRow[] = (bm?.rows ?? [])
       .filter((r) => r.kind === 'storage' && r.partyId === p.partyId)

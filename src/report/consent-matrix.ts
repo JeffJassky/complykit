@@ -47,19 +47,20 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
     return undefined;
   };
   const columns = m.locations.filter((l) => scenarios.some((sc) => m.grid[l.id]?.[sc]?.status === 'tested')).flatMap(l=>scenarios.map(s=>{const gap=columnGap(l.id,s);return {id:l.id+':'+s,location:l.id,scenario:s,label:SCENARIO_LABEL[s]??s,locationLabel:`${l.label} · ${(regimes.get(l.id)??{label:''}).label}`,...(gap?{unavailable:gap}:{})};}));
-  // The tool's categories as judged: a refused answer (a tracker the team called necessary) behaves like a
-  // tracker, so it needs consent; else what the party carries. Empty or `unknown` = the tool is unclassified.
+  // The tool's categories as judged: a refused answer (a tracker the team called necessary) keeps the knowledge
+  // base's purpose, or — an unknown tracker — takes the strictest one, advertising (what the generator gives it too):
+  // a stored-id sender firing before a choice in a wiretap state is the suit pattern, never "may run". Else what the party carries. Empty or `unknown` = the tool is unclassified.
   const toolCategories=(p:(typeof m.inventory)[number]):{categories:string[];source:string}=>{
     const site=siteClass(m,p.partyId);
-    if(site?.refused)return {categories:[...new Set([...p.categories.filter(c=>c&&c!=='unknown'),'other'])],source:`complykit: behaves like a tracker (${site.refused})`};
+    if(site?.refused){const kb=p.categories.filter(c=>c&&c!=='unknown');return {categories:kb.length?kb:['advertising'],source:`complykit: behaves like a tracker (${site.refused})`};}
     return {categories:p.categories,source:site?SITE_SOURCE:p.recognized?'tool library':'unknown'};
   };
   const judged=new Map(m.inventory.map(p=>[p.partyId,toolCategories(p)]));
   const rows = m.inventory.flatMap((p,i)=>[
     {id:'tool:'+p.partyId,kind:'tool' as const,label:p.label,tool:p.label,partyId:p.partyId,categories:judged.get(p.partyId)!.categories,categorySource:judged.get(p.partyId)!.source,link:'#tool-'+(i+1)},
-    // A cookie is never judged better than its tool (plans/report-truth.md A): the site's own answer for the
-    // cookie wins; under an unclassified tool a known cookie name does not make it classified (it depends on
-    // what the tool is for); under a classified tool the strictest of the tool's and the name's categories drives.
+    // A cookie is never judged better than its tool (plans/report-truth.md A, amended): under an unclassified tool
+    // it is unclassified too, whatever its name or the site's answer for it; under a classified tool the tool's, the
+    // site's answer's and the known name's categories together drive (the strictest wins).
     ...[...new Map(p.stores.map(s=>[JSON.stringify([s.kind,s.name]),s])).values()].map(s=>{const site=siteClass(m,p.partyId,s.kind,s.name);const entry=lookupStore(DEFAULT_KB,s.name);const tool=judged.get(p.partyId)!.categories;const toolKnown=tool.length>0&&!tool.includes('unknown');
       const categories=!toolKnown?[]:[...new Set([...tool,...(site?.categories??[]),...(entry?.categories??[])])];
       const categorySource=!toolKnown?(entry?`${entry.vendor} by name; depends on what ${p.label} is for`:'not classified (unidentified tool)'):site?SITE_SOURCE:entry&&!entry.categories.every(c=>tool.includes(c))?`set by ${p.label}; known cookie name (${entry.vendor})`:`set by ${p.label}`;

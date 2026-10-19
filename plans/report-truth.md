@@ -150,7 +150,7 @@ Core:
 - **A1 amended** (no-false-green): a site classification of a cookie no longer wins
   outright. Tool unclassified → cookie `[]` regardless. Tool classified →
   `union(site cookie categories ∪ KB name categories ∪ tool categories)`.
-- **C1 amended**: refused tool categories = `p.categories` (after refusal: KB categories,
+- **C1 amended**: refused tool categories = KB categories when the party has them, else `['advertising']` (R2: 'other' let a refused unknown tracker run before a choice in wiretap states; was: `p.categories` (after refusal: KB categories,
   or `unknown`) minus `unknown`, ∪ `other`. Purpose label: unknown party → "Needs
   consent (behaves like a tracker)"; KB party → `categoryLabel(KB categories)`.
 - **C1 scan-time**: `analyzeConsentCollection` (src/pipeline.ts ~396-414) must call

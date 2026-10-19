@@ -131,7 +131,7 @@ suite('rescan with the site workspace (fixture storefront, DE)', () => {
     const answer = third.evaluation.siteWorkspace?.classifications.find((c) => c.kind === 'tool' && c.partyId === widget.partyId);
     expect(answer?.refused).toMatch(/behaved like a tracker/);
     const row = buildConsentReportModel(third.evaluation, third.findings).behaviorMatrix!.rows.find((r) => r.kind === 'tool' && r.partyId === widget.partyId)!;
-    expect(row.categories).toContain('other');
+    expect(row.categories).toContain('advertising');
     const ev = third.evaluation;
     const owner = buildOwnerReport({ model: buildConsentReportModel(ev, third.findings), stage: 'final', runId: 'run-3', site: ev.site, startedAt: ev.startedAt, finishedAt: ev.finishedAt });
     const tool = owner.matrix.tools.find((t) => t.partyId === widget.partyId)!;

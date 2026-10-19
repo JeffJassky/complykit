@@ -182,7 +182,7 @@ describe('C. a refused answer is recorded, shown and judged', () => {
     refuseNecessaryTrackers(ev, DEFAULT_KB);
     const m = buildConsentReportModel(ev, []);
     const row = rowOf(m, 'tool', 'paylater.example');
-    expect(row.categories).toEqual(['other']);
+    expect(row.categories).toEqual(['advertising']);
     expect(row.categorySource).toMatch(/behaves like a tracker/);
     expect(cellOf(m, 'tool', 'paylater.example', 'de:do-nothing').status).toBe('mismatch');
   });
@@ -222,5 +222,23 @@ describe('C. a refused answer is recorded, shown and judged', () => {
     expect(t.answer).toMatchObject({ applied: false });
     expect(t.purpose).toMatch(/Analytics/);
     expect(t.purpose).not.toMatch(/behaves like a tracker/);
+  });
+
+  // Review R2 2026-10-19: a refused unknown tracker must not turn a wiretap state's "before a choice" green.
+  it('a refused unknown tracker firing before a choice in a wiretap state is a mismatch, and stays off after an opt-out signal', () => {
+    const ev = evaluation({ locations: [{ ...CA, scenarios: [...CA.scenarios, { scenario: 'gpc', status: 'tested' }] }], inventory: [pay], siteWorkspace: ws(), behaviorObservations: [seen('us-ca', 'do-nothing', [{ partyId: pay.partyId as string, requests: 2 }]), seen('us-ca', 'gpc', [{ partyId: pay.partyId as string, requests: 2 }])] });
+    refuseNecessaryTrackers(ev, DEFAULT_KB);
+    const m = buildConsentReportModel(ev, []);
+    expect(cellOf(m, 'tool', 'paylater.example', 'us-ca:do-nothing').status).toBe('mismatch');
+    expect(cellOf(m, 'tool', 'paylater.example', 'us-ca:gpc').status).toBe('mismatch');
+  });
+
+  it('a refused known analytics tool still may run after the visitor accepted analytics only', () => {
+    const ga4 = party({ partyId: 'google.analytics', label: 'Google Analytics 4', domain: 'google-analytics.com', hosts: ['google-analytics.com'], recognized: true, categories: ['necessary'], behavesLikeTracker: true });
+    const answer = { appliedAt: 'now', classifications: [{ key: 'class:ga', kind: 'tool' as const, partyId: 'google.analytics', domain: 'google-analytics.com', categories: ['necessary'] }], doneTasks: [] };
+    const DEp = { ...DE, scenarios: [...DE.scenarios, { scenario: 'partial', status: 'tested', choice: { kind: 'partial', ok: true, method: 'test' } }] };
+    const ev = evaluation({ locations: [DEp], inventory: [ga4], siteWorkspace: answer, behaviorObservations: [seen('de', 'partial', [{ partyId: 'google.analytics', requests: 1 }])] });
+    refuseNecessaryTrackers(ev, DEFAULT_KB);
+    expect(cellOf(buildConsentReportModel(ev, []), 'tool', 'Google Analytics 4', 'de:partial').status).toBe('match');
   });
 });

@@ -1150,8 +1150,12 @@ export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: Job
  */
 export function savedAfter(saved: Record<string, string>, data: JobReportResponse): Record<string, string> {
   if (!data.report || data.updating) return saved;
-  const answered = new Set(data.report.matrix.tools.filter((t) => t.classified || t.answer).map((t) => t.classKey));
-  return Object.fromEntries(Object.entries(saved).filter(([k]) => !answered.has(k)));
+  // The report must hold THIS answer: a tool classified before (a "Change") still shows the old one until its re-render lands.
+  const tools = new Map(data.report.matrix.tools.map((t) => [t.classKey, t]));
+  return Object.fromEntries(Object.entries(saved).filter(([k, v]) => {
+    const t = tools.get(k);
+    return !(t && (t.answer ? t.answer.categories.includes(v) : t.classified));
+  }));
 }
 
 /**
