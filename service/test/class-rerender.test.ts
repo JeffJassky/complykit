@@ -137,7 +137,7 @@ describe('classifications written while a re-render runs', () => {
     const r = await get(s, id);
     expect(r.updating).toBe(false);
     expect(r.updateError).toBeUndefined();
-    expect(r.report!.matrix.tools[1].answer).toMatchObject({ categories: ['other'], applied: false }); // B ("necessary", refused), not A
+    expect(r.report!.matrix.tools[1].answer).toMatchObject({ categories: ['necessary'], applied: false }); // B ("necessary", refused), not A
     expect(calls(s, id)).toBe(n + 2); // one running, one queued, never more
   });
 

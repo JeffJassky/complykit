@@ -60,19 +60,24 @@ function ownerReport({ stage, url, done, current, widget, ws }) {
     id: `local:${sc}`, location: 'local', scenario: sc, label: LABEL[sc],
     ...(stage === 'final' || done.includes(sc) ? (i === 1 ? { state: 'not-checked', note: 'There was no consent banner, so this choice couldn’t be made.' } : { state: 'done' }) : { state: current === sc ? 'running' : 'pending' }),
   }));
-  const cell = (i, judged) => (columns[i].state === 'done' ? { state: judged, expected: 'Off until the visitor gives permission', observed: '2 data request(s) observed', reason: judged === 'mismatch' ? 'Active when opt-in rules expect it to be off.' : 'Working as expected.' } : columns[i].state === 'not-checked' ? { state: 'not-checked', reason: columns[i].note } : { state: 'pending' });
+  // Part 2 D1: a done cell carries the comparison facts the browser judges with (opt-in rules; the tool was active).
+  const facts = (i) => ({ scenario: SCENARIOS[i], regime: 'opt-in', regimeLabel: 'Opt-in (EU/EEA)', wiretap: false, hasActivity: true, limitedOnly: false, captureGap: false });
+  const cell = (i, judged) => (columns[i].state === 'done' ? { state: judged, expected: 'Off until the visitor gives permission', observed: '2 data request(s) observed', reason: judged === 'mismatch' ? 'Active when opt-in rules expect it to be off.' : 'Working as expected.', facts: facts(i) } : columns[i].state === 'not-checked' ? { state: 'not-checked', reason: columns[i].note } : { state: 'pending' });
   const tools = [];
   if (stage === 'final' || done.length >= 1) {
-    tools.push({ id: 'tool:meta.pixel', partyId: 'meta.pixel', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:fake-meta', cells: [cell(0, 'mismatch'), cell(1, 'ok'), cell(2, 'ok')], cookies: [{ id: '["meta.pixel","cookie","_fbp"]', name: '_fbp', kind: 'cookie', purpose: 'Advertising', classified: true, cells: [cell(0, 'mismatch'), cell(1, 'ok'), cell(2, 'ok')] }] });
+    tools.push({ id: 'tool:meta.pixel', partyId: 'meta.pixel', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:fake-meta', judge: { base: ['advertising'], trackerReason: 'its knowledge-base entry classifies it as advertising' }, cells: [cell(0, 'mismatch'), cell(1, 'ok'), cell(2, 'ok')], cookies: [{ id: '["meta.pixel","cookie","_fbp"]', name: '_fbp', kind: 'cookie', purpose: 'Advertising', classified: true, judge: { name: [], site: [] }, cells: [cell(0, 'mismatch'), cell(1, 'ok'), cell(2, 'ok')] }] });
   }
   const widgetDecided = decided(ws?.entries?.['class:fake-widget']?.value);
   if (widget && (stage === 'final' || done.length >= 2)) {
-    const judged = widgetDecided ? 'ok' : 'needs-decision';
-    // A "necessary" answer is refused (the fake widget behaves like a tracker), as the real generator's tracker guard does.
+    // What owner-judge makes of the answer on these facts (opt-in rules, the widget active in every visit): any accepted
+    // purpose is a mismatch before a choice; "necessary" is refused (the fake widget behaves like a tracker) and judged
+    // as advertising, as the real tracker guard does. The fake must agree with the judge, or the page would flicker.
     const chosen = ws?.entries?.['class:fake-widget']?.value?.category;
     const refused = widgetDecided && chosen === 'necessary';
-    const answer = !widgetDecided ? undefined : refused ? { categories: ['other'], applied: false, reason: 'sends a stored id before consent' } : { categories: [chosen], applied: true };
-    tools.push({ id: 'tool:unknown:widgets.test', partyId: 'unknown:widgets.test', label: 'widgets.test', domain: 'widgets.test', purpose: refused ? 'Needs consent (behaves like a tracker)' : widgetDecided ? 'Analytics' : 'Unclassified', categories: refused ? ['other'] : widgetDecided ? ['analytics'] : [], classified: widgetDecided, recognized: widgetDecided, classKey: 'class:fake-widget', ...(answer ? { answer } : {}), cells: [cell(0, judged), cell(1, judged), cell(2, judged)], cookies: [] });
+    const LABELS = { necessary: 'Necessary', functional: 'Functional', analytics: 'Analytics', advertising: 'Advertising', payments: 'Payments', chat: 'Chat', embed: 'Embedded content', reviews: 'Reviews' };
+    const judged = widgetDecided ? 'mismatch' : 'needs-decision';
+    const answer = !widgetDecided ? undefined : refused ? { categories: ['necessary'], applied: false, reason: 'sends a stored id before consent' } : { categories: [chosen], applied: true };
+    tools.push({ id: 'tool:unknown:widgets.test', partyId: 'unknown:widgets.test', label: 'widgets.test', domain: 'widgets.test', purpose: refused ? 'Needs consent (behaves like a tracker)' : widgetDecided ? (LABELS[chosen] ?? chosen) : 'Unclassified', categories: refused ? ['advertising'] : widgetDecided ? [chosen] : [], classified: widgetDecided, recognized: widgetDecided, classKey: 'class:fake-widget', judge: { base: [], trackerReason: 'sends a stored id before consent' }, ...(answer ? { answer } : {}), cells: [cell(0, judged), cell(1, judged), cell(2, judged)], cookies: [] });
   }
   const counts = { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0 };
   const key = { ok: 'ok', mismatch: 'mismatch', 'needs-decision': 'needsDecision', pending: 'pending', 'not-checked': 'notChecked' };
@@ -85,6 +90,7 @@ function ownerReport({ stage, url, done, current, widget, ws }) {
     banner: visitsDone ? { state: 'detected', provider: 'OneTrust', visitsWithBanner: visitsDone, visitsChecked: visitsDone } : { state: 'pending', visitsWithBanner: 0, visitsChecked: 0 },
     matrix: { columns, tools, counts },
     decisions: tools.filter((t) => !t.classified).map((t) => ({ partyId: t.partyId, label: t.label, domain: t.domain, classKey: t.classKey })),
+    answers: Object.fromEntries(tools.filter((t) => t.answer).map((t) => [t.classKey, t.answer.categories[0]])),
   };
 }
 

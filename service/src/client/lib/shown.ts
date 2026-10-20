@@ -12,9 +12,10 @@ export type PendingAnswers = Record<string, string>;
 /** Reports saved before the judge fields existed cannot be re-judged; they are shown as served. */
 const judgeable = (r: OwnerReport): boolean => r.matrix.tools.every((t) => !!t.judge);
 
-/** One report judged with its own answers plus the pending ones. Pure; the input is never mutated. */
+/** One report judged with its own answers plus the pending ones — always, so the page shows the judge's verdicts and never a
+ *  server-written cell the judge would not produce. Pure; the input is never mutated. */
 export function judgedReport(report: OwnerReport, pending: PendingAnswers | undefined): OwnerReport {
-  if (!pending || Object.keys(pending).length === 0 || !judgeable(report)) return report;
+  if (!judgeable(report)) return report;
   // The service mirror differs from core in one place: `OwnerToolRow.activity` is optional here (reports made before it
   // existed), required in core. The judge only spreads it through, so the cast is safe.
   return judgeOwnerReport(report as unknown as CoreOwnerReport, { ...report.answers, ...pending }) as unknown as OwnerReport;
@@ -22,11 +23,10 @@ export function judgedReport(report: OwnerReport, pending: PendingAnswers | unde
 
 /**
  * The response the page renders from: `shown = judgeOwnerReport(report, {...report.answers, ...pending})` for the
- * final report and for each law's live report. With nothing pending the served report is already judged (judging is
- * idempotent), so it is returned as is.
+ * final report and for each law's live report (judging is idempotent: a served report already judged with the same
+ * answers comes out identical).
  */
 export function shownData(data: JobReportResponse, pending: PendingAnswers | undefined): JobReportResponse {
-  if (!pending || Object.keys(pending).length === 0) return data;
   return {
     ...data,
     report: data.report ? judgedReport(data.report, pending) : data.report,
