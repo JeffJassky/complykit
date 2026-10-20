@@ -90,7 +90,7 @@ function ownerReport({ stage, url, done, current, widget, ws }) {
     banner: visitsDone ? { state: 'detected', provider: 'OneTrust', visitsWithBanner: visitsDone, visitsChecked: visitsDone } : { state: 'pending', visitsWithBanner: 0, visitsChecked: 0 },
     matrix: { columns, tools, counts },
     decisions: tools.filter((t) => !t.classified).map((t) => ({ partyId: t.partyId, label: t.label, domain: t.domain, classKey: t.classKey })),
-    answers: Object.fromEntries(tools.filter((t) => t.answer).map((t) => [t.classKey, t.answer.categories[0]])),
+    answers: Object.fromEntries(tools.filter((t) => t.answer).map((t) => [t.classKey, t.answer.categories])),
   };
 }
 

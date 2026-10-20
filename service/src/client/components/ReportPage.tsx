@@ -15,7 +15,7 @@ import { copyText, useReviewer } from '../lib/useKb';
 import { useJobReport } from '../lib/useJobReport';
 import { reportHref } from '../lib/useHashView';
 import { useNow } from '../lib/useNow';
-import { answersAfter, categoryLabel, shownData } from '../lib/shown';
+import { answersAfter, categoryLabel, sameCategories, shownData, toolJudgeable } from '../lib/shown';
 
 // The report page (plans/simple-report.md): one scan, four parts, in order —
 // scan status (only while scanning), consent banner, the matrix, the to-do
@@ -64,8 +64,8 @@ export interface ReportActions {
 }
 
 export interface ReportUiState {
-  /** Answers given on this page that the served report may not hold yet: classKey → category. The page judges with them at once. */
-  answers?: Record<string, string>;
+  /** Answers given on this page that the served report may not hold yet: classKey → category set. The page judges with them at once. */
+  answers?: Record<string, string[]>;
   /** classKey being saved. */
   saving?: string;
   verifying?: string;
@@ -398,7 +398,7 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
                 const decide = !t.classified;
                 const isOpen = expanded.has(t.id);
                 const rows = [
-                  { key: t.id, name: t.label, sub: t.purpose, cells: t.cells, tool: true, unclassified: !t.classified },
+                  { key: t.id, name: t.label, sub: ui.answers?.[t.classKey] && !toolJudgeable(t) ? 'Saved — the report updates shortly' : t.purpose, cells: t.cells, tool: true, unclassified: !t.classified },
                   ...(isOpen ? t.cookies : []).map((k) => ({ key: k.id, name: k.name, sub: k.kind === 'cookie' ? 'cookie' : `${k.kind} storage`, cells: k.cells, tool: false, unclassified: !k.classified })),
                 ];
                 return (
@@ -499,13 +499,18 @@ function DecisionTodo({ label, classKey, taskDone, ui, actions, unblocks, tool }
   const [changing, setChanging] = useState(false);
   const done = tool ? tool.classified : !!taskDone;
   const refused = tool?.answer && !tool.answer.applied ? (tool.answer.reason ?? '') : undefined;
+  // Classified with no answer on the site: the knowledge base's own classification, not the owner's.
+  const known = !!tool && tool.classified && !tool.answer;
   return (
     <li className="rp-todo" data-kind="classify" data-status={done ? 'verified' : 'todo'} data-refused={refused !== undefined ? 'true' : undefined}>
       <div className="rp-todo-head">
         <strong>What is {label} for?</strong>
         <span className={`pill ${done ? 'pill-done' : 'pill-queued'}`}>{done ? (refused !== undefined ? 'Answered' : 'Decided ✓') : 'To decide'}</span>
       </div>
-      <p className="muted">The scan doesn’t know this tool. Your answer decides whether it needs consent{unblocks?.length ? ` — and ${unblocks.length === 1 ? 'one change below' : `${unblocks.length} changes below`}` : ''}.</p>
+      <p className="muted">
+        {known ? 'complykit already knows this tool; a different answer would change' : 'The scan doesn’t know this tool. Your answer decides'} whether it needs consent
+        {unblocks?.length ? ` — and ${unblocks.length === 1 ? 'one change below' : `${unblocks.length} changes below`}` : ''}.
+      </p>
       {tool && !(done && !changing) ? <ToolEvidence tool={tool} /> : null}
       {done && !changing ? (
         <p>
@@ -516,7 +521,7 @@ function DecisionTodo({ label, classKey, taskDone, ui, actions, unblocks, tool }
           ) : tool?.answer ? (
             <>Your answer: <strong>{categoryLabel(tool.answer.categories)}</strong>. </>
           ) : tool ? (
-            <>Your answer: <strong>{tool.purpose}</strong>. </>
+            <>complykit knows it: <strong>{tool.purpose}</strong>. </>
           ) : (
             <>Your answer is saved for this site. </>
           )}
@@ -1226,13 +1231,13 @@ export function ReportPage({ jobId }: { jobId: string }) {
       const d = dataRef.current;
       if (!d) return;
       // The page judges with the answer at once (no await before this); the PATCH and the refresh follow.
-      setUi((u) => ({ ...u, answers: { ...u.answers, [classKey]: purpose }, saving: classKey, errors: Object.fromEntries(Object.entries(u.errors ?? {}).filter(([k]) => k !== classKey)) }));
+      setUi((u) => ({ ...u, answers: { ...u.answers, [classKey]: [purpose] }, saving: classKey, errors: Object.fromEntries(Object.entries(u.errors ?? {}).filter(([k]) => k !== classKey)) }));
       const out = await saveClassification(
         () => api.patchWorkspace(d.domain, { ...(by ? { by } : {}), entries: { [classKey]: { value: { category: purpose, categoryChosen: true, source: 'report-page' } } } }),
         refresh,
       );
       // A failed save was never an answer: the page goes back to what the server holds.
-      if (!out.saved) setUi((u) => ({ ...u, answers: Object.fromEntries(Object.entries(u.answers ?? {}).filter(([k, v]) => !(k === classKey && v === purpose))) }));
+      if (!out.saved) setUi((u) => ({ ...u, answers: Object.fromEntries(Object.entries(u.answers ?? {}).filter(([k, v]) => !(k === classKey && sameCategories(v, [purpose])))) }));
       if (!out.saved) err(classKey, out.error);
       setUi((u) => ({ ...u, saving: undefined }));
     },

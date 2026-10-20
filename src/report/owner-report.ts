@@ -268,15 +268,15 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
   // The matrix's own categories (the inventory's, which at scan time are already the site's answers) are not used here.
   const kb = input.kb ?? DEFAULT_KB;
   const tools: OwnerToolRow[] = [];
-  const answers: Record<string, string> = {};
+  const answers: Record<string, string[]> = {};
   for (const p of unreachableReason ? [] : m?.inventory ?? []) {
     const toolRow = bm?.rows.find((r) => r.kind === 'tool' && r.partyId === p.partyId);
     const classKey = 'class:' + workspaceId('tool', [p.partyId, p.domain]);
     const base = (kb.entries.find((e) => e.id === p.partyId)?.categories ?? []).map(String).filter((c) => c && c !== 'unknown');
     const trackerReason = knownTrackerReason(p, kb);
-    // What the team answered for this tool (the first category; judgeOwnerReport decides whether it applies).
+    // What the team answered for this tool: ALL its categories (the matrix judges on all of them); judgeOwnerReport decides whether it applies.
     const site = m?.siteWorkspace?.classifications.find((c) => c.kind === 'tool' && c.partyId === p.partyId);
-    if (site?.categories[0]) answers[classKey] = site.categories[0];
+    if (site?.categories.length) answers[classKey] = site.categories.map(String);
     const cookies: OwnerCookieRow[] = (bm?.rows ?? [])
       .filter((r) => r.kind === 'storage' && r.partyId === p.partyId)
       .map((r) => {

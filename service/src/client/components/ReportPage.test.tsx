@@ -242,7 +242,7 @@ describe('c. the matrix', () => {
     expect(text(<Matrix data={done({ report: unverified })} />)).toContain('We could not confirm where the scan was running from (exit in US), so nothing was checked.');
   });
   it('a tool answered on this page shows its judged purpose at once, before the next report arrives', () => {
-    expect(text(<ReportPageView data={running()} now={NOW} ui={{ answers: { 'class:w': 'analytics' } }} />)).toContain('widgets.test Analytics');
+    expect(text(<ReportPageView data={running()} now={NOW} ui={{ answers: { 'class:w': ['analytics'] } }} />)).toContain('widgets.test Analytics');
     expect(text(<ReportPageView data={running()} now={NOW} />)).toContain('widgets.test Unclassified');
   });
 });
@@ -288,7 +288,7 @@ describe('d. the to-do list', () => {
     expect(t).not.toContain('Verify');
     const answered = done({ report: responsive(), todo: { state: 'ready', tasks: [decision, waiting] } });
     expect(text(<ReportPageView data={answered} now={NOW} actions={{ onVerify: () => {} }} />)).not.toContain('Verify');
-    expect(text(<ReportPageView data={answered} now={NOW} ui={{ answers: { 'class:w': 'analytics' } }} actions={{ onVerify: () => {} }} />)).toContain('Verify');
+    expect(text(<ReportPageView data={answered} now={NOW} ui={{ answers: { 'class:w': ['analytics'] } }} actions={{ onVerify: () => {} }} />)).toContain('Verify');
   });
   it('a decision shows what the tool loaded — hosting, requests, the addresses in a list to expand', () => {
     const activity = { requests: 16, visits: 8, cookies: 0, storage: 0, samples: ['storyfolder-releases.s3.amazonaws.com/beta.yml?t', 'storyfolder-releases.s3.amazonaws.com/beta-mac.yml?t'], loadedBy: ['https://shop.example/js/app.58a05869.js'], hostedOn: { provider: 'Amazon S3', name: 'storyfolder-releases', matchesSite: true } };
@@ -312,7 +312,7 @@ describe('d. the to-do list', () => {
     const tasks = [{ ...decision, status: 'verified' as const }, { ...install, status: 'verified' as const, lastVerify: { at: 'x', result: 'pass' as const, message: 'the served HTML carries the change', evidence: [] } }, task('meta', { status: 'done-unverified' }), task('opt', { optional: true })];
     expect(readyForFinalScan(tasks)).toBe(true);
     expect(readyForFinalScan(tasks.map((t) => (t.id === 'meta' ? { ...t, status: 'failed' as const } : t)))).toBe(false);
-    const widget = { ...owner().matrix.tools[1], classified: true, purpose: 'Analytics', categories: ['analytics'], cells: [ok, gap, ok] };
+    const widget = { ...owner().matrix.tools[1], classified: true, purpose: 'Analytics', categories: ['analytics'], answer: { categories: ['analytics'], applied: true }, cells: [ok, gap, ok] };
     const data = done({ todo: { state: 'ready', tasks }, report: { ...finalOwner, matrix: { ...finalOwner.matrix, tools: [...finalOwner.matrix.tools, widget] } } });
     const out = html(<TodoList data={data} actions={{ onRescan: () => {} }} />);
     expect(out).toMatch(/<button[^>]*class="btn btn-sm btn-primary"[^>]*>Run the final scan/);
@@ -347,7 +347,7 @@ describe('routing, polling and the re-render queue', () => {
   });
 });
 
-const judgeServed = (r: OwnerReport, answers: Record<string, string>): OwnerReport => shownData({ ...done(), report: r }, answers).report!;
+const judgeServed = (r: OwnerReport, answers: Record<string, string[]>): OwnerReport => shownData({ ...done(), report: r }, answers).report!;
 
 describe('facts, not verdicts, and decided is not applied', () => {
   it('the picker offers the law’s four categories, in order', () => {
@@ -362,12 +362,12 @@ describe('facts, not verdicts, and decided is not applied', () => {
   });
   it('a refused answer says what the owner answered and that complykit treats it as needing consent, from the judged row', () => {
     const data = responsiveData();
-    const shownHtml = html(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:pay': 'necessary' } }} />);
+    const shownHtml = html(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:pay': ['necessary'] } }} />);
     expect(shownHtml).toContain(`Answered: <strong>Necessary</strong>. complykit treats it as needing consent: ${TRACKER}.`);
-    const out = text(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:pay': 'necessary' } }} />);
+    const out = text(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:pay': ['necessary'] } }} />);
     expect(out).toContain('Answered');
     // The server's task fields are not read: the same answer from the served report renders the same, with no refused/answered on the task.
-    const served = responsiveData({ report: judgeServed(responsive(), { 'class:pay': 'necessary' }) });
+    const served = responsiveData({ report: judgeServed(responsive(), { 'class:pay': ['necessary'] }) });
     expect(html(<ReportPageView data={served} now={NOW} />)).toContain(`Answered: <strong>Necessary</strong>. complykit treats it as needing consent: ${TRACKER}.`);
     // A task that claims a refusal the judged row does not have shows none.
     const claim = { ...decision, status: 'verified' as const, refused: 'invented', answered: 'necessary' };
@@ -380,15 +380,22 @@ describe('facts, not verdicts, and decided is not applied', () => {
 });
 
 describe('saving a classification', () => {
-  const served = (answers: Record<string, string>, over: Partial<JobReportResponse> = {}) => done({ report: responsive({ answers }), ...over });
+  const served = (answers: Record<string, string[]>, over: Partial<JobReportResponse> = {}) => done({ report: responsive({ answers }), ...over });
   it('the overlay is dropped only when the report holds THIS answer and no report is still being made', () => {
-    const pending = { 'class:w': 'analytics' };
-    expect(answersAfter(pending, served({ 'class:w': 'analytics' }, { updating: true }))).toEqual(pending); // still updating
-    expect(answersAfter(pending, served({ 'class:w': 'analytics' }, { updating: false }))).toEqual({});
-    expect(answersAfter(pending, served({ 'class:w': 'advertising' }))).toEqual(pending); // an older answer: a "Change" in flight
+    const pending = { 'class:w': ['analytics'] };
+    expect(answersAfter(pending, served({ 'class:w': ['analytics'] }, { updating: true }))).toEqual(pending); // still updating
+    expect(answersAfter(pending, served({ 'class:w': ['analytics'] }, { updating: false }))).toEqual({});
+    expect(answersAfter(pending, served({ 'class:w': ['advertising'] }))).toEqual(pending); // an older answer: a "Change" in flight
     expect(answersAfter(pending, served({}))).toEqual(pending); // a report that does not answer it yet
     expect(answersAfter(pending, done({ report: null }))).toEqual(pending);
-    expect(answersAfter({ ...pending, 'class:pay': 'necessary' }, served({ 'class:w': 'analytics' }))).toEqual({ 'class:pay': 'necessary' }); // per tool
+    expect(answersAfter({ ...pending, 'class:pay': ['necessary'] }, served({ 'class:w': ['analytics'] }))).toEqual({ 'class:pay': ['necessary'] }); // per tool
+  });
+  it('answers are compared as sets: same members in any order are the same answer', () => {
+    const pending = { 'class:w': ['functional', 'advertising'] };
+    expect(answersAfter(pending, served({ 'class:w': ['advertising', 'functional'] }))).toEqual({});
+    expect(answersAfter(pending, served({ 'class:w': ['advertising'] }))).toEqual(pending); // a subset is not the answer
+    expect(answersAfter(pending, served({ 'class:w': ['functional', 'advertising', 'analytics'] }))).toEqual(pending);
+    expect(answersAfter(pending, served({ 'class:w': ['functional'] }))).toEqual(pending);
   });
   it('a failed report read after a successful save is not a classification error', async () => {
     const refresh = vi.fn().mockRejectedValue(new Error('network'));
@@ -408,14 +415,14 @@ describe('the responsive report: judged in the browser before any server round t
 
   it('an answer in ui.answers changes the purpose, the cells and the score at once', () => {
     const before = view({});
-    const after = view({ answers: { 'class:w': 'advertising' } });
+    const after = view({ answers: { 'class:w': ['advertising'] } });
     expect(text(<ReportPageView data={responsiveData()} now={NOW} />)).toContain('widgets.test Unclassified');
-    expect(text(<ReportPageView data={responsiveData()} now={NOW} ui={{ answers: { 'class:w': 'advertising' } }} />)).toContain('widgets.test Advertising');
+    expect(text(<ReportPageView data={responsiveData()} now={NOW} ui={{ answers: { 'class:w': ['advertising'] } }} />)).toContain('widgets.test Advertising');
     // The cell that waited for a decision now has a verdict: active before a choice is a problem, quiet after rejection is as expected.
     expect(rowCells(before, 'w')).toEqual(['needs-decision', 'needs-decision']);
     expect(rowCells(after, 'w')).toEqual(['mismatch', 'ok']);
     // Its cookie (folded in the page) is judged with the tool.
-    const cookie = shownData(responsiveData(), { 'class:w': 'advertising' }).report!.matrix.tools[1].cookies[0];
+    const cookie = shownData(responsiveData(), { 'class:w': ['advertising'] }).report!.matrix.tools[1].cookies[0];
     expect(cookie).toMatchObject({ purpose: 'Advertising', classified: true });
     expect(cookie.cells.map((c) => c.state)).toEqual(['mismatch', 'ok']);
     // 1 of 6 checks passed becomes 2 of 6; the problems follow.
@@ -424,13 +431,13 @@ describe('the responsive report: judged in the browser before any server round t
     expect(after).toMatch(/data-testid="problems">2</);
     expect(before).not.toMatch(/data-testid="problems">2</);
     // The decision is made in the to-do list too.
-    expect(text(<ReportPageView data={responsiveData()} now={NOW} ui={{ answers: { 'class:w': 'advertising' } }} />)).toContain('Your answer: Advertising');
+    expect(text(<ReportPageView data={responsiveData()} now={NOW} ui={{ answers: { 'class:w': ['advertising'] } }} />)).toContain('Your answer: Advertising');
   });
 
   it('a cell flips from needs-decision to ok when the answer allows the tool to run', () => {
-    const after = view({ answers: { 'class:w': 'necessary' } });
+    const after = view({ answers: { 'class:w': ['necessary'] } });
     expect(rowCells(after, 'w')).toEqual(['ok', 'ok']);
-    const shown = shownData(responsiveData(), { 'class:w': 'necessary' });
+    const shown = shownData(responsiveData(), { 'class:w': ['necessary'] });
     expect(shown.report!.matrix.tools[1].answer).toEqual({ categories: ['necessary'], applied: true });
     expect(shown.report!.decisions.map((d) => d.classKey)).toEqual(['class:pay']);
     expect(scoreReport(shown.report)).toMatchObject({ decisions: 1 });
@@ -438,32 +445,32 @@ describe('the responsive report: judged in the browser before any server round t
   });
 
   it('a legacy stored id is labelled by categoryLabel', () => {
-    expect(text(<ReportPageView data={responsiveData()} now={NOW} ui={{ answers: { 'class:w': 'payments' } }} />)).toContain('widgets.test Payments');
-    expect(text(<ReportPageView data={responsiveData()} now={NOW} ui={{ answers: { 'class:w': 'chat' } }} />)).toContain('widgets.test Chat');
+    expect(text(<ReportPageView data={responsiveData()} now={NOW} ui={{ answers: { 'class:w': ['payments'] } }} />)).toContain('widgets.test Payments');
+    expect(text(<ReportPageView data={responsiveData()} now={NOW} ui={{ answers: { 'class:w': ['chat'] } }} />)).toContain('widgets.test Chat');
   });
 
   it('a tracker answered "necessary" is refused in the grid and the to-do list, from the judged row', () => {
-    const shown = shownData(responsiveData(), { 'class:pay': 'necessary' }).report!.matrix.tools[2];
+    const shown = shownData(responsiveData(), { 'class:pay': ['necessary'] }).report!.matrix.tools[2];
     expect(shown).toMatchObject({ classified: true, categories: ['advertising'], purpose: 'Needs consent (behaves like a tracker)', answer: { categories: ['necessary'], applied: false, reason: TRACKER } });
-    const out = view({ answers: { 'class:pay': 'necessary' } });
+    const out = view({ answers: { 'class:pay': ['necessary'] } });
     expect(out).toContain(`Answered: <strong>Necessary</strong>. complykit treats it as needing consent: ${TRACKER}.`);
     expect(out).toContain('data-refused="true"');
     expect(rowCells(out, 'pay')).toEqual(['mismatch', 'ok']);
   });
 
   it('the answer in ui.answers wins over the one the server served, and the served report is not mutated', () => {
-    const served = responsive({ answers: { 'class:w': 'advertising' } });
-    const data = responsiveData({ report: judgeServed(responsive(), { 'class:w': 'advertising' }) });
-    expect(data.report!.answers).toEqual({ 'class:w': 'advertising' });
+    const served = responsive({ answers: { 'class:w': ['advertising'] } });
+    const data = responsiveData({ report: judgeServed(responsive(), { 'class:w': ['advertising'] }) });
+    expect(data.report!.answers).toEqual({ 'class:w': ['advertising'] });
     expect(rowCells(html(<ReportPageView data={data} now={NOW} />), 'w')).toEqual(['mismatch', 'ok']);
-    const changed = html(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:w': 'necessary' } }} />);
+    const changed = html(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:w': ['necessary'] } }} />);
     expect(rowCells(changed, 'w')).toEqual(['ok', 'ok']);
     expect(served.matrix.tools[1].classified).toBe(false);
     expect(data.report!.matrix.tools[1].answer).toEqual({ categories: ['advertising'], applied: true });
   });
 
   it('the grid never shows an updating state; the notice lives in the to-do section only', () => {
-    const out = view({ answers: { 'class:w': 'advertising' } }, { updating: true });
+    const out = view({ answers: { 'class:w': ['advertising'] } }, { updating: true });
     const matrix = out.slice(out.indexOf('data-testid="matrix"'), out.indexOf('data-testid="todo"'));
     expect(matrix).not.toMatch(/Updating|data-testid="updating"/);
     expect(out.slice(out.indexOf('data-testid="todo"'))).toContain('Updating the report with your answers…');
@@ -475,17 +482,47 @@ describe('the responsive report: judged in the browser before any server round t
   it('the judged tabs: each law’s live report is judged too', () => {
     const live = responsive();
     const d = running({ job: job({ laws: ['eu', 'ca'] }), report: null, laws: ['eu', 'ca'].map((id) => ({ id: id as LawId, progress: { id: id as LawId, locationId: LAWS.find((l) => l.id === id)!.locationId, region: 'x', local: false, state: 'scanning' as const, visitsDone: 1, visitsTotal: 3 }, report: live })) });
-    const shown = shownData(d, { 'class:w': 'advertising' });
+    const shown = shownData(d, { 'class:w': ['advertising'] });
     expect(shown.laws!.every((l) => l.report!.matrix.tools[1].classified)).toBe(true);
     expect(d.laws![0].report!.matrix.tools[1].classified).toBe(false);
+  });
+
+  it('a multi-category answer is judged on all its categories, and the Decision shows them', () => {
+    const shown = shownData(responsiveData(), { 'class:w': ['functional', 'advertising'] }).report!.matrix.tools[1];
+    expect(shown).toMatchObject({ classified: true, categories: ['functional', 'advertising'], purpose: 'Functional · Advertising', answer: { categories: ['functional', 'advertising'], applied: true } });
+    // necessary + advertising is not "no consent needed": not refused, judged as given.
+    const mixed = shownData(responsiveData(), { 'class:pay': ['necessary', 'advertising'] }).report!.matrix.tools[2];
+    expect(mixed.answer).toEqual({ categories: ['necessary', 'advertising'], applied: true });
+  });
+
+  it('a tool the knowledge base classified (no answer on the site) reads "complykit knows it", never "Your answer"', () => {
+    const metaDecision = task('classify:3', { kind: 'classify', title: 'Decide: what is Meta Pixel?', tools: ['Meta Pixel'], classKey: 'class:meta', verify: { check: 'manual', method: 'manual' }, order: 0, snippet: undefined, steps: [] });
+    const out = text(<ReportPageView data={responsiveData({ todo: { state: 'ready', tasks: [metaDecision, install], fromThisRun: true } })} now={NOW} />);
+    expect(out).toContain('complykit knows it: Advertising');
+    expect(out).not.toContain('Your answer: Advertising');
+    expect(out).not.toContain('The scan doesn’t know this tool');
+    // An answer the site gave is still "Your answer".
+    expect(text(<ReportPageView data={responsiveData({ todo: { state: 'ready', tasks: [metaDecision, install], fromThisRun: true } })} now={NOW} ui={{ answers: { 'class:meta': ['analytics'] } }} />)).toContain('Your answer: Analytics');
+  });
+
+  it('a legacy report (no judge fields) says "Saved — the report updates shortly" on the row while an answer is pending, and not otherwise', () => {
+    const legacy = responsive();
+    for (const t of legacy.matrix.tools) delete (t as { judge?: unknown }).judge;
+    const data = responsiveData({ report: legacy });
+    const pendingText = text(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:w': ['advertising'] } }} />);
+    expect(pendingText).toContain('widgets.test Saved — the report updates shortly');
+    expect(pendingText).not.toContain('paylater.test Saved');
+    expect(text(<ReportPageView data={data} now={NOW} />)).not.toContain('Saved — the report updates shortly');
+    // A judgeable report judges at once instead.
+    expect(text(<ReportPageView data={responsiveData()} now={NOW} ui={{ answers: { 'class:w': ['advertising'] } }} />)).not.toContain('Saved — the report updates shortly');
   });
 
   it('reports saved before the judge fields existed are shown as served', () => {
     const legacy = responsive();
     delete (legacy.matrix.tools[0] as { judge?: unknown }).judge;
     const data = responsiveData({ report: legacy });
-    expect(shownData(data, { 'class:w': 'advertising' }).report).toBe(data.report);
-    expect(() => html(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:w': 'advertising' } }} />)).not.toThrow();
+    expect(shownData(data, { 'class:w': ['advertising'] }).report).toBe(data.report);
+    expect(() => html(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:w': ['advertising'] } }} />)).not.toThrow();
   });
 });
 
@@ -709,7 +746,7 @@ describe('completed tasks', () => {
   it('done tasks leave the list for a folded Completed list at the bottom; open ones stay in order', () => {
     const tasks = [decision, task('a', { status: 'verified' }), task('b'), task('c', { status: 'done-unverified' }), task('d', { status: 'failed' }), task('e', { optional: true, status: 'verified' }), task('f', { optional: true })];
     const data = done({ report: responsive(), todo: { state: 'ready', tasks, fromThisRun: true } });
-    const out = html(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:w': 'analytics' } }} />);
+    const out = html(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:w': ['analytics'] } }} />);
     const completed = out.slice(out.indexOf('data-testid="todo-completed"'), out.indexOf('data-testid="final-scan"'));
     const open = out.slice(0, out.indexOf('data-testid="todo-completed"'));
     for (const id of ['a', 'c', 'e']) expect(completed).toContain(`Hold the ${id} tag`);

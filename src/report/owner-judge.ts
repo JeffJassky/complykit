@@ -4,8 +4,8 @@
 import { categoryLabel, compareCookieBehavior, cookieCategories } from './cookie-purpose.js';
 import type { OwnerCell, OwnerCellState, OwnerReport, OwnerToolRow } from './owner-types.js';
 
-/** Answers that mean "no consent needed" (inline: report/ may not import rules/). */
-const NOT_REQUIRED = ['necessary', 'cdn', 'captcha', 'payments', 'consent'];
+/** Categories that mean "no consent needed" (inline: report/ may not import rules/). Not 'consent': a consent tool is never refused (as refuseNecessaryTrackers). */
+const NOT_REQUIRED = new Set(['necessary', 'cdn', 'captcha', 'payments']);
 
 const COUNT_KEY: Record<OwnerCellState, keyof OwnerReport['matrix']['counts']> = {
   ok: 'ok',
@@ -29,11 +29,11 @@ function judgeCell(cell: OwnerCell, categories: string[]): OwnerCell {
 }
 
 /**
- * The owner report judged with the site's answers (`classKey → category`). Pure: never mutates `report`, and judging
+ * The owner report judged with the site's answers (`classKey → category set`). Pure: never mutates `report`, and judging
  * a report that already carries these answers changes nothing. Tools without an answer stay on `judge.base`.
  */
-export function judgeOwnerReport(report: OwnerReport, answers: Record<string, string>): OwnerReport {
-  const applied: Record<string, string> = {};
+export function judgeOwnerReport(report: OwnerReport, answers: Record<string, string[]>): OwnerReport {
+  const applied: Record<string, string[]> = {};
   const tools = report.matrix.tools.map((t): OwnerToolRow => {
     const a = answers[t.classKey];
     const bare: OwnerToolRow = { ...t };
@@ -41,18 +41,20 @@ export function judgeOwnerReport(report: OwnerReport, answers: Record<string, st
     let categories: string[];
     let purpose: string;
     let answer: OwnerToolRow['answer'];
-    if (a && a !== 'unknown') {
-      applied[t.classKey] = a;
-      if (NOT_REQUIRED.includes(a) && t.judge.trackerReason) {
+    const cats = a?.filter((c) => c && c !== 'unknown');
+    if (cats?.length) {
+      applied[t.classKey] = cats;
+      // Refused only when EVERY category the owner chose is "no consent needed" (as purposeScopeOf): necessary + advertising is judged as given.
+      if (cats.every((c) => NOT_REQUIRED.has(c)) && t.judge.trackerReason) {
         // A tracker is never necessary: it keeps the knowledge base's purpose, or — unknown — the strictest, advertising.
         const base = t.judge.base;
         categories = base.length ? base : ['advertising'];
         purpose = base.length ? categoryLabel(base) : 'Needs consent (behaves like a tracker)';
-        answer = { categories: [a], applied: false, reason: t.judge.trackerReason };
+        answer = { categories: cats, applied: false, reason: t.judge.trackerReason };
       } else {
-        categories = [a];
-        purpose = categoryLabel([a]);
-        answer = { categories: [a], applied: true };
+        categories = cats;
+        purpose = categoryLabel(cats);
+        answer = { categories: cats, applied: true };
       }
     } else {
       categories = t.judge.base;

@@ -21,7 +21,7 @@ import {
 import { reconcileRecord } from '../../consent-compatibility.js';
 import { applyWorkspaceToRecord, refuseNecessaryTrackers } from '../../consent-generator.js';
 import { tracking } from '../../rules/index.js';
-import { buildKnowledgeBase, type KnowledgeBase, type KnowledgeEntryInput } from '../../registry/index.js';
+import { buildKnowledgeBase, type KnowledgeBase, type KnowledgeEntryInput, type PartyCategory } from '../../registry/index.js';
 import { KbStore, defaultKbDir } from '../../research/index.js';
 import { readWorkspaceFile, readConsentRunDir, findPreviousConsentRun, type PreviousRun } from '../previous-run.js';
 import { buildOwnerReport, OWNER_REPORT_FILE } from '../../report/owner-report.js';
@@ -127,7 +127,31 @@ export async function cmdReport(argv: string[], loadConfig?: LoadConfig): Promis
     } catch (err) {
       process.stderr.write(`knowledge-base store ${kbStore.dir}: ${err instanceof Error ? err.message : String(err)} — using the seed entries only\n`);
     }
-    const ownerKb: KnowledgeBase = buildKnowledgeBase({ extra: stored });
+    // The scan's base knowledge base is seed + store + the property's config entries file + its overrides (cmdConsent). A re-render
+    // builds it the same way, so `judge.base` here equals the scan's; no reachable config leaves those two out.
+    const cwd = values.cwd ?? process.cwd();
+    let extra: KnowledgeEntryInput[] = [];
+    let overrides: Array<{ id: string; categories?: PartyCategory[] }> | undefined;
+    if (loadConfig) {
+      let cc: Awaited<ReturnType<LoadConfig>>['config']['properties'][number]['consent'];
+      try {
+        const { config } = await loadConfig({}, values.cwd);
+        cc = (config.properties.find((p) => p.id === run.property) ?? config.properties[0])?.consent;
+      } catch {
+        /* no config reachable (a service re-render runs without one) — the seed and the store only */
+      }
+      if (cc?.knowledgeBase?.entries) {
+        const file = path.resolve(cwd, cc.knowledgeBase.entries);
+        try {
+          extra = JSON.parse(fs.readFileSync(file, 'utf8')) as KnowledgeEntryInput[];
+        } catch (err) {
+          process.stderr.write(`could not read knowledge-base entries ${file}: ${err instanceof Error ? err.message : String(err)} — using the seed and the store only\n`);
+        }
+      }
+      overrides = cc?.knowledgeBase?.overrides?.map((o) => ({ ...o, categories: o.categories as PartyCategory[] | undefined }));
+    }
+    const extraIds = new Set(extra.map((e) => e.id));
+    const ownerKb: KnowledgeBase = buildKnowledgeBase({ extra: [...extra, ...stored.filter((e) => !extraIds.has(e.id))], overrides });
     if (workspace) {
       // The site's classifications as of now, applied to the saved record the
       // way the generator applies them (consent-config), so the report, the

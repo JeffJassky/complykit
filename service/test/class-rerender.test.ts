@@ -50,6 +50,7 @@ describe('PATCH /api/sites/:domain/workspace with a class: key', () => {
     expect(calls(s, older)).toBe(o);
     const r = await get(s, newest);
     expect(r.report!.matrix.tools[1]).toMatchObject({ classified: true, answer: { applied: true } });
+    expect(r.report!.answers).toEqual({ 'class:fake-widget': ['analytics'] }); // category SETS (plans/report-truth.md, review round 3)
     expect(r.todo.tasks[0].status).toBe('verified');
     // The re-render's own writes do not make the fresh report look stale: reading it starts nothing.
     await get(s, newest);
@@ -138,6 +139,7 @@ describe('classifications written while a re-render runs', () => {
     expect(r.updating).toBe(false);
     expect(r.updateError).toBeUndefined();
     expect(r.report!.matrix.tools[1].answer).toMatchObject({ categories: ['necessary'], applied: false }); // B ("necessary", refused), not A
+    expect(r.report!.answers).toEqual({ 'class:fake-widget': ['necessary'] });
     expect(calls(s, id)).toBe(n + 2); // one running, one queued, never more
   });
 

@@ -164,6 +164,11 @@ describe('D. browser-safe', () => {
     const imports = src.split('\n').filter((l) => /^import\s/.test(l) && !/^import type\s/.test(l));
     expect(imports.every((l) => l.includes("'./cookie-purpose.js'")), imports.join('\n')).toBe(true);
   });
+  it('cookie-purpose has no value imports (the browser bundle must not pull in src/registry)', () => {
+    const src = fs.readFileSync(new URL('../src/report/cookie-purpose.ts', import.meta.url), 'utf8');
+    const imports = src.split('\n').filter((l) => /^(import|export\s.*\sfrom)\s/.test(l) && !/^(import|export)\s+type\s/.test(l));
+    expect(imports, imports.join('\n')).toEqual([]);
+  });
   it('categoryLabel lives in cookie-purpose and covers the four buckets and the legacy ids', () => {
     expect(categoryLabel(['necessary'])).toBe('Necessary');
     expect(categoryLabel(['functional'])).toBe('Functional');

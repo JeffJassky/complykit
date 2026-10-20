@@ -148,6 +148,6 @@ export interface OwnerReport {
   todo?: { tasks: RemediationTask[]; configAt?: string; runId?: string };
   /** Every location of the scan, in plan order. Absent on reports written before it existed. */
   locations?: OwnerLocationSummary[];
-  /** The answers (classKey → category) this report is judged with: the site's classifications of its tools. */
-  answers: Record<string, string>;
+  /** The answers (classKey → category set) this report is judged with: the site's classifications of its tools, all their categories. */
+  answers: Record<string, string[]>;
 }

@@ -1,16 +1,26 @@
 import type { JobReportResponse, OwnerReport } from '../../shared/api';
 // The browser runs the SAME judgement as the server (plans/report-truth.md D): core's owner-judge.ts imports only
-// cookie-purpose.ts, so the bundle must not pull in src/registry (checked in the build, see ReportPage.test.tsx).
+// cookie-purpose.ts, so the bundle must not pull in src/registry. That is enforced by the core test
+// test/owner-judge.test.ts "browser-safe" (import lines of owner-judge.ts and cookie-purpose.ts), not by a ReportPage test.
 import { judgeOwnerReport } from '../../../../src/report/owner-judge';
 import type { OwnerReport as CoreOwnerReport } from '../../../../src/report/owner-types';
 
 export { categoryLabel } from '../../../../src/report/cookie-purpose';
 
-/** Answers the owner has given on this page that the served report may not hold yet: classKey → category. */
-export type PendingAnswers = Record<string, string>;
+/** Answers the owner has given on this page that the served report may not hold yet: classKey → category set. */
+export type PendingAnswers = Record<string, string[]>;
 
 /** Reports saved before the judge fields existed cannot be re-judged; they are shown as served. */
-const judgeable = (r: OwnerReport): boolean => r.matrix.tools.every((t) => !!t.judge);
+export const judgeable = (r: OwnerReport): boolean => r.matrix.tools.every((t) => !!t.judge);
+/** One tool row of such a report (the mirror types `judge` as always present; a saved legacy report has none). */
+export const toolJudgeable = (t: OwnerReport['matrix']['tools'][number]): boolean => !!t.judge;
+
+/** Same set of categories, any order. */
+export function sameCategories(a: readonly string[], b: readonly string[]): boolean {
+  const sa = new Set(a);
+  const sb = new Set(b);
+  return sa.size === sb.size && [...sa].every((c) => sb.has(c));
+}
 
 /** One report judged with its own answers plus the pending ones — always, so the page shows the judge's verdicts and never a
  *  server-written cell the judge would not produce. Pure; the input is never mutated. */
@@ -41,5 +51,5 @@ export function shownData(data: JobReportResponse, pending: PendingAnswers | und
 export function answersAfter(pending: PendingAnswers, data: JobReportResponse): PendingAnswers {
   if (!data.report || data.updating) return pending;
   const served = data.report.answers ?? {};
-  return Object.fromEntries(Object.entries(pending).filter(([k, v]) => served[k] !== v));
+  return Object.fromEntries(Object.entries(pending).filter(([k, v]) => !(served[k] && sameCategories(served[k], v))));
 }
