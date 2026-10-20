@@ -275,3 +275,25 @@ refused text from the judged row).
 
 Non-goals: the change list / to-do tasks stay server-derived; the technical HTML
 report unchanged.
+
+## Review round 3 (Fable, 2026-10-20) — amendments to D
+
+1. **Answers are category SETS.** `OwnerReport.answers: Record<classKey, string[]>` (core,
+   service mirror, `ui.answers`); `buildOwnerReport` stores the site classification's full
+   `categories` (the technical report's workbench adds "also used for" categories, and the
+   matrix judges on all of them — the first-only owner view was a false green: functional +
+   advertising read "may run" in California). Judge: `categories = a`; refused only when
+   `a.every(c => NOT_REQUIRED.has(c))` (as `purposeScopeOf`); `answer.categories = a`;
+   purpose = `categoryLabel(a)`. Client sets `[purpose]`; `answersAfter` compares sets
+   (same members, any order).
+2. `NOT_REQUIRED` in the judge drops `consent`, matching `refuseNecessaryTrackers`.
+3. `cmdReport` (src/cli/commands/report.ts) builds the base KB the same way `cmdConsent`
+   does (config `knowledgeBase.entries` + `overrides` + store), so a re-render's
+   `judge.base` equals the scan's.
+4. Legacy reports (no `judge` fields): while `ui.answers[k]` is pending and the report is
+   not judgeable, the tool row shows "Saved — the report updates shortly".
+5. `DecisionTodo` for a tool classified without an answer (`tool.answer` absent, tool
+   classified by the knowledge base): "complykit knows it: <purpose>", never "Your answer".
+6. `shown.ts` comment: the registry-free bundle is enforced by `test/owner-judge.test.ts`
+   "browser-safe", not by a ReportPage test; add the same import-line check for
+   `cookie-purpose.ts` (it must have no value imports).

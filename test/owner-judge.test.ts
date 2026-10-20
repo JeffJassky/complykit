@@ -48,13 +48,15 @@ const colIndex = (r: OwnerReport, id: string) => r.matrix.columns.findIndex((c) 
 const cell = (r: OwnerReport, label: string, col: string) => toolOf(r, label).cells[colIndex(r, col)];
 
 /** The evaluation as the pipeline leaves it after the site answered: categories applied, then the tracker guard. */
-const answeredEv = (answers: Record<string, string>) => {
-  const inv = [pay, reviews, ga4].map((p) => (answers[p.partyId] ? { ...p, categories: [answers[p.partyId]] } : p));
-  const ev = evaluation({ inventory: inv, behaviorObservations: observations, siteWorkspace: { appliedAt: 'now', classifications: Object.entries(answers).map(([partyId, c]) => ({ key: keyOf(inv.find((p) => p.partyId === partyId)!.label), kind: 'tool', partyId, domain: inv.find((p) => p.partyId === partyId)!.domain, categories: [c] })), doneTasks: [] } });
+const answeredEv = (answers: Record<string, string | string[]>) => {
+  const cats = (c: string | string[]) => (Array.isArray(c) ? c : [c]);
+  const inv = [pay, reviews, ga4].map((p) => (answers[p.partyId] ? { ...p, categories: cats(answers[p.partyId]) } : p));
+  const ev = evaluation({ inventory: inv, behaviorObservations: observations, siteWorkspace: { appliedAt: 'now', classifications: Object.entries(answers).map(([partyId, c]) => ({ key: keyOf(inv.find((p) => p.partyId === partyId)!.label), kind: 'tool', partyId, domain: inv.find((p) => p.partyId === partyId)!.domain, categories: cats(c) })), doneTasks: [] } });
   refuseNecessaryTrackers(ev, DEFAULT_KB);
   return ev;
 };
-const answersByKey = (answers: Record<string, string>) => Object.fromEntries(Object.entries(answers).map(([partyId, c]) => [keyOf([pay, reviews, ga4].find((p) => p.partyId === partyId)!.label), c]));
+/** classKey → the answer's categories (a set: the technical report's workbench can add "also used for" categories). */
+const answersByKey = (answers: Record<string, string | string[]>) => Object.fromEntries(Object.entries(answers).map(([partyId, c]) => [keyOf([pay, reviews, ga4].find((p) => p.partyId === partyId)!.label), Array.isArray(c) ? c : [c]]));
 /** What the browser shows versus what the server renders — the part that must never differ. */
 const judged = (r: OwnerReport) => ({ counts: r.matrix.counts, decisions: r.decisions.map((d) => d.classKey), tools: r.matrix.tools.map((t) => ({ label: t.label, purpose: t.purpose, categories: t.categories, classified: t.classified, answer: t.answer, cells: t.cells.map((c) => ({ state: c.state, expected: c.expected, reason: c.reason, observed: c.observed })), cookies: t.cookies.map((k) => ({ name: k.name, purpose: k.purpose, classified: k.classified, cells: k.cells.map((c) => c.state) })) })) });
 
@@ -72,7 +74,9 @@ describe('D. the owner report ships its facts', () => {
 });
 
 describe('D. judgeOwnerReport is the server’s judgement, run anywhere', () => {
-  const cases: Array<[string, Record<string, string>]> = [
+  const cases: Array<[string, Record<string, string | string[]>]> = [
+    ['a two-category answer from the technical report (functional, also advertising)', { 'unknown:reviews.example': ['functional', 'advertising'] }],
+    ['"necessary, also advertising" on an unknown tracker (not refused: the set is not necessary-only)', { 'unknown:paylater.example': ['necessary', 'advertising'] }],
     ['a refused "necessary" on an unknown tracker', { 'unknown:paylater.example': 'necessary' }],
     ['an applied "functional" on an unknown widget', { 'unknown:reviews.example': 'functional' }],
     ['a legacy fine-grained answer', { 'unknown:reviews.example': 'reviews' }],
@@ -92,7 +96,7 @@ describe('D. judgeOwnerReport is the server’s judgement, run anywhere', () => 
 
   it('is pure and ignores answers for tools it does not have', () => {
     const before = JSON.stringify(base);
-    const out = judgeOwnerReport(base, { 'class:nope': 'advertising', [keyOf('reviews.example')]: 'analytics' });
+    const out = judgeOwnerReport(base, { 'class:nope': ['advertising'], [keyOf('reviews.example')]: ['analytics'] });
     expect(JSON.stringify(base)).toBe(before);
     expect(out).not.toBe(base);
     expect(toolOf(out, 'reviews.example').purpose).toBe('Analytics');
@@ -104,6 +108,7 @@ describe('D. judgeOwnerReport is the server’s judgement, run anywhere', () => 
     // Refused unknown tracker: advertising, with the reason; red before a choice in Germany and California.
     const p = toolOf(out, 'paylater.example');
     expect(p.answer).toEqual({ categories: ['necessary'], applied: false, reason: expect.stringMatching(/behaved like a tracker/) });
+    expect(out.answers[keyOf('paylater.example')]).toEqual(['necessary']);
     expect(p.purpose).toBe('Needs consent (behaves like a tracker)');
     expect(p.categories).toEqual(['advertising']);
     expect(cell(out, 'paylater.example', 'de:do-nothing').state).toBe('mismatch');
@@ -131,6 +136,15 @@ describe('D. judgeOwnerReport is the server’s judgement, run anywhere', () => 
     expect(out.decisions).toEqual([]);
     expect(out.matrix.counts.needsDecision).toBe(0);
     expect(base.matrix.counts.needsDecision).toBeGreaterThan(0);
+  });
+
+  it('a two-category answer is judged on the whole set, as the technical report is: functional + advertising is held in a wiretap state', () => {
+    const out = judgeOwnerReport(base, answersByKey({ 'unknown:reviews.example': ['functional', 'advertising'] }));
+    const r = toolOf(out, 'reviews.example');
+    expect(r.answer).toEqual({ categories: ['functional', 'advertising'], applied: true });
+    expect(r.purpose).toBe('Functional · Advertising');
+    expect(cell(out, 'reviews.example', 'us-ca:do-nothing').state).toBe('mismatch');
+    expect(cell(out, 'reviews.example', 'us-ca:accept').state).toBe('ok');
   });
 
   it('an unanswered tool stays on its base judgement, with its cookie waiting on it', () => {
