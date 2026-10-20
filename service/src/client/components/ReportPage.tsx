@@ -15,6 +15,7 @@ import { copyText, useReviewer } from '../lib/useKb';
 import { useJobReport } from '../lib/useJobReport';
 import { reportHref } from '../lib/useHashView';
 import { useNow } from '../lib/useNow';
+import { answersAfter, categoryLabel, shownData } from '../lib/shown';
 
 // The report page (plans/simple-report.md): one scan, four parts, in order —
 // scan status (only while scanning), consent banner, the matrix, the to-do
@@ -22,21 +23,16 @@ import { useNow } from '../lib/useNow';
 // Nothing else. ReportPageView is pure (render tests); ReportPage wires it.
 
 /**
- * What an owner can say a tool the scan does not know DOES (workspace class: entries).
- * Facts, not verdicts: complykit maps each to a category and decides what needs consent.
+ * What an owner can say a tool the scan does not know is for: the law's four categories (plans/report-truth.md D3).
+ * Facts, not verdicts: complykit decides what needs consent. Older stored ids (payments, chat, embed, reviews, cdn,
+ * captcha, ...) keep working and are labelled by `categoryLabel`.
  */
 export const PURPOSES: Array<{ id: string; label: string; help: string }> = [
-  { id: 'payments', label: 'Payments or checkout', help: 'Pay-later, card or wallet buttons (Affirm, PayPal)' },
-  { id: 'necessary', label: 'Security, login or cart', help: 'The site breaks without it' },
-  { id: 'chat', label: 'Chat or support', help: 'A chat widget or help desk' },
-  { id: 'embed', label: 'Video, maps or other embedded content', help: 'Content from another service shown on a page' },
-  { id: 'reviews', label: 'Reviews', help: 'Product or business reviews shown on the site' },
-  { id: 'functional', label: 'Another feature visitors use', help: 'Saved choices, wishlists' },
-  { id: 'analytics', label: 'Measures visits', help: 'Counts visitors and what they do' },
-  { id: 'advertising', label: 'Ads or retargeting', help: 'Ads, retargeting, conversion tracking' },
+  { id: 'necessary', label: 'Necessary', help: 'The site breaks without it: login, cart, security, payments' },
+  { id: 'functional', label: 'Functional', help: 'A feature or preference: chat, video, reviews, saved choices' },
+  { id: 'analytics', label: 'Analytics', help: 'Measures visits and what people do' },
+  { id: 'advertising', label: 'Advertising', help: 'Ads, retargeting, marketing, conversion tracking' },
 ];
-// Old stored values (before the fact list) keep a readable name; unknown ids show as stored.
-const PURPOSE_LABEL: Record<string, string> = { ...Object.fromEntries(PURPOSES.map((p) => [p.id, p.label])), marketing: 'Advertising', personalization: 'Functional', other: 'Other' };
 
 const CELL_ICON: Record<OwnerCell['state'], string> = { pending: '', ok: '✓', mismatch: '✕', 'needs-decision': '?', 'not-checked': '–', 'not-applicable': '∅', blocked: '⊘' };
 const CELL_TEXT: Record<OwnerCell['state'], string> = {
@@ -68,8 +64,8 @@ export interface ReportActions {
 }
 
 export interface ReportUiState {
-  /** Classifications saved here before the next report arrives: classKey → purpose. */
-  saved?: Record<string, string>;
+  /** Answers given on this page that the served report may not hold yet: classKey → category. The page judges with them at once. */
+  answers?: Record<string, string>;
   /** classKey being saved. */
   saving?: string;
   verifying?: string;
@@ -311,6 +307,7 @@ function CellDetail({ cell, row, column }: { cell: OwnerCell; row: string; colum
   );
 }
 
+/** `data` is what the page SHOWS: already judged with the owner's answers (see ReportPageView). */
 export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportResponse; ui?: ReportUiState; actions?: ReportActions }) {
   const report = data.report;
   const scanning = data.job.status === 'queued' || data.job.status === 'running';
@@ -338,7 +335,6 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
   const gaps = columns.filter((c) => GAP_ICON[c.state] !== undefined);
   const unverified = report.scan.location && !report.scan.location.verified;
   const colName = (i: number) => columns[i].label + (columns[i].locationLabel ? ` (${columns[i].locationLabel})` : '');
-  const purposeOf = (t: OwnerToolRow) => (ui.saved?.[t.classKey] && !t.classified ? `${PURPOSE_LABEL[ui.saved[t.classKey]] ?? ui.saved[t.classKey]} (saved)` : t.purpose);
   const span = columns.length + 1;
   return (
     <section className="rp-section" aria-labelledby="rp-matrix-title" data-testid="matrix">
@@ -399,10 +395,10 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
                 </tr>
               ) : null}
               {tools.map((t) => {
-                const decide = !t.classified && !ui.saved?.[t.classKey];
+                const decide = !t.classified;
                 const isOpen = expanded.has(t.id);
                 const rows = [
-                  { key: t.id, name: t.label, sub: purposeOf(t), cells: t.cells, tool: true, unclassified: !t.classified },
+                  { key: t.id, name: t.label, sub: t.purpose, cells: t.cells, tool: true, unclassified: !t.classified },
                   ...(isOpen ? t.cookies : []).map((k) => ({ key: k.id, name: k.name, sub: k.kind === 'cookie' ? 'cookie' : `${k.kind} storage`, cells: k.cells, tool: false, unclassified: !k.classified })),
                 ];
                 return (
@@ -419,7 +415,7 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
                             <button type="button" className="rp-row-label" aria-expanded={open?.row === r.key && open.col === undefined} onClick={() => toggle(r.key)}>
                               {r.name}
                             </button>
-                            <small data-unclassified={r.unclassified && !ui.saved?.[t.classKey] ? 'true' : undefined}>{r.sub}</small>
+                            <small data-unclassified={r.unclassified ? 'true' : undefined}>{r.sub}</small>
                             {r.tool && activityLine(t.activity) ? (
                               <small className="rp-activity" data-stores={t.activity!.cookies + t.activity!.storage > 0 ? 'true' : 'false'}>
                                 {activityLine(t.activity)}
@@ -492,10 +488,17 @@ export function readyForFinalScan(tasks: RemediationTask[]): boolean {
   return req.length > 0 && req.every(finishedTask);
 }
 
-function DecisionTodo({ label, classKey, decided, refused, answered, ui, actions, unblocks, tool }: { label: string; classKey: string; decided?: string; refused?: string; answered?: string; ui: ReportUiState; actions: ReportActions; unblocks?: string[]; tool?: OwnerToolRow }) {
+/** Whether a decision is made: the shown tool row says so; a decision for a tool the report does not list follows its own status. */
+function decisionDone(d: RemediationTask, report: OwnerReport | null): boolean {
+  const tool = d.classKey ? report?.matrix.tools.find((x) => x.classKey === d.classKey) : undefined;
+  return tool ? tool.classified : d.status === 'verified';
+}
+
+/** A decision. Done, refused and answered all come from `tool`, the shown (judged) row, never from the server's task. */
+function DecisionTodo({ label, classKey, taskDone, ui, actions, unblocks, tool }: { label: string; classKey: string; taskDone?: boolean; ui: ReportUiState; actions: ReportActions; unblocks?: string[]; tool?: OwnerToolRow }) {
   const [changing, setChanging] = useState(false);
-  const saved = ui.saved?.[classKey];
-  const done = !!(decided || saved);
+  const done = tool ? tool.classified : !!taskDone;
+  const refused = tool?.answer && !tool.answer.applied ? (tool.answer.reason ?? '') : undefined;
   return (
     <li className="rp-todo" data-kind="classify" data-status={done ? 'verified' : 'todo'} data-refused={refused !== undefined ? 'true' : undefined}>
       <div className="rp-todo-head">
@@ -508,9 +511,15 @@ function DecisionTodo({ label, classKey, decided, refused, answered, ui, actions
         <p>
           {refused !== undefined ? (
             <>
-              Answered: <strong>{PURPOSE_LABEL[saved ?? answered ?? ''] ?? saved ?? answered ?? 'your answer'}</strong>. complykit treats it as needing consent: {refused.replace(/\.$/, '')}.{' '}
+              Answered: <strong>{categoryLabel(tool?.answer?.categories ?? [])}</strong>. complykit treats it as needing consent: {refused.replace(/\.$/, '')}.{' '}
             </>
-          ) : saved ? <>Saved as <strong>{PURPOSE_LABEL[saved] ?? saved}</strong>. </> : decided && decided !== 'saved' ? <>Your answer: <strong>{decided}</strong>. </> : <>Your answer is saved for this site. </>}
+          ) : tool?.answer ? (
+            <>Your answer: <strong>{categoryLabel(tool.answer.categories)}</strong>. </>
+          ) : tool ? (
+            <>Your answer: <strong>{tool.purpose}</strong>. </>
+          ) : (
+            <>Your answer is saved for this site. </>
+          )}
           <button type="button" className="btn btn-sm btn-ghost" onClick={() => setChanging(true)}>
             Change
           </button>
@@ -552,7 +561,7 @@ function SnippetBlock({ text, label, onCopy }: { text: string; label: string; on
 }
 
 function ChangeTodo({ task, tasks, data, ui, actions, current }: { task: RemediationTask; tasks: RemediationTask[]; data: JobReportResponse; ui: ReportUiState; actions: ReportActions; current?: boolean }) {
-  const waiting = openDecisions(task, tasks).filter((d) => !ui.saved?.[d.classKey ?? '']);
+  const waiting = openDecisions(task, tasks).filter((d) => !decisionDone(d, data.report));
   const verifying = ui.verifying === task.id;
   const cs = data.consentSettings;
   const companion = task.kind === 'install' && cs?.settings.mode === 'companion';
@@ -634,6 +643,7 @@ function ChangeTodo({ task, tasks, data, ui, actions, current }: { task: Remedia
   );
 }
 
+/** `data` is what the page SHOWS: already judged with the owner's answers (see ReportPageView). */
 export function TodoList({ data, ui = {}, actions = {} }: { data: JobReportResponse; ui?: ReportUiState; actions?: ReportActions }) {
   const { todo, report, job } = data;
   const tasks = todo.state === 'ready' ? todo.tasks : [];
@@ -642,18 +652,18 @@ export function TodoList({ data, ui = {}, actions = {} }: { data: JobReportRespo
   // Before the checklist exists: the decisions the scan has found so far are the first items.
   const liveDecisions = todo.state === 'ready' ? [] : (report?.decisions ?? []);
   const toolFor = (classKey?: string) => (classKey ? report?.matrix.tools.find((x) => x.classKey === classKey) : undefined);
-  const isDone = (t: RemediationTask) => finishedTask(t) || (t.kind === 'classify' && !!ui.saved?.[t.classKey ?? '']);
+  const isDone = (t: RemediationTask) => (t.kind === 'classify' && t.classKey ? decisionDone(t, report) : finishedTask(t));
   const doneCount = required.filter(isDone).length;
   const canRescan = todo.state === 'ready' && required.length > 0 && required.every(isDone);
   const scanning = job.status === 'queued' || job.status === 'running';
   // The change to do next shows its steps open; the rest stay folded.
-  const nextId = required.find((t) => t.kind !== 'classify' && !finishedTask(t) && !openDecisions(t, tasks).some((d) => !ui.saved?.[d.classKey ?? '']))?.id;
+  const nextId = required.find((t) => t.kind !== 'classify' && !finishedTask(t) && !openDecisions(t, tasks).some((d) => !decisionDone(d, report)))?.id;
   // Done items (required or optional) move to a folded "Completed" list at the bottom.
   const optionalOpen = optional.filter((t) => !isDone(t));
   const completed = tasks.filter(isDone);
   const item = (t: RemediationTask) =>
     t.kind === 'classify' && t.classKey ? (
-      <DecisionTodo key={t.id} label={t.tools[0] ?? t.title} classKey={t.classKey} decided={t.status === 'verified' ? (report?.matrix.tools.find((x) => x.classKey === t.classKey && x.classified)?.purpose ?? 'saved') : undefined} refused={t.refused} answered={t.answered} ui={ui} actions={actions} unblocks={tasks.filter((x) => x.waitingOn?.includes(t.id)).map((x) => x.title)} tool={toolFor(t.classKey)} />
+      <DecisionTodo key={t.id} label={t.tools[0] ?? t.title} classKey={t.classKey} taskDone={t.status === 'verified'} ui={ui} actions={actions} unblocks={tasks.filter((x) => x.waitingOn?.includes(t.id)).map((x) => x.title)} tool={toolFor(t.classKey)} />
     ) : (
       <ChangeTodo key={t.id} task={t} tasks={tasks} data={data} ui={ui} actions={actions} current={t.id === nextId} />
     );
@@ -1063,7 +1073,10 @@ function SavePdfButton({ host, at }: { host: string; at?: string }) {
   );
 }
 
-export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: JobReportResponse; now: number; ui?: ReportUiState; actions?: ReportActions }) {
+export function ReportPageView({ data: served, now, ui = {}, actions = {} }: { data: JobReportResponse; now: number; ui?: ReportUiState; actions?: ReportActions }) {
+  // Everything below reads `data`, the report as JUDGED with the owner's answers (the served ones plus those not served
+  // back yet), so a click changes the grid, the score and the to-do list at once, before any server round trip.
+  const data = useMemo(() => shownData(served, ui.answers), [served, ui.answers]);
   const { job } = data;
   const consent = job.checks.includes('consent');
   return (
@@ -1145,20 +1158,6 @@ export function ReportPageView({ data, now, ui = {}, actions = {} }: { data: Job
 }
 
 /**
- * The "(saved)" markers still owed: one goes once a report that answers its tool has arrived AND no report is still
- * being made (the report before this answer may already hold an older answer for the tool).
- */
-export function savedAfter(saved: Record<string, string>, data: JobReportResponse): Record<string, string> {
-  if (!data.report || data.updating) return saved;
-  // The report must hold THIS answer: a tool classified before (a "Change") still shows the old one until its re-render lands.
-  const tools = new Map(data.report.matrix.tools.map((t) => [t.classKey, t]));
-  return Object.fromEntries(Object.entries(saved).filter(([k, v]) => {
-    const t = tools.get(k);
-    return !(t && (t.answer ? t.answer.categories.includes(v) : t.classified));
-  }));
-}
-
-/**
  * Save a classification, then read the report. The server re-renders a finished scan's report itself, and the page
  * polls while it updates. Failing to read afterwards is not a failed classification (the answer is saved): the next
  * poll picks the report up.
@@ -1189,12 +1188,12 @@ export function ReportPage({ jobId }: { jobId: string }) {
   const dataRef = useRef(data);
   dataRef.current = data;
 
-  // A fresh report that classifies the tool replaces the local "saved" marker.
+  // A fresh report that holds an answer (and is not being re-made) replaces the page's own copy of it.
   useEffect(() => {
-    if (!data || !ui.saved) return;
-    const left = savedAfter(ui.saved, data);
-    if (Object.keys(left).length !== Object.keys(ui.saved).length) setUi((u) => ({ ...u, saved: left }));
-  }, [data, ui.saved]);
+    if (!data || !ui.answers) return;
+    const left = answersAfter(ui.answers, data);
+    if (Object.keys(left).length !== Object.keys(ui.answers).length) setUi((u) => ({ ...u, answers: answersAfter(u.answers ?? {}, data) }));
+  }, [data, ui.answers]);
 
   const actions: ReportActions = {
     onCopy: copyText,
@@ -1226,14 +1225,15 @@ export function ReportPage({ jobId }: { jobId: string }) {
     onClassify: async (classKey, purpose) => {
       const d = dataRef.current;
       if (!d) return;
-      clear(classKey);
-      setUi((u) => ({ ...u, saving: classKey }));
+      // The page judges with the answer at once (no await before this); the PATCH and the refresh follow.
+      setUi((u) => ({ ...u, answers: { ...u.answers, [classKey]: purpose }, saving: classKey, errors: Object.fromEntries(Object.entries(u.errors ?? {}).filter(([k]) => k !== classKey)) }));
       const out = await saveClassification(
         () => api.patchWorkspace(d.domain, { ...(by ? { by } : {}), entries: { [classKey]: { value: { category: purpose, categoryChosen: true, source: 'report-page' } } } }),
         refresh,
       );
-      if (out.saved) setUi((u) => ({ ...u, saved: { ...u.saved, [classKey]: purpose } }));
-      else err(classKey, out.error);
+      // A failed save was never an answer: the page goes back to what the server holds.
+      if (!out.saved) setUi((u) => ({ ...u, answers: Object.fromEntries(Object.entries(u.answers ?? {}).filter(([k, v]) => !(k === classKey && v === purpose))) }));
+      if (!out.saved) err(classKey, out.error);
       setUi((u) => ({ ...u, saving: undefined }));
     },
     onVerify: async (task) => {

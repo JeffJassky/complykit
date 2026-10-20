@@ -1,13 +1,14 @@
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import type { JobReportResponse, JobSummary, LawScanProgress, OwnerReport, RemediationTask, SiteSummary } from '../../shared/api';
+import type { JobReportResponse, JobSummary, LawScanProgress, OwnerCell, OwnerReport, RemediationTask, SiteSummary } from '../../shared/api';
 import { LAWS, type LawId } from '../../shared/laws';
 import { reportSeverity, scoreReport } from '../../shared/score';
 import { parseHash, reportHref } from '../lib/useHashView';
 import { isMoving } from '../lib/useJobReport';
+import { answersAfter, shownData } from '../lib/shown';
 import { HomeView, siteRows, siteStatus } from './Home';
-import { BannerLine, LawTabsView, Matrix, Overview, ReportPageView, pagesVisited, pdfTitle, ScanHistory, ScanStatus, TodoList, activityLine, readyForFinalScan, savedAfter, saveClassification } from './ReportPage';
+import { BannerLine, LawTabsView, Matrix, Overview, ReportPageView, pagesVisited, pdfTitle, ScanHistory, ScanStatus, TodoList, activityLine, readyForFinalScan, saveClassification, PURPOSES } from './ReportPage';
 
 // The report page (plans/simple-report.md), rendered per section and state.
 
@@ -36,12 +37,13 @@ function owner(over: Partial<OwnerReport> = {}): OwnerReport {
         { id: 'local:gpc', location: 'local', scenario: 'gpc', label: 'Privacy signal (GPC)', state: 'pending' },
       ],
       tools: [
-        { id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', cells: [bad, pending, pending], cookies: [{ id: 'c1', name: '_fbp', kind: 'cookie', purpose: 'Advertising', classified: true, cells: [bad, pending, pending] }] },
-        { id: 'tool:w', partyId: 'unknown:widgets.test', label: 'widgets.test', domain: 'widgets.test', purpose: 'Unclassified', categories: [], classified: false, recognized: false, classKey: 'class:w', cells: [ask, pending, pending], cookies: [] },
+        { id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', judge: { base: ['advertising'] }, cells: [bad, pending, pending], cookies: [{ id: 'c1', name: '_fbp', kind: 'cookie', purpose: 'Advertising', classified: true, judge: { name: [], site: [] }, cells: [bad, pending, pending] }] },
+        { id: 'tool:w', partyId: 'unknown:widgets.test', label: 'widgets.test', domain: 'widgets.test', purpose: 'Unclassified', categories: [], classified: false, recognized: false, classKey: 'class:w', judge: { base: [] }, cells: [ask, pending, pending], cookies: [] },
       ],
       counts: { ok: 0, mismatch: 2, needsDecision: 1, pending: 6, notChecked: 0, notApplicable: 0, blocked: 0 },
     },
     decisions: [{ partyId: 'unknown:widgets.test', label: 'widgets.test', domain: 'widgets.test', classKey: 'class:w' }],
+    answers: {},
     ...over,
   };
 }
@@ -60,7 +62,7 @@ const finalOwner = owner({
       { id: 'local:reject', location: 'local', scenario: 'reject', label: 'After rejection', state: 'not-checked', note: 'There was no consent banner, so this choice couldn’t be made.' },
       { id: 'local:gpc', location: 'local', scenario: 'gpc', label: 'Privacy signal (GPC)', state: 'done' },
     ],
-    tools: [{ id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', cells: [bad, gap, ok], cookies: [] }],
+    tools: [{ id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', judge: { base: ['advertising'] }, cells: [bad, gap, ok], cookies: [] }],
     counts: { ok: 1, mismatch: 1, needsDecision: 0, pending: 0, notChecked: 1, notApplicable: 0, blocked: 0 },
   },
   decisions: [],
@@ -70,6 +72,34 @@ const done = (over: Partial<JobReportResponse> = {}): JobReportResponse => ({
   todo: { state: 'ready', tasks: [decision, install, task('meta')], progress: { verified: 0, required: 3, doneUnverified: 0, failed: 0 }, fromThisRun: true },
   updating: false, technicalReportUrl: '/reports/job1/consent/.comply/runs/r/consent-report.html', hostedScriptUrl: 'https://ck.example-host.test/s/shop.example.js', history: [], ...over,
 });
+
+// A finished report with the facts a verdict needs (what the scan saw in each cell), so the browser can re-judge it.
+const fact = (scenario: string, hasActivity: boolean) => ({ scenario, hasActivity, limitedOnly: false, captureGap: false });
+const factual = (cell: OwnerCell, scenario: string, hasActivity: boolean): OwnerCell => ({ ...cell, facts: fact(scenario, hasActivity) });
+const ASKED = { state: 'needs-decision' as const, reason: 'Classify the purpose before an expectation can be checked.' };
+const TRACKER = 'sends a stored id to a third party';
+/** meta (advertising, known), widgets (unknown, not a tracker), paylater (unknown, behaves like a tracker): all active before a choice, quiet after rejection. */
+function responsive(over: Partial<OwnerReport> = {}): OwnerReport {
+  const row = (id: string, label: string, judge: { base: string[]; trackerReason?: string }, cat: string[]) => ({
+    id: `tool:${id}`, partyId: id, label, domain: `${id}.test`, purpose: cat.length ? 'Advertising' : 'Unclassified', categories: cat, classified: cat.length > 0, recognized: cat.length > 0, classKey: `class:${id}`, judge,
+    cells: [factual(cat.length ? bad : ASKED, 'do-nothing', true), factual(cat.length ? ok : ASKED, 'reject', false)],
+    cookies: [{ id: `c:${id}`, name: `_${id}`, kind: 'cookie', purpose: cat.length ? 'Advertising' : `Depends on what ${label} is for`, classified: cat.length > 0, judge: { name: [], site: [] }, cells: [factual(cat.length ? bad : ASKED, 'do-nothing', true), factual(cat.length ? ok : ASKED, 'reject', false)] }],
+  });
+  const tools = [row('meta', 'Meta Pixel', { base: ['advertising'] }, ['advertising']), row('w', 'widgets.test', { base: [] }, []), row('pay', 'paylater.test', { base: [], trackerReason: TRACKER }, [])];
+  return {
+    ...finalOwner,
+    matrix: { columns: finalOwner.matrix.columns.slice(0, 2).map((c) => ({ ...c, state: 'done' as const, note: undefined })), tools, counts: { ok: 1, mismatch: 1, needsDecision: 4, pending: 0, notChecked: 0, notApplicable: 0, blocked: 0 } },
+    decisions: ['w', 'pay'].map((id) => ({ partyId: id, label: `${id}.test`, domain: `${id}.test`, classKey: `class:${id}` })),
+    ...over,
+  };
+}
+const decisionPay = task('classify:2', { kind: 'classify', title: 'Decide: what is paylater.test?', tools: ['paylater.test'], classKey: 'class:pay', verify: { check: 'manual', method: 'manual' }, order: 0, snippet: undefined, steps: [] });
+const responsiveData = (over: Partial<JobReportResponse> = {}) => done({ report: responsive(), todo: { state: 'ready', tasks: [decision, decisionPay, install], fromThisRun: true }, ...over });
+const scoreOf = (out: string) => Number(out.match(/data-testid="score">(\d+)</)![1]);
+const rowCells = (out: string, label: string) => {
+  const r = out.slice(out.indexOf(`data-row="tool:${label}"`));
+  return [...r.slice(0, r.indexOf('</tr>')).matchAll(/class="rp-cell" data-state="([\w-]+)"/g)].map((m) => m[1]);
+};
 
 const html = (el: ReactElement) => renderToStaticMarkup(el);
 const text = (el: ReactElement) => html(el).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
@@ -211,8 +241,9 @@ describe('c. the matrix', () => {
     const unverified = owner({ scan: { ...owner().scan, location: { id: 'de', label: 'Germany', verified: false, note: 'exit in US' } }, matrix: { columns: [], tools: [], counts: { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0, notApplicable: 0, blocked: 0 } } });
     expect(text(<Matrix data={done({ report: unverified })} />)).toContain('We could not confirm where the scan was running from (exit in US), so nothing was checked.');
   });
-  it('a tool classified on this page shows as saved until the next report arrives', () => {
-    expect(text(<Matrix data={running()} ui={{ saved: { 'class:w': 'analytics' } }} />)).toContain('Measures visits (saved)');
+  it('a tool answered on this page shows its judged purpose at once, before the next report arrives', () => {
+    expect(text(<ReportPageView data={running()} now={NOW} ui={{ answers: { 'class:w': 'analytics' } }} />)).toContain('widgets.test Analytics');
+    expect(text(<ReportPageView data={running()} now={NOW} />)).toContain('widgets.test Unclassified');
   });
 });
 
@@ -255,7 +286,9 @@ describe('d. the to-do list', () => {
     const t = text(<TodoList data={done({ todo: { state: 'ready', tasks: [decision, waiting] } })} actions={{ onVerify: () => {} }} />);
     expect(t).toContain('Waiting on your answer about widgets.test');
     expect(t).not.toContain('Verify');
-    expect(text(<TodoList data={done({ todo: { state: 'ready', tasks: [decision, waiting] } })} ui={{ saved: { 'class:w': 'analytics' } }} actions={{ onVerify: () => {} }} />)).toContain('Verify');
+    const answered = done({ report: responsive(), todo: { state: 'ready', tasks: [decision, waiting] } });
+    expect(text(<ReportPageView data={answered} now={NOW} actions={{ onVerify: () => {} }} />)).not.toContain('Verify');
+    expect(text(<ReportPageView data={answered} now={NOW} ui={{ answers: { 'class:w': 'analytics' } }} actions={{ onVerify: () => {} }} />)).toContain('Verify');
   });
   it('a decision shows what the tool loaded — hosting, requests, the addresses in a list to expand', () => {
     const activity = { requests: 16, visits: 8, cookies: 0, storage: 0, samples: ['storyfolder-releases.s3.amazonaws.com/beta.yml?t', 'storyfolder-releases.s3.amazonaws.com/beta-mac.yml?t'], loadedBy: ['https://shop.example/js/app.58a05869.js'], hostedOn: { provider: 'Amazon S3', name: 'storyfolder-releases', matchesSite: true } };
@@ -314,21 +347,31 @@ describe('routing, polling and the re-render queue', () => {
   });
 });
 
+const judgeServed = (r: OwnerReport, answers: Record<string, string>): OwnerReport => shownData({ ...done(), report: r }, answers).report!;
+
 describe('facts, not verdicts, and decided is not applied', () => {
-  it('the picker asks what the tool does: the eight fact options, in order', () => {
+  it('the picker offers the law’s four categories, in order', () => {
     const out = html(<TodoList data={done({ todo: { state: 'ready', tasks: [decision], fromThisRun: true } })} ui={{}} actions={{ onClassify: () => {} }} />);
     const ids = [...out.matchAll(/data-purpose="([a-z]+)"/g)].map((m) => m[1]);
-    expect(ids).toEqual(['payments', 'necessary', 'chat', 'embed', 'reviews', 'functional', 'analytics', 'advertising']);
-    expect(out).toContain('>Payments or checkout<');
-    expect(out).toContain('>Video, maps or other embedded content<');
-    expect(out).toContain('>Another feature visitors use<');
+    expect(ids).toEqual(['necessary', 'functional', 'analytics', 'advertising']);
+    expect(PURPOSES.map((p) => p.id)).toEqual(ids);
+    for (const label of ['Necessary', 'Functional', 'Analytics', 'Advertising']) expect(out).toContain(`>${label}<`);
+    expect(out).toContain('title="The site breaks without it: login, cart, security, payments"');
+    expect(out).toContain('title="A feature or preference: chat, video, reviews, saved choices"');
+    expect(out).not.toContain('Payments or checkout');
   });
-  it('a refused answer says what the owner answered and that complykit treats it as needing consent', () => {
-    const refused = { ...decision, status: 'verified' as const, refused: 'sends a stored id to a third party', answered: 'necessary' };
-    const out = text(<TodoList data={done({ todo: { state: 'ready', tasks: [refused], fromThisRun: true } })} ui={{}} />);
-    expect(html(<TodoList data={done({ todo: { state: 'ready', tasks: [refused], fromThisRun: true } })} ui={{}} />)).toContain('Answered: <strong>Security, login or cart</strong>. complykit treats it as needing consent: sends a stored id to a third party.');
-    expect(out).not.toContain('Decided ✓');
-    expect(out).not.toContain('Saved as');
+  it('a refused answer says what the owner answered and that complykit treats it as needing consent, from the judged row', () => {
+    const data = responsiveData();
+    const shownHtml = html(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:pay': 'necessary' } }} />);
+    expect(shownHtml).toContain(`Answered: <strong>Necessary</strong>. complykit treats it as needing consent: ${TRACKER}.`);
+    const out = text(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:pay': 'necessary' } }} />);
+    expect(out).toContain('Answered');
+    // The server's task fields are not read: the same answer from the served report renders the same, with no refused/answered on the task.
+    const served = responsiveData({ report: judgeServed(responsive(), { 'class:pay': 'necessary' }) });
+    expect(html(<ReportPageView data={served} now={NOW} />)).toContain(`Answered: <strong>Necessary</strong>. complykit treats it as needing consent: ${TRACKER}.`);
+    // A task that claims a refusal the judged row does not have shows none.
+    const claim = { ...decision, status: 'verified' as const, refused: 'invented', answered: 'necessary' };
+    expect(html(<ReportPageView data={done({ report: responsive(), todo: { state: 'ready', tasks: [claim], fromThisRun: true } })} now={NOW} />)).not.toContain('invented');
   });
   it('an applied answer still reads Decided', () => {
     const decided = { ...decision, status: 'verified' as const };
@@ -337,12 +380,15 @@ describe('facts, not verdicts, and decided is not applied', () => {
 });
 
 describe('saving a classification', () => {
-  const answered = (over: Partial<JobReportResponse> = {}) => done({ report: owner({ matrix: { ...owner().matrix, tools: owner().matrix.tools.map((t) => (t.classKey === 'class:w' ? { ...t, classified: true, answer: { categories: ['analytics'], applied: true } } : t)) } }), ...over });
-  it('the saved marker stays while the report is still updating, even if the current one already answers the tool', () => {
-    const saved = { 'class:w': 'analytics' };
-    expect(savedAfter(saved, answered({ updating: true }))).toEqual(saved);
-    expect(savedAfter(saved, answered({ updating: false }))).toEqual({});
-    expect(savedAfter(saved, done({ updating: false }))).toEqual(saved); // a report that does not answer it yet
+  const served = (answers: Record<string, string>, over: Partial<JobReportResponse> = {}) => done({ report: responsive({ answers }), ...over });
+  it('the overlay is dropped only when the report holds THIS answer and no report is still being made', () => {
+    const pending = { 'class:w': 'analytics' };
+    expect(answersAfter(pending, served({ 'class:w': 'analytics' }, { updating: true }))).toEqual(pending); // still updating
+    expect(answersAfter(pending, served({ 'class:w': 'analytics' }, { updating: false }))).toEqual({});
+    expect(answersAfter(pending, served({ 'class:w': 'advertising' }))).toEqual(pending); // an older answer: a "Change" in flight
+    expect(answersAfter(pending, served({}))).toEqual(pending); // a report that does not answer it yet
+    expect(answersAfter(pending, done({ report: null }))).toEqual(pending);
+    expect(answersAfter({ ...pending, 'class:pay': 'necessary' }, served({ 'class:w': 'analytics' }))).toEqual({ 'class:pay': 'necessary' }); // per tool
   });
   it('a failed report read after a successful save is not a classification error', async () => {
     const refresh = vi.fn().mockRejectedValue(new Error('network'));
@@ -354,6 +400,92 @@ describe('saving a classification', () => {
     const boom = new Error('409');
     expect(await saveClassification(async () => { throw boom; }, refresh)).toEqual({ saved: false, error: boom });
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe('the responsive report: judged in the browser before any server round trip', () => {
+  const view = (ui: Parameters<typeof ReportPageView>[0]['ui'], over: Partial<JobReportResponse> = {}) => html(<ReportPageView data={responsiveData(over)} now={NOW} ui={ui} actions={{ onClassify: () => {} }} />);
+
+  it('an answer in ui.answers changes the purpose, the cells and the score at once', () => {
+    const before = view({});
+    const after = view({ answers: { 'class:w': 'advertising' } });
+    expect(text(<ReportPageView data={responsiveData()} now={NOW} />)).toContain('widgets.test Unclassified');
+    expect(text(<ReportPageView data={responsiveData()} now={NOW} ui={{ answers: { 'class:w': 'advertising' } }} />)).toContain('widgets.test Advertising');
+    // The cell that waited for a decision now has a verdict: active before a choice is a problem, quiet after rejection is as expected.
+    expect(rowCells(before, 'w')).toEqual(['needs-decision', 'needs-decision']);
+    expect(rowCells(after, 'w')).toEqual(['mismatch', 'ok']);
+    // Its cookie (folded in the page) is judged with the tool.
+    const cookie = shownData(responsiveData(), { 'class:w': 'advertising' }).report!.matrix.tools[1].cookies[0];
+    expect(cookie).toMatchObject({ purpose: 'Advertising', classified: true });
+    expect(cookie.cells.map((c) => c.state)).toEqual(['mismatch', 'ok']);
+    // 1 of 6 checks passed becomes 2 of 6; the problems follow.
+    expect(scoreOf(before)).toBe(17);
+    expect(scoreOf(after)).toBe(33);
+    expect(after).toMatch(/data-testid="problems">2</);
+    expect(before).not.toMatch(/data-testid="problems">2</);
+    // The decision is made in the to-do list too.
+    expect(text(<ReportPageView data={responsiveData()} now={NOW} ui={{ answers: { 'class:w': 'advertising' } }} />)).toContain('Your answer: Advertising');
+  });
+
+  it('a cell flips from needs-decision to ok when the answer allows the tool to run', () => {
+    const after = view({ answers: { 'class:w': 'necessary' } });
+    expect(rowCells(after, 'w')).toEqual(['ok', 'ok']);
+    const shown = shownData(responsiveData(), { 'class:w': 'necessary' });
+    expect(shown.report!.matrix.tools[1].answer).toEqual({ categories: ['necessary'], applied: true });
+    expect(shown.report!.decisions.map((d) => d.classKey)).toEqual(['class:pay']);
+    expect(scoreReport(shown.report)).toMatchObject({ decisions: 1 });
+    expect(reportSeverity(shown.report)).toBe('problem');
+  });
+
+  it('a legacy stored id is labelled by categoryLabel', () => {
+    expect(text(<ReportPageView data={responsiveData()} now={NOW} ui={{ answers: { 'class:w': 'payments' } }} />)).toContain('widgets.test Payments');
+    expect(text(<ReportPageView data={responsiveData()} now={NOW} ui={{ answers: { 'class:w': 'chat' } }} />)).toContain('widgets.test Chat');
+  });
+
+  it('a tracker answered "necessary" is refused in the grid and the to-do list, from the judged row', () => {
+    const shown = shownData(responsiveData(), { 'class:pay': 'necessary' }).report!.matrix.tools[2];
+    expect(shown).toMatchObject({ classified: true, categories: ['advertising'], purpose: 'Needs consent (behaves like a tracker)', answer: { categories: ['necessary'], applied: false, reason: TRACKER } });
+    const out = view({ answers: { 'class:pay': 'necessary' } });
+    expect(out).toContain(`Answered: <strong>Necessary</strong>. complykit treats it as needing consent: ${TRACKER}.`);
+    expect(out).toContain('data-refused="true"');
+    expect(rowCells(out, 'pay')).toEqual(['mismatch', 'ok']);
+  });
+
+  it('the answer in ui.answers wins over the one the server served, and the served report is not mutated', () => {
+    const served = responsive({ answers: { 'class:w': 'advertising' } });
+    const data = responsiveData({ report: judgeServed(responsive(), { 'class:w': 'advertising' }) });
+    expect(data.report!.answers).toEqual({ 'class:w': 'advertising' });
+    expect(rowCells(html(<ReportPageView data={data} now={NOW} />), 'w')).toEqual(['mismatch', 'ok']);
+    const changed = html(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:w': 'necessary' } }} />);
+    expect(rowCells(changed, 'w')).toEqual(['ok', 'ok']);
+    expect(served.matrix.tools[1].classified).toBe(false);
+    expect(data.report!.matrix.tools[1].answer).toEqual({ categories: ['advertising'], applied: true });
+  });
+
+  it('the grid never shows an updating state; the notice lives in the to-do section only', () => {
+    const out = view({ answers: { 'class:w': 'advertising' } }, { updating: true });
+    const matrix = out.slice(out.indexOf('data-testid="matrix"'), out.indexOf('data-testid="todo"'));
+    expect(matrix).not.toMatch(/Updating|data-testid="updating"/);
+    expect(out.slice(out.indexOf('data-testid="todo"'))).toContain('Updating the report with your answers…');
+    const failed = view({}, { updateError: 'report crashed' });
+    expect(failed.slice(0, failed.indexOf('data-testid="todo"'))).not.toContain('could not be updated');
+    expect(failed).toContain('could not be updated with your latest answer (report crashed)');
+  });
+
+  it('the judged tabs: each law’s live report is judged too', () => {
+    const live = responsive();
+    const d = running({ job: job({ laws: ['eu', 'ca'] }), report: null, laws: ['eu', 'ca'].map((id) => ({ id: id as LawId, progress: { id: id as LawId, locationId: LAWS.find((l) => l.id === id)!.locationId, region: 'x', local: false, state: 'scanning' as const, visitsDone: 1, visitsTotal: 3 }, report: live })) });
+    const shown = shownData(d, { 'class:w': 'advertising' });
+    expect(shown.laws!.every((l) => l.report!.matrix.tools[1].classified)).toBe(true);
+    expect(d.laws![0].report!.matrix.tools[1].classified).toBe(false);
+  });
+
+  it('reports saved before the judge fields existed are shown as served', () => {
+    const legacy = responsive();
+    delete (legacy.matrix.tools[0] as { judge?: unknown }).judge;
+    const data = responsiveData({ report: legacy });
+    expect(shownData(data, { 'class:w': 'advertising' }).report).toBe(data.report);
+    expect(() => html(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:w': 'advertising' } }} />)).not.toThrow();
   });
 });
 
@@ -481,7 +613,7 @@ describe('law tabs', () => {
           { id: 'de:do-nothing', location: 'de', scenario: 'do-nothing', label: 'Before a choice', state: 'done' },
           { id: 'us-ca:gpc', location: 'us-ca', scenario: 'gpc', label: 'Privacy signal (GPC)', state: 'done' },
         ],
-        tools: [{ id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', cells: [bad, ok], cookies: [] }],
+        tools: [{ id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', judge: { base: ['advertising'] }, cells: [bad, ok], cookies: [] }],
         counts: { ok: 1, mismatch: 1, needsDecision: 0, pending: 0, notChecked: 0, notApplicable: 0, blocked: 0 },
       },
     });
@@ -554,7 +686,7 @@ describe('overview and folds', () => {
           { id: 'us-ca:gpc', location: 'us-ca', scenario: 'gpc', label: 'Privacy signal (GPC)', state: 'not-checked' },
           { id: 'us-tx:do-nothing', location: 'us-tx', scenario: 'do-nothing', label: 'Before a choice', state: 'done' },
         ],
-        tools: [{ id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', cells: [bad, gap, ok], cookies: [] }],
+        tools: [{ id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', judge: { base: ['advertising'] }, cells: [bad, gap, ok], cookies: [] }],
         counts: { ok: 1, mismatch: 1, needsDecision: 0, pending: 0, notChecked: 1, notApplicable: 0, blocked: 0 },
       },
     });
@@ -576,12 +708,12 @@ describe('overview and folds', () => {
 describe('completed tasks', () => {
   it('done tasks leave the list for a folded Completed list at the bottom; open ones stay in order', () => {
     const tasks = [decision, task('a', { status: 'verified' }), task('b'), task('c', { status: 'done-unverified' }), task('d', { status: 'failed' }), task('e', { optional: true, status: 'verified' }), task('f', { optional: true })];
-    const data = done({ todo: { state: 'ready', tasks, fromThisRun: true } });
-    const out = html(<TodoList data={data} ui={{ saved: { 'class:w': 'analytics' } }} />);
+    const data = done({ report: responsive(), todo: { state: 'ready', tasks, fromThisRun: true } });
+    const out = html(<ReportPageView data={data} now={NOW} ui={{ answers: { 'class:w': 'analytics' } }} />);
     const completed = out.slice(out.indexOf('data-testid="todo-completed"'), out.indexOf('data-testid="final-scan"'));
     const open = out.slice(0, out.indexOf('data-testid="todo-completed"'));
     for (const id of ['a', 'c', 'e']) expect(completed).toContain(`Hold the ${id} tag`);
-    expect(completed).toContain('widgets.test'); // a decision saved here counts as done
+    expect(completed).toContain('widgets.test'); // a decision answered here counts as done
     for (const id of ['b', 'd', 'f']) expect(open).toContain(`Hold the ${id} tag`);
     for (const id of ['a', 'c', 'e']) expect(open).not.toContain(`Hold the ${id} tag`);
     expect(completed).toMatch(/<details><summary>Completed \(4\)<\/summary>/);
