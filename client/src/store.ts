@@ -20,8 +20,10 @@
 //   store.withdraw()         rejectAll + a 'withdraw' event (the full flow —
 //                              cookie cleanup, adapters revoke — is F3's)
 //   store.open()             emits 'open' (the banner, D9, shows its settings)
-//   store.setRegime(r) / store.setGpc(b)   location arrived (D7). Only moves
-//                              the defaults; a stored choice is never changed.
+//   store.setRegime(r, location?) / store.setGpc(b)   location arrived (D7). Only
+//                              moves the defaults; a stored choice is never
+//                              changed. A location given replaces the stored
+//                              one; omitted, the last one stands.
 //
 // Persistence: first-party cookie `complykit_consent` (Path=/, SameSite=Lax,
 // Secure on https, Domain=config.consent.cookieDomain when set) + a localStorage mirror
@@ -43,12 +45,16 @@
 // A changed config hash with the same category set keeps the choice; the
 // state reports the hash the choice was made under.
 //
-// Defaults route through consentCategoryDefault() (fail closed). GPC is an
-// extra deny on top: with GPC on, every non-necessary category defaults to
-// denied in every regime (design §6: honored as an opt-out everywhere). A
-// visitor's explicit grant still wins over GPC.
+// Defaults route through consentCategoryDefault() (fail closed), which takes the
+// regime AND the visitor's location: policy holds by location (the wiretap
+// states) and the owner's overrides (schema 1.1) both live there; nothing is
+// decided here. GPC is an extra deny on top: with GPC on, every non-necessary
+// category defaults to denied in every regime (design §6: honored as an opt-out
+// everywhere), unless the owner turned that off (`overrides.honorGpc: false`;
+// `gpcHonored` in the state says which). A visitor's explicit grant still wins
+// over GPC.
 
-import { REGIMES, consentCategoryDefault, isNecessaryCategory, type ConsentToolConfig, type Regime } from './config.js';
+import { REGIMES, consentCategoryDefault, honorsGpc, isNecessaryCategory, type ConsentToolConfig, type Regime, type VisitorLocation } from './config.js';
 import { buildRecord, sendRecord, randomId, type ConsentRecordBody } from './record.js';
 
 export const COOKIE_NAME = 'complykit_consent';
@@ -72,7 +78,12 @@ export interface ConsentState {
   categories: Record<string, boolean>;
   /** Regime the grants were decided under: the choice's, or the current one for defaults. */
   regime: Regime;
+  /** Where the visitor is, when the location source reported it (the current one, also after a choice). */
+  location?: VisitorLocation;
+  /** The browser sent a Global Privacy Control signal. */
   gpc: boolean;
+  /** The signal counts as an opt-out: `gpc` and the owner has not turned GPC off. */
+  gpcHonored: boolean;
   /** Present when status is 'chosen'. */
   id?: string;
   at?: string;
@@ -98,6 +109,8 @@ export type Listener = (state: ConsentState) => void;
 
 export interface StoreOptions {
   gpc?: boolean;
+  /** The visitor's location, when known at start (the defaults can depend on it). */
+  location?: VisitorLocation;
   now?: () => number;
   toolVersion?: string;
   /** Override the record transport (tests). */
@@ -115,10 +128,19 @@ export interface ConsentStore {
   rejectAll(): ConsentState;
   withdraw(): ConsentState;
   open(): void;
-  setRegime(regime: Regime): void;
+  setRegime(regime: Regime, location?: VisitorLocation): void;
   setGpc(gpc: boolean): void;
   /** Detach the cross-tab listener (tests, re-init). */
   destroy(): void;
+}
+
+/**
+ * Whether, in this regime at this location, something is held until the visitor
+ * accepts although the regime is not opt-in: a listed non-necessary category
+ * whose pre-choice default is off (GPC aside). The banner words its copy by it.
+ */
+export function holdsBeforeChoice(config: ConsentToolConfig, regime: Regime, location?: VisitorLocation): boolean {
+  return regime !== 'opt-in' && config.categories.some((c) => !isNecessaryCategory(c.id) && !consentCategoryDefault(config, c.id, regime, location));
 }
 
 // --- persistence -------------------------------------------------------------------
@@ -234,14 +256,18 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
   };
   const listeners: Record<StoreEvent, Listener[]> = { change: [], open: [], withdraw: [] };
   let gpc = opts.gpc ?? (typeof navigator !== 'undefined' && (navigator as { globalPrivacyControl?: boolean }).globalPrivacyControl === true);
+  let location = opts.location;
   let current: ConsentState;
 
+  const honored = honorsGpc(config);
+  // Every state carries where the visitor is now and whether GPC counts; `r` / `g` are the choice's own when one applies.
+  const mk = (rest: Pick<ConsentState, 'status' | 'categories'> & Partial<ConsentState>, r = regime, g = gpc): ConsentState => ({ ...rest, regime: r, location, gpc: g, gpcHonored: g && honored });
   const defaults = (): Record<string, boolean> => {
     const out: Record<string, boolean> = {};
-    for (const id of ids) out[id] = consentCategoryDefault(config, id, regime) && (!gpc || isNecessaryCategory(id));
+    for (const id of ids) out[id] = consentCategoryDefault(config, id, regime, location) && (!(gpc && honored) || isNecessaryCategory(id));
     return out;
   };
-  const unset = (reason: AskReason): ConsentState => ({ status: 'unset', categories: defaults(), regime, gpc, reason });
+  const unset = (reason: AskReason): ConsentState => mk({ status: 'unset', categories: defaults(), reason });
 
   /** Decide the state from what is stored. Clears storage that no longer counts. */
   const load = (): ConsentState => {
@@ -279,7 +305,7 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
     if (fromMirror !== json) writeMirror(json);
     const categories: Record<string, boolean> = {};
     for (const id of ids) categories[id] = isNecessaryCategory(id) || stored.categories[id] === true;
-    return { status: 'chosen', categories, regime: stored.regime, gpc: stored.gpc, id: stored.id, at: stored.at, configHash: stored.configHash };
+    return mk({ status: 'chosen', categories, id: stored.id, at: stored.at, configHash: stored.configHash }, stored.regime, stored.gpc);
   };
 
   const copy = (s: ConsentState): ConsentState => ({ ...s, categories: { ...s.categories } });
@@ -322,7 +348,7 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
         /* proof is best-effort; the choice itself still stands */
       }
     }
-    replace({ status: 'chosen', categories, regime, gpc, id: stored.id, at: stored.at, configHash: stored.configHash }, true);
+    replace(mk({ status: 'chosen', categories, id: stored.id, at: stored.at, configHash: stored.configHash }), true);
     return copy(current);
   };
 
@@ -368,9 +394,10 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
     open: () => emit('open'),
     // A move emits 'change' even when the grants stay the same, so the banner can
     // re-render its words for the new regime (F2: e.g. opt-in → opt-out-signal with GPC on).
-    setRegime: (r) => {
-      const moved = r !== regime;
+    setRegime: (r, loc) => {
+      const moved = r !== regime || (!!loc && JSON.stringify(loc) !== JSON.stringify(location));
       regime = r;
+      if (loc) location = loc;
       if (current.status === 'unset') replace({ ...unset(current.reason ?? 'none') }, moved);
     },
     setGpc: (b) => {

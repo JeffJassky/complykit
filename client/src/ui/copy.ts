@@ -52,10 +52,10 @@ export function policyLink(): HTMLElement | '' {
   return h('p', { class: 'ck-links' }, h('a', { href: url, class: 'ck-link', 'data-ck-action': 'privacy-policy' }, t('privacyPolicy.link')));
 }
 
-/** Under an opt-out regime with GPC on: the signal was honored (CCPA Regs §7025(c)(6): display it). */
+/** Under an opt-out regime with GPC on, and the owner not ignoring it: the signal was honored (CCPA Regs §7025(c)(6): display it). */
 export function gpcNote(): HTMLElement | '' {
   const s = host().getStore()?.state();
-  return s?.gpc && s.regime !== 'opt-in' ? h('p', { class: 'ck-note', 'data-ck-note': 'gpc' }, t('gpc.honored')) : '';
+  return s?.gpcHonored && s.regime !== 'opt-in' ? h('p', { class: 'ck-note', 'data-ck-note': 'gpc' }, t('gpc.honored')) : '';
 }
 
 /** In the settings layer after a choice that granted something: how to withdraw, and what it cannot undo. */

@@ -50,10 +50,13 @@
 // Safety rules:
 //   - A Shopify field is true only when every tool category mapped to it is
 //     granted in OUR store right now (unlisted category ⇒ denied).
-//     sale_of_data is also false whenever marketing is false or GPC is on.
+//     sale_of_data is also false whenever marketing is false or GPC is on
+//     (and honored: the owner's `overrides.honorGpc: false` turns that off).
 //   - Before a visitor choice we only ever send `false`. Defaults are pushed as
-//     grants only under an opt-out regime and only if `pushOptOutDefaults` is
-//     set (off by default; Shopify already allows outside its banner regions).
+//     grants only under an opt-out regime (or where an owner override grants
+//     under opt-in) and only if `pushOptOutDefaults` is set (off by default;
+//     Shopify already allows outside its banner regions). What is pushed is
+//     always the store's effective grants, never more.
 //   - Shopify's stored consent never grants on our behalf: if it says yes (or
 //     allows) where we say no, ours is pushed, also after
 //     'visitorConsentCollected' (bounded).
@@ -61,7 +64,7 @@
 //     loaded. When the config's regimeSource is 'platform' and D7 found
 //     nothing, we re-run D7's resolver once the API is loaded and move the
 //     store's regime: one resolver, not two.
-import type { ConsentToolConfig, Regime } from '../config.js';
+import type { ConsentToolConfig, Regime, VisitorLocation } from '../config.js';
 import { diagnostics } from '../diagnostics.js';
 import { resolveLocation } from '../location.js';
 
@@ -98,9 +101,9 @@ const ALLOWED_METHOD: Record<ShopifyField, keyof ShopifyCustomerPrivacy> = {
 /** The slice of the state store (D3) the bridge needs. */
 export interface ShopifyStoreLike {
   isGranted(categoryId: string): boolean;
-  state(): { status: 'chosen' | 'unset'; regime: Regime; gpc: boolean };
+  state(): { status: 'chosen' | 'unset'; regime: Regime; gpc: boolean; gpcHonored?: boolean };
   subscribe(fn: () => void): (() => void) | void;
-  setRegime?(regime: Regime): void;
+  setRegime?(regime: Regime, location?: VisitorLocation): void;
 }
 
 /** The slice of window.Shopify.customerPrivacy we use. */
@@ -235,14 +238,15 @@ export function installShopifyBridge(config: ConsentToolConfig, store: ShopifySt
   let consentHandler: ((e: unknown) => void) | undefined;
   let unsub: (() => void) | void;
 
-  const desired = () => shopifyConsentFor(store, map, store.state().gpc);
+  const desired = () => shopifyConsentFor(store, map, store.state().gpcHonored ?? store.state().gpc);
 
   /** What to send now, or undefined when Shopify already agrees with us. */
   function plan(cp: ShopifyCustomerPrivacy): Partial<ShopifyConsent> | undefined {
     const st = store.state();
     const want = desired();
     const explicit = call<Partial<Record<ShopifyField, string>>>(cp, 'currentVisitorConsent') ?? {};
-    const full = st.status === 'chosen' || (opts.pushOptOutDefaults === true && st.regime !== 'opt-in');
+    // An owner's override can grant before a choice even under opt-in; `want` is the store's effective grants.
+    const full = st.status === 'chosen' || (opts.pushOptOutDefaults === true && (st.regime !== 'opt-in' || SHOPIFY_FIELDS.some((f) => want[f])));
     if (full) {
       // A choice exists: Shopify must hold exactly it, explicitly.
       return SHOPIFY_FIELDS.every((f) => explicit[f] === (want[f] ? 'yes' : 'no')) ? undefined : { ...want };
@@ -259,9 +263,10 @@ export function installShopifyBridge(config: ConsentToolConfig, store: ShopifySt
     if (!cp) return;
     const send = plan(cp);
     if (!send) return;
-    // Belt and braces: no grant leaves here under opt-in without a choice.
-    const st = store.state();
-    if (st.status !== 'chosen' && st.regime === 'opt-in') for (const f of SHOPIFY_FIELDS) if (send[f] === true) delete send[f];
+    // Belt and braces: no grant leaves here that the store's effective grants do not hold.
+    // Under opt-in without a choice and without an owner override that is every grant.
+    const want = desired();
+    for (const f of SHOPIFY_FIELDS) if (send[f] === true && !want[f]) delete send[f];
     if (Object.keys(send).length === 0) return;
     inFlight = true;
     let settled = false;
@@ -323,7 +328,7 @@ export function installShopifyBridge(config: ConsentToolConfig, store: ShopifySt
     // D7 coordination: a 'platform' regime source that found no region at start.
     if (config.regimeSource.kind === 'platform' && (!diagnostics.location || diagnostics.location.source === 'unknown') && store.setRegime) {
       const d = resolveLocation(config, { window: w as never }).initial;
-      if (d.source === 'platform') store.setRegime(d.regime); // fires subscribe → apply
+      if (d.source === 'platform') store.setRegime(d.regime, d.location); // fires subscribe → apply
     }
     if (doc && !consentHandler) {
       consentHandler = onConsentCollected;
