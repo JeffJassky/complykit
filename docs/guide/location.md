@@ -166,8 +166,10 @@ gives an answer:
    `{ "kind": "meta", "name": "…" }` you can choose a different name; the tool still
    checks `complykit-region` as well.
 3. **`header`.** `{ "kind": "header", "header": "cf-ipcountry", "endpoint": "/.well-known/complykit-location" }`
-   points to a **same-origin** endpoint that returns the location as plain text
-   (`DE`, `US-CA`). The tool refuses a cross-origin endpoint. **Until the endpoint
+   points to an endpoint that returns the location as plain text
+   (`DE`, `US-CA`). The endpoint must be on the page's origin or on the origin the tool
+   script itself was loaded from (the hosted install's host, below). The tool refuses an
+   endpoint on any other origin. **Until the endpoint
    answers, the visitor is under `opt-in`**. When the answer arrives, the defaults
    move, but only if the visitor has not made a choice yet. The tool waits 3 seconds,
    then stays strict for the rest of that page. `header` is a label for the people
@@ -187,6 +189,26 @@ the tag **after** the cache, at the edge (Cloudflare Worker `HTMLRewriter`, Netl
 Function, Vercel middleware), or use the `header` endpoint instead. Give that endpoint
 `Cache-Control: private, no-store`.
 :::
+
+## Hosted installs
+
+A hosted install (`<script src="https://<host>/s/<your-domain>.js">`) needs no location
+source from you. The host serves `GET /geo`, which looks up the visitor's IP address in a
+local GeoIP database and answers `US-CA`, `DE` or nothing. The served config points the
+tool at it. That request goes to the host the visitor already loaded the script from, so
+it adds no party, sets no cookie and is never cached. The host does not log or store the
+IP address.
+
+A `complykit-region` meta tag that you write still wins and no request is made. A
+`platform` source, a `fixed` regime or a `header` source you chose yourself are left as
+they are.
+
+**Accuracy.** IP geolocation is approximate. It can place a visitor in the wrong state,
+particularly near a state line, on a mobile network or behind a VPN. A Californian
+placed in Nevada gets no wiretap hold. An unknown answer (empty) leaves the visitor under
+`opt-in`. If you need exact placement, write the meta tag from your own server.
+
+IP geolocation by [DB-IP](https://db-ip.com) (IP to City Lite, CC BY 4.0).
 
 ## Recipes
 

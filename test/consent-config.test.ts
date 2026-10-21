@@ -123,7 +123,12 @@ describe('consent tool config: schema', () => {
   it('GTM container ids are GTM-…', () => invalid((c) => (c.gtm!.containers = ['G-ABC']), 'gtm.containers.0'));
   it('GTM consent-mode mappings name a listed category', () => invalid((c) => (c.gtm!.consentMode = { ad_storage: 'ads' }), 'gtm.consentMode.ad_storage'));
   it("regimeSource 'platform' needs a platform", () => invalid((c) => (c.regimeSource = { kind: 'platform' }), 'regimeSource'));
-  it('header endpoint must be same-origin', () => invalid((c) => (c.regimeSource = { kind: 'header', header: 'x', endpoint: 'https://geo.example/x' }), 'regimeSource.endpoint'));
+  // The hosted install's endpoint is an absolute URL on the tool script's own origin (<host>/geo); the CLIENT refuses
+  // any origin that is neither the page's nor the script's (client/test/location.test.ts). The schema only needs a path or an http(s) URL.
+  it('header endpoint is a path or an http(s) URL', () => {
+    invalid((c) => (c.regimeSource = { kind: 'header', header: 'x', endpoint: 'geo.example/x' }), 'regimeSource.endpoint');
+    invalid((c) => (c.regimeSource = { kind: 'header', header: 'x', endpoint: 'ftp://geo.example/x' }), 'regimeSource.endpoint');
+  });
   it('category ids are lower-case slugs', () => invalid((c) => (c.categories[1]!.id = 'Analytics'), 'categories.1.id'));
   it('language keys are BCP 47 tags', () => invalid((c) => (c.strings = { English: {} }), 'strings'));
   it('string tables refuse unknown keys', () => invalid((c) => (c.strings = { en: { 'banner.titel': 'x' } as never }), 'strings.en'));

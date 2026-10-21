@@ -23,6 +23,7 @@ import {
   type SitesResponse,
 } from '../shared/api.js';
 import { basicAuth } from './auth.js';
+import { openGeoDb, type GeoLookup } from './geo.js';
 import type { ServiceConfig } from './config.js';
 import { ConsentRecordStore, MAX_BODY_BYTES, RateLimiter, normalizeRecord, originDomain, type ExportFormat } from './consent-records.js';
 import { KbError, KnowledgeBase, RESEARCH_MAX, categoryList, isDomain, isProposalId, optionalText, requiredText, reviewer } from './kb.js';
@@ -79,6 +80,8 @@ export interface AppDeps {
   storage?: Storage;
   /** Purges the CDN in front of the hosted script. Absent: Cloudflare when the config has `cdn`, else nothing. */
   purger?: CdnPurger;
+  /** Visitor IP → location for GET /geo. Absent: the mmdb at config.geoDbPath (none = /geo answers empty). */
+  geo?: GeoLookup;
 }
 
 const RETENTION_SWEEP_MS = 60 * 60_000;
@@ -312,6 +315,25 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
   // /s/<domain>.js and the UI bundle: a visitor's browser on a client's site loads
   // them, so they sit before basic auth. No cookies, ever (P1).
   app.use(hosted.router);
+
+  // GET /geo (public, before basicAuth): where the visitor is, as "CC-RR" / "CC" / "" text, for the
+  // hosted script's header source. The IP comes only from the configured header (never
+  // x-forwarded-for, which a visitor can write), is looked up and dropped: not logged, stored or cached.
+  const geo = deps.geo ?? openGeoDb(config.geoDbPath);
+  app.get('/geo', (req, res) => {
+    res.set({ 'Cache-Control': 'no-store, private', 'Access-Control-Allow-Origin': '*', 'Content-Type': 'text/plain; charset=utf-8' });
+    const header = (name: string): string => (req.get(name) ?? '').trim().slice(0, 16).toUpperCase();
+    let place: ReturnType<GeoLookup>;
+    const cfCountry = config.trustCfGeo ? header('cf-ipcountry') : '';
+    if (/^[A-Z]{2}$/.test(cfCountry) && cfCountry !== 'XX' && cfCountry !== 'T1') {
+      const cfRegion = header('cf-region-code');
+      place = { country: cfCountry, ...(/^[A-Z0-9]{1,3}$/.test(cfRegion) ? { region: cfRegion } : {}) };
+    } else if (config.geoIpHeader && geo) {
+      const ip = (req.get(config.geoIpHeader) ?? '').split(',')[0]!.trim().slice(0, 64);
+      place = ip ? geo(ip) : undefined;
+    }
+    res.send(place ? (place.region ? `${place.country}-${place.region}` : place.country) : '');
+  });
 
   app.use(basicAuth(config.password));
   app.use(express.json({ limit: '256kb' }));

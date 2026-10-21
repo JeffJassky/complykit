@@ -9,6 +9,16 @@ real if CI runs the matrix. See standards/traps.md #10.
 
 ## [Unreleased]
 
+### Added: hosted location
+- Service: public `GET /geo` answers the visitor's `CC-RR` from a local DB-IP City Lite
+  database (`GEO_DB_PATH`), reading the IP only from `GEO_IP_HEADER`
+  (`do-connecting-ip` on DigitalOcean). Hosted scripts on the meta regime source now
+  learn the location from it, so wiretap holds and regimes apply with no site changes.
+- Client: a `header` endpoint may share the origin of the tool's own script. The
+  banner waits for a pending location lookup (at most 3 s) instead of flashing strict
+  wording.
+- IP geolocation by DB-IP (https://db-ip.com), CC BY 4.0.
+
 ### Added: wiretap holds and owner overrides (config schema 1.1)
 - The generated config now holds analytics, advertising and any category with a
   wiretap-kind vendor before a choice in the wiretap-litigation states

@@ -195,6 +195,12 @@ function build(): void {
     H.opener = null;
   };
 
+  // A location lookup still outstanding would flash the strict wording at a visitor it does not govern: hold the banner until it settles (the core bounds it by HEADER_TIMEOUT_MS).
+  let locating = H.locationPending?.();
+  void locating?.then(() => {
+    locating = undefined;
+    sync();
+  });
   let shownWords = '';
   const sync = (): void => {
     const s = getStore();
@@ -210,7 +216,7 @@ function build(): void {
       banner.refresh();
     }
     choices.hidden = need || position === 'none';
-    if (need) {
+    if (need && !locating) {
       banner.show();
       H.report?.({ t: 'shown' }); // the beacon keeps the first
     }

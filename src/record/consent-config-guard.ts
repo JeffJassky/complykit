@@ -56,7 +56,7 @@ export const FALLBACK_REGIME: Regime = 'opt-in';
 
 /** Where the tool learns the visitor's location (never a third-party geo call). */
 export type RegimeSource =
-  // A same-origin endpoint echoes a CDN / server request header ("cf-ipcountry",
+  // An endpoint (same-origin path, or an absolute URL on the tool script's own origin) echoes a CDN / server request header ("cf-ipcountry",
   // "x-vercel-ip-country", …) as the body: "DE" or "US-CA".
   | { kind: 'header'; header: string; endpoint: string }
   // `<meta name="complykit-region" content="US-CA">` written by the server template.

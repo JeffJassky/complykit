@@ -65,9 +65,9 @@
               "minLength": 1
             },
             "endpoint": {
-              "description": "Same-origin path whose body is \"CC\" or \"CC-RR\".",
+              "description": "A same-origin path, or an absolute http(s) URL on the tool script's own origin (the hosted install's GET <host>/geo), whose body is \"CC\" or \"CC-RR\". The client refuses any other origin.",
               "type": "string",
-              "pattern": "^\\/"
+              "pattern": "^(\\/|https?:\\/\\/)"
             }
           },
           "required": [

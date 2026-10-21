@@ -71,6 +71,10 @@ export interface ServiceConfig {
   cdn?: { zoneId: string; token: string };
   /** TRUST_CF_GEO=1: read Cloudflare's country / region headers for banner analytics. Off = geography is always XX. */
   trustCfGeo: boolean;
+  /** GEO_IP_HEADER: the request header that carries the visitor's IP (e.g. do-connecting-ip on App Platform). GET /geo reads the IP ONLY from here, never x-forwarded-for. Unset = no lookup. */
+  geoIpHeader?: string;
+  /** GEO_DB_PATH: the GeoIP mmdb file (DB-IP City Lite). Missing file = /geo answers empty. */
+  geoDbPath?: string;
   /** How often banner counters are flushed to storage (STATS_FLUSH_MS, default 30 000). */
   statsFlushMs: number;
 }
@@ -194,6 +198,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     publicOrigin,
     ...(env.CF_ZONE_ID && env.CF_API_TOKEN ? { cdn: { zoneId: env.CF_ZONE_ID, token: env.CF_API_TOKEN } } : {}),
     trustCfGeo: env.TRUST_CF_GEO === '1',
+    geoIpHeader: env.GEO_IP_HEADER?.trim().toLowerCase() || undefined,
+    geoDbPath: env.GEO_DB_PATH || undefined,
     statsFlushMs: int(env, 'STATS_FLUSH_MS', 30_000, 1),
   };
 }

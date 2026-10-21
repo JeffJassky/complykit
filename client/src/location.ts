@@ -12,12 +12,15 @@
 //                server template (or the name config.regimeSource names).
 //                Checked for every non-fixed source: it is synchronous and
 //                server-authored, so it beats a network round trip.
-//   3. header    {kind:'header'}: a SAME-ORIGIN endpoint that echoes a CDN
-//                header as its body ("DE", "US-CA"). Asynchronous: until it
+//   3. header    {kind:'header'}: an endpoint that echoes a CDN header as its
+//                body ("DE", "US-CA"). It must share the origin of the page OR of
+//                this tool's own script (the host that served it: the hosted
+//                install asks GET <host>/geo, a party the visitor already
+//                reached for the script). Asynchronous: until it
 //                answers, the visitor is under the strictest regime (`pending`),
 //                then the store moves to the real one (overrides.regimes['*'] does not apply while
-//                pending: scripts released then cannot be unrun). A cross-origin endpoint
-//                is refused.
+//                pending: scripts released then cannot be unrun). An endpoint on any
+//                third origin is refused.
 //   4. platform  {kind:'platform'}: Shopify `customerPrivacy.getRegion()`, read
 //                only if the platform already loaded it (the bridge is E1's).
 //   5. unknown   → FALLBACK_REGIME ('opt-in', the strictest).
@@ -64,8 +67,10 @@ export interface LocationEnv {
   /** For the platform source: `window.Shopify`. */
   window?: { Shopify?: { customerPrivacy?: { getRegion?: () => unknown } } };
   fetch?: (url: string, init?: RequestInit) => Promise<{ ok: boolean; text(): Promise<string> }>;
-  /** The page URL; the header endpoint must share its origin. */
+  /** The page URL; the header endpoint may share its origin. */
   pageUrl?: string;
+  /** The tool script's own URL (`document.currentScript.src` at load); the header endpoint may share its origin too. */
+  scriptUrl?: string;
   timeoutMs?: number;
   /** YYYY-MM-DD for regimeFor (tests). */
   onDate?: string;
@@ -104,13 +109,23 @@ function readPlatform(win: LocationEnv['window']): RegimeLocation | undefined {
   }
 }
 
-/** The endpoint as an absolute URL when it is same-origin with the page; undefined otherwise. */
-export function sameOriginEndpoint(endpoint: string, pageUrl: string | undefined): string | undefined {
+// This script's own URL, captured while it loads (document.currentScript is null afterwards).
+const ownScriptUrl = ((): string | undefined => {
+  try {
+    return typeof document !== 'undefined' ? (document.currentScript as HTMLScriptElement | null)?.src || undefined : undefined;
+  } catch {
+    return undefined;
+  }
+})();
+
+/** The endpoint as an absolute URL when it shares the origin of the page or of the tool's own script; undefined otherwise. */
+export function sameOriginEndpoint(endpoint: string, pageUrl: string | undefined, scriptUrl?: string): string | undefined {
   if (!pageUrl) return undefined;
   try {
     const page = new URL(pageUrl);
     const u = new URL(endpoint, page);
-    return u.origin === page.origin ? u.href : undefined;
+    if (u.origin === page.origin) return u.href;
+    return scriptUrl && u.origin === new URL(scriptUrl).origin ? u.href : undefined;
   } catch {
     return undefined;
   }
@@ -162,10 +177,10 @@ export function resolveLocation(config: ConsentToolConfig, env: LocationEnv = {}
 
   if (src.kind === 'header') {
     const pageUrl = env.pageUrl ?? (typeof location !== 'undefined' ? location.href : undefined);
-    const url = sameOriginEndpoint(src.endpoint, pageUrl);
+    const url = sameOriginEndpoint(src.endpoint, pageUrl, 'scriptUrl' in env ? env.scriptUrl : ownScriptUrl);
     const f = env.fetch ?? (typeof fetch === 'function' ? fetch : undefined);
     if (!url || !f) {
-      if (!url && typeof console !== 'undefined') console.warn(`[complykit] location endpoint ${src.endpoint} is not same-origin; using the strictest regime`);
+      if (!url && typeof console !== 'undefined') console.warn(`[complykit] location endpoint ${src.endpoint} is on neither the page's nor the script's origin; using the strictest regime`);
       return done(decide('unknown'));
     }
     // "Not known yet" is not "unknown": scripts released in this window cannot be

@@ -25,7 +25,7 @@
 // made, the defaults stand (nothing non-necessary under opt-in), a console
 // warning is printed and `ComplyKit.diagnostics.ui` says why.
 
-import { getConfig, getStore, on } from './api.js';
+import { getConfig, getStore, locationPending, on } from './api.js';
 import { diagnostics } from './diagnostics.js';
 import { report } from './events.js';
 import type { ConsentStore } from './store.js';
@@ -49,6 +49,7 @@ export const uiHost: UiHost = {
   opener: null,
   pendingOpen: false,
   mounted: false,
+  locationPending,
   requestOpen(from) {
     uiHost.opener = from;
     getStore()?.open();

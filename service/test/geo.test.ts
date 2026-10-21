@@ -29,8 +29,9 @@ function fakeDist(): string {
 /** 203.0.113.7 → California, 198.51.100.9 → Germany, anything else unknown. */
 const lookup: GeoLookup = (ip) => (ip === '203.0.113.7' ? { country: 'US', region: 'CA' } : ip === '198.51.100.9' ? { country: 'DE' } : undefined);
 
-async function service(over: Record<string, unknown> = {}, geo: GeoLookup | undefined = lookup) {
-  return startService({ consentClientDist: fakeDist(), publicOrigin: ORIGIN, geoIpHeader: 'do-connecting-ip', ...over }, {}, { geo });
+/** `geo: null` = no database at all. */
+async function service(over: Record<string, unknown> = {}, geo: GeoLookup | null = lookup) {
+  return startService({ consentClientDist: fakeDist(), publicOrigin: ORIGIN, geoIpHeader: 'do-connecting-ip', ...over }, {}, { geo: geo ?? undefined });
 }
 
 describe('GET /geo', () => {
@@ -49,7 +50,7 @@ describe('GET /geo', () => {
     const s = await service();
     expect((await request(s.app).get('/geo').set('do-connecting-ip', '192.0.2.1').expect(200)).text).toBe('');
     expect((await request(s.app).get('/geo').expect(200)).text).toBe('');
-    const none = await service({}, undefined);
+    const none = await service({}, null);
     expect((await request(none.app).get('/geo').set('do-connecting-ip', '203.0.113.7').expect(200)).text).toBe('');
   });
 

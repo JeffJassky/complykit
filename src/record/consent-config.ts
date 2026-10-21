@@ -62,7 +62,10 @@ export const RegimeSourceSchema = z
     z.object({
       kind: z.literal('header'),
       header: z.string().min(1).describe('The request header the endpoint echoes, e.g. cf-ipcountry.'),
-      endpoint: z.string().regex(/^\//, 'same-origin path').describe('Same-origin path whose body is "CC" or "CC-RR".'),
+      endpoint: z
+        .string()
+        .regex(/^(\/|https?:\/\/)/, 'a same-origin path, or an absolute URL on the tool script\'s own origin')
+        .describe('A same-origin path, or an absolute http(s) URL on the tool script\'s own origin (the hosted install\'s GET <host>/geo), whose body is "CC" or "CC-RR". The client refuses any other origin.'),
     }),
     z.object({
       kind: z.literal('meta'),

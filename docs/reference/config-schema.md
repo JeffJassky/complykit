@@ -30,7 +30,7 @@ rules). Those are described in [Consent tool config](/guide/config).
 | `hash` | `string` | yes |  | sha-256 of the canonical JSON of every other field. pattern `^[0-9a-f]{64}$` |
 | `regimeSource` | one of | yes |  | Where the tool learns the visitor location. Never a third-party geo call; unknown ⇒ opt-in |
 | `regimeSource.header` | `string` | yes |  | The request header the endpoint echoes, e.g. cf-ipcountry. min length 1. only when kind `"header"` |
-| `regimeSource.endpoint` | `string` | yes |  | Same-origin path whose body is "CC" or "CC-RR". pattern `^\/`. only when kind `"header"` |
+| `regimeSource.endpoint` | `string` | yes |  | A same-origin path, or an absolute http(s) URL on the tool script's own origin (the hosted install's GET &lt;host&gt;/geo), whose body is "CC" or "CC-RR". The client refuses any other origin. pattern `^(\/\|https?:\/\/)`. only when kind `"header"` |
 | `regimeSource.name` | `string` |  | `"complykit-region"` | &lt;meta name&gt; whose content is "CC" or "CC-RR". min length 1. only when kind `"meta"` |
 | `regimeSource.regime` | `"opt-in"` / `"opt-out-signal"` / `"opt-out"` | yes |  | only when kind `"fixed"` |
 | `categories` | object[] | yes |  | at least 1 item |

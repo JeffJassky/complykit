@@ -29,6 +29,8 @@ export interface UiHost {
   pendingOpen: boolean;
   /** Set by the UI file once it has mounted. */
   mounted: boolean;
+  /** Settles when a pending location lookup is answered (or timed out); undefined when none is outstanding. The banner waits for it. */
+  locationPending?(): Promise<void> | undefined;
   /** Ask for the settings layer from `from` (loads the UI file if needed). */
   requestOpen(from: Element | null): void;
   /** The UI tells the core what the visitor saw and did (the banner beacon, client/src/events.ts). A no-op when analytics are off. */
