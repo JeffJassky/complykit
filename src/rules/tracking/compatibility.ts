@@ -16,7 +16,7 @@ import type {
   TagContainer,
   TrackingEvaluation,
 } from '../../record/index.js';
-import { DEFAULT_KB, hostOf, regimeForCodes, lookupEntry, isWiretapJurisdiction, WIRETAP_CATEGORIES, type KnowledgeBase, type KnowledgeEntry, type TagControl } from '../../registry/index.js';
+import { DEFAULT_KB, hostOf, regimeForCodes, lookupEntry, kbEntryOf, isWiretapJurisdiction, WIRETAP_CATEGORIES, type KnowledgeBase, type KnowledgeEntry, type TagControl } from '../../registry/index.js';
 import { COMPLYKIT_CONSENT_COOKIE } from '../../record/consent-tool.js';
 import { SAID_NO_SCENARIOS } from '../../record/tracking.js';
 import { PHASE_LABEL, WITHDRAW_GRACE_MS, graceCount, type Phase } from './analyze.js';
@@ -535,7 +535,7 @@ function dedupeChanges(changes: CompatibilityChange[]): CompatibilityChange[] {
 
 export function compatibilityFor(party: PartyInventoryItem, input: CompatibilityInput): PartyCompatibility {
   const kb = input.kb ?? DEFAULT_KB;
-  const entry = kb.entries.find((e) => e.id === party.partyId);
+  const entry = kbEntryOf(kb, party.partyId);
   const control: TagControl | undefined = entry?.control;
   const impl = party.implementation ?? { class: 'unknown' as const, evidence: [], alsoSeen: [] };
   const reasons: CompatibilityReason[] = [];
@@ -840,7 +840,7 @@ export function compatibilityFor(party: PartyInventoryItem, input: Compatibility
                 f.kind === 'iframe' &&
                 f.partyId !== party.partyId &&
                 (f.verdict === 'leak' || f.verdict === 'gateable') &&
-                purposeScopeOf(kb.entries.find((x) => x.id === f.partyId)?.categories ?? ['unknown']) !== 'not-required' &&
+                purposeScopeOf(kbEntryOf(kb, f.partyId)?.categories ?? ['unknown']) !== 'not-required' &&
                 leakEvidence.some((e) => sameDocument(e.url, f.url)),
             )
           : undefined;

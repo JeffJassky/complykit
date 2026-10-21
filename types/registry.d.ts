@@ -84,6 +84,8 @@ export {
   isEuEea,
   buildKnowledgeBase,
   lookupEntry,
+  kbEntryOf,
+  lookupGateway,
   lookupStore,
   entryStatus,
   matchVendorSignatures,

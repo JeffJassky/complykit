@@ -7,7 +7,7 @@ import type { OwnerCell, OwnerCellState, OwnerColumn, OwnerCookieRow, OwnerLocat
 import { judgeOwnerReport } from './owner-judge.js';
 import { skipKindOf, SKIP_LEAD, type SkipKind } from './skip-kind.js';
 import { workspaceId } from './workspace.js';
-import { DEFAULT_KB, hostedOn, isWiretapJurisdiction, lookupStore, type KnowledgeBase } from '../registry/index.js';
+import { DEFAULT_KB, hostedOn, isWiretapJurisdiction, kbEntryOf, lookupStore, type KnowledgeBase } from '../registry/index.js';
 import { knownTrackerReason } from '../registry/kb/tracker-reason.js';
 
 // The owner report (plans/simple-report.md): the one page a site owner reads.
@@ -272,7 +272,7 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
   for (const p of unreachableReason ? [] : m?.inventory ?? []) {
     const toolRow = bm?.rows.find((r) => r.kind === 'tool' && r.partyId === p.partyId);
     const classKey = 'class:' + workspaceId('tool', [p.partyId, p.domain]);
-    const base = (kb.entries.find((e) => e.id === p.partyId)?.categories ?? []).map(String).filter((c) => c && c !== 'unknown');
+    const base = (kbEntryOf(kb, p.partyId)?.categories ?? []).map(String).filter((c) => c && c !== 'unknown');
     const trackerReason = knownTrackerReason(p, kb);
     // What the team answered for this tool: ALL its categories (the matrix judges on all of them); judgeOwnerReport decides whether it applies.
     const site = m?.siteWorkspace?.classifications.find((c) => c.kind === 'tool' && c.partyId === p.partyId);

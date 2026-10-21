@@ -13,7 +13,7 @@ import {
   type ConsentTheme,
 } from './record/consent-config-guard.js';
 import { parseConsentToolConfig, withConsentConfigHash, type ConsentToolConfigInput } from './record/consent-config.js';
-import { COMPLYKIT_PARTY_ID, CONSENT_PLUGIN_LABELS, DEFAULT_KB, type KnowledgeBase, type KnowledgeEntry } from './registry/index.js';
+import { COMPLYKIT_PARTY_ID, CONSENT_PLUGIN_LABELS, DEFAULT_KB, kbEntryOf, type KnowledgeBase, type KnowledgeEntry } from './registry/index.js';
 import { knownTrackerReason } from './registry/kb/tracker-reason.js';
 import { purposeScopeOf } from './rules/tracking/compatibility.js';
 import {
@@ -235,7 +235,7 @@ export function applyWorkspaceToRecord(ev: TrackingEvaluation, ws: WorkspaceSnap
     if (c.kind !== 'tool') continue;
     const p = byId.get(c.partyId);
     if (!p) continue;
-    const e = kb.entries.find((x) => x.id === c.partyId);
+    const e = kbEntryOf(kb, c.partyId);
     if (e) p.categories = [...e.categories];
     else if (c.partyId.startsWith('unknown:')) p.categories = ['unknown'];
   }
@@ -268,7 +268,7 @@ export function refuseNecessaryTrackers(ev: TrackingEvaluation, kb: KnowledgeBas
     if (purposeScopeOf(p.categories) !== 'not-required' || p.categories.includes('consent')) continue;
     const why = knownTrackerReason(p, kb);
     if (!why) continue;
-    const e = kb.entries.find((x) => x.id === p.partyId);
+    const e = kbEntryOf(kb, p.partyId);
     const was = p.categories.join(', ');
     p.categories = e ? [...e.categories] : ['unknown'];
     // Remember the refusal on the site's answer so the report can say what complykit did with it.
@@ -412,7 +412,7 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
 
   const platform = platformOf(ev);
   const compat = new Map(compatibility.parties.map((c) => [c.partyId, c]));
-  const entryOf = (id: string): KnowledgeEntry | undefined => kb.entries.find((e) => e.id === id);
+  const entryOf = (id: string): KnowledgeEntry | undefined => kbEntryOf(kb, id);
 
   // Names the withdrawal flow must never delete: what necessary tools set, and
   // what the team classified as necessary.

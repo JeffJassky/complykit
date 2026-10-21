@@ -98,6 +98,13 @@ export const KnowledgeEntry = z.object({
     // inspection): the vendor's install snippet — 'fbq(', 'ttq.load(' — or its
     // tag-id shape. Hosts named inside a snippet are matched through `hosts`.
     inline: z.array(z.string().min(1)).optional(),
+    // Server gateways of this tool on hosts the knowledge base does not otherwise know (a first-party
+    // relay such as Meta's Conversions API Gateway on on.aws): a request to such a host is this tool's
+    // when its initiator chain holds one of `loaders` (regex sources over the loader script URL, query
+    // stripped) AND its pathname matches one of `paths` (plans/gateway-attribution.md).
+    gateways: z
+      .array(z.object({ loaders: z.array(z.string().min(1)).min(1), paths: z.array(z.string().min(1)).min(1), note: z.string().optional() }))
+      .optional(),
   }),
   categories: z.array(PartyCategory).min(1),
   // Field kinds this vendor is documented/observed to send (vocabulary: see
@@ -121,6 +128,9 @@ export const KnowledgeEntry = z.object({
   // How the tag is controlled, as data (see TagControl).
   control: TagControl.optional(),
   notes: z.string().optional(),
+  // Vendor documentation the entry's gateway rules (`match.gateways`) rest on; a gateway rule without one is not seeded.
+  // (Provenance.sources stays the general list; this is the citation a reader of the entry sees next to the rule.)
+  sources: z.array(z.string().url()).optional(),
   provenance: z.object({
     proposedBy: z.string(), // 'complykit-seed' | 'agent:<model>' | a person
     proposedAt: z.string(),

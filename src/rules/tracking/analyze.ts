@@ -10,6 +10,7 @@ import {
 import {
   DEFAULT_KB,
   lookupEntry,
+  lookupGateway,
   lookupStore,
   registrableDomain,
   domainLabel,
@@ -116,6 +117,8 @@ export interface PartyFacts {
   hosts: Set<string>;
   entry?: KnowledgeEntry;
   recognized: boolean;
+  /** KB entry id of the tool this party is a server gateway of (plans/gateway-attribution.md). */
+  gatewayOf?: string;
   categories: Array<PartyCategory | 'unknown'>;
   requests: PartyRequest[];
   stores: PartyStore[];
@@ -253,8 +256,16 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
   const parties = new Map<string, PartyFacts>();
   const mirrors = siteAssetMirrors(events.filter((e): e is RequestEvent => e.type === 'request').map((e) => e.url), siteDomain);
 
-  const partyFor = (host: string, pathname: string): { id: string; entry?: KnowledgeEntry; domain: string; cnameOf?: string } | null => {
+  type PartyRef = { id: string; entry?: KnowledgeEntry; domain: string; cnameOf?: string; gatewayOf?: string };
+  const partyFor = (host: string, pathname: string, chain: readonly string[] = []): PartyRef | null => {
     const domain = registrableDomain(host);
+    // A known tool's server gateway (Meta's Conversions API Gateway on on.aws, or a relay on the
+    // site's own subdomain) is that tool's: its script loaded it and it posts to the tool's endpoint.
+    // Only a host no entry matches can be one, and this runs before the first-party short-circuit.
+    if (chain.length && !lookupEntry(kb, host, pathname)) {
+      const gw = lookupGateway(kb, chain, pathname);
+      if (gw) return { id: `gateway:${gw.id}:${domain}`, entry: gw, domain, gatewayOf: gw.id };
+    }
     let effectiveHost = host;
     let cnameOf: string | undefined;
     if (mirrors.has(host)) return null; // the site's own files on its CDN
@@ -269,17 +280,18 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
     return { id: entry ? entry.id : `unknown:${effDomain}`, entry, domain: effDomain, cnameOf };
   };
 
-  const ensure = (p: { id: string; entry?: KnowledgeEntry; domain: string; cnameOf?: string }, host: string): PartyFacts => {
+  const ensure = (p: PartyRef, host: string): PartyFacts => {
     let f = parties.get(p.id);
     if (!f) {
       f = {
         partyId: p.id,
-        label: p.entry?.vendor ?? domainLabel(p.domain),
+        label: p.gatewayOf && p.entry ? `${p.entry.vendor} (server gateway on ${p.domain})` : (p.entry?.vendor ?? domainLabel(p.domain)),
         owner: p.entry?.owner,
         domain: p.domain,
         hosts: new Set(),
         entry: p.entry,
         recognized: Boolean(p.entry),
+        gatewayOf: p.gatewayOf,
         categories: p.entry ? [...p.entry.categories] : ['unknown'],
         requests: [],
         stores: [],
@@ -305,7 +317,7 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
       continue;
     }
     if (!/^https?:$/.test(u.protocol)) continue;
-    const p = partyFor(u.hostname, u.pathname);
+    const p = partyFor(u.hostname, u.pathname, e.initiator.chain);
     if (!p) continue;
     const f = ensure(p, u.hostname);
     const fields = parseFields(e.url, e.postData);
@@ -404,7 +416,7 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
 
   // 2. Script-written cookies/storage → the party whose script wrote them.
   const writerParty = (chain: string[]): PartyFacts | undefined => {
-    for (const url of chain) {
+    for (const [i, url] of chain.entries()) {
       const host = hostOf(url);
       if (!host) continue;
       let path = '/';
@@ -413,7 +425,7 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
       } catch {
         /* keep */
       }
-      const p = partyFor(host, path);
+      const p = partyFor(host, path, chain.slice(i + 1));
       if (p) return ensure(p, host);
       return undefined; // nearest writer is first-party code
     }

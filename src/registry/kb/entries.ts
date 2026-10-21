@@ -22,7 +22,7 @@ export const COMPLYKIT_HOSTS: readonly string[] = ['complykit-6v9s6.ondigitaloce
 const SEEDED = '2026-10-02';
 const seed = (e: Omit<KnowledgeEntryInput, 'provenance'> & { sources?: string[] }): KnowledgeEntryInput => {
   const { sources, ...rest } = e;
-  return { ...rest, provenance: { proposedBy: 'complykit-seed', proposedAt: SEEDED, sources: sources ?? [] } };
+  return { ...rest, ...(rest.match.gateways?.length ? { sources: sources ?? [] } : {}), provenance: { proposedBy: 'complykit-seed', proposedAt: SEEDED, sources: sources ?? [] } };
 };
 
 const GOOGLE_CONSENT = 'https://developers.google.com/tag-platform/security/guides/consent';
@@ -145,14 +145,18 @@ const BASE_ENTRIES: KnowledgeEntryInput[] = [
     id: 'meta.pixel',
     vendor: 'Meta Pixel',
     owner: 'Meta Platforms, Inc.',
-    match: { hosts: ['facebook.com', 'facebook.net', 'fbcdn.net'], inline: ['\\bfbq\\s*\\(', 'connect\\.facebook\\.net/[^"\'\\s]*fbevents\\.js', 'facebook\\.com/tr[/?]'] },
+    match: { hosts: ['facebook.com', 'facebook.net', 'fbcdn.net'], inline: ['\\bfbq\\s*\\(', 'connect\\.facebook\\.net/[^"\'\\s]*fbevents\\.js', 'facebook\\.com/tr[/?]'],
+      // Conversions API Gateway: runs in the advertiser's own cloud account (AWS ECS/EKS, GCP), so on a host no
+      // KB entry knows (on.aws, a site subdomain); the pixel sends each event to Meta and to the gateway.
+      gateways: [{ loaders: ['connect\\.facebook\\.net/[^"\'\\s]*fbevents\\.js'], paths: ['^/events(?:/|$)'], note: 'Meta Conversions API Gateway (the /events path is observed in the field, allen-heath.com 2026-10-21; the docs do not name it)' }],
+    },
     categories: ['advertising'],
     sends: ['page-address', 'browser-id', 'hashed-email', 'event-name', 'click-id'],
     stores: [{ name: '^_fb[pc]$', kind: 'cookie', lifetimeDays: 90 }],
     consentApi: "fbq('consent', 'revoke' | 'grant'); limited data use via fbq('dataProcessingOptions', ['LDU'], 0, 0)",
     decoder: 'meta',
     restrictedMode: 'Limited Data Use (dpo=LDU)',
-    sources: ['https://developers.facebook.com/docs/meta-pixel/', 'https://developers.facebook.com/docs/marketing-apis/data-processing-options'],
+    sources: ['https://developers.facebook.com/docs/meta-pixel/', 'https://developers.facebook.com/docs/marketing-apis/data-processing-options', 'https://developers.facebook.com/documentation/ads-commerce/gateway-products/conversions-api-gateway'],
   }),
   seed({
     id: 'meta.instagram',

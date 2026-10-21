@@ -113,6 +113,7 @@ export function buildTrackingEvaluation(input: EvaluationInput): TrackingEvaluat
           domain: f.domain,
           hosts: [],
           recognized: f.recognized,
+          ...(f.gatewayOf ? { gatewayOf: f.gatewayOf } : {}),
           kbStatus: f.entry ? entryStatus(f.entry) : 'unrecognized',
           categories: f.categories,
           behavesLikeTracker: false,
@@ -183,7 +184,8 @@ export function buildTrackingEvaluation(input: EvaluationInput): TrackingEvaluat
       continue;
     }
     const entry = entryOf.get(p.partyId);
-    const drift = entry ? driftFrom(entry, p, kb) : [];
+    // A server gateway is judged like its tool but is not the tool: its traffic is no drift from the tool's entry.
+    const drift = entry && !p.gatewayOf ? driftFrom(entry, p, kb) : [];
     if (drift.length) researchQueue.push({ partyId: p.partyId, domain: p.domain, kind: 'drift', reason: `behaves differently than its entry: ${drift.join('; ')}` });
   }
 

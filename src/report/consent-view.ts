@@ -109,6 +109,12 @@ export function toolStatus(p: PartyInventoryItem, groups: ActionGroup[], m: Cons
   if (purposeNeedsReview(p, m)) states.push(p.recognized ? 'Observed behavior needs review' : 'Purpose needs identification');
   return states.join(' · ') || 'No finding linked to this tool';
 }
+// A server gateway is recognised, not asked about: say why, in the vendor's own terms.
+export function gatewayNote(p: PartyInventoryItem): string {
+  if (!p.gatewayOf) return '';
+  const vendor = p.label.replace(/ \(server gateway on .*\)$/, '');
+  return `${vendor}’s server gateway on ${p.domain}: recognised because ${vendor}’s script loaded it and it posts to ${vendor}’s event endpoint.`;
+}
 export function toolInventory(m: ConsentReportModel, groups: ActionGroup[]): string {
   return m.inventory.map((p, i) => {
     const classKey = workspaceId('tool', [p.partyId, p.domain]);
@@ -124,6 +130,7 @@ export function toolInventory(m: ConsentReportModel, groups: ActionGroup[]): str
       ${linked.length ? `<p>${linked.map((g) => `<a class="human-link" href="#${g.id}">${esc(actionTitle(g))}</a>`).join('<br>')}</p>` : ''}
 ${classificationControls(classKey, p.label, {owner:p.owner,categories:p.categories})}
       <details class="human-details"><summary>Technical details and observed visitor actions</summary><div>
+      ${p.gatewayOf ? `<p>${esc(gatewayNote(p))}</p>` : ''}
       <p>Associated domain: <code>${esc(p.domain)}</code>. ${p.owner ? `Owner: ${esc(p.owner)}.` : 'Owner not identified.'} Recognition: ${esc(p.kbStatus)}.</p>
       <p>Hosts: ${p.hosts.map((h) => `<code>${esc(h)}</code>`).join(', ')}</p>
       <p>Tracking indicators: ${esc(p.trackerSignals.join(', ') || 'None recorded')}.</p>

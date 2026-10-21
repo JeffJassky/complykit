@@ -460,6 +460,8 @@ export const PartyInventoryItem = z.object({
   domain: z.string(), // registrable domain
   hosts: z.array(z.string()),
   recognized: z.boolean(),
+  // Set when this party is a known tool's server gateway (a relay on another domain): that tool's KB entry id.
+  gatewayOf: z.string().optional(),
   kbStatus: z.enum(['confirmed', 'proposed', 'unrecognized']),
   categories: z.array(z.string()),
   behavesLikeTracker: z.boolean(),

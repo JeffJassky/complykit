@@ -74,6 +74,29 @@ export function lookupEntry(kb: KnowledgeBase, host: string, pathname = '/'): Kn
   return undefined;
 }
 
+/** The entry a party id stands for: the exact entry id, else a server gateway
+ *  (`gateway:<entry id>:<domain>`) resolves to the tool it belongs to. Unknown parties have none. */
+export function kbEntryOf(kb: KnowledgeBase, partyId: string): KnowledgeEntry | undefined {
+  const exact = kb.entries.find((e) => e.id === partyId);
+  if (exact) return exact;
+  const m = /^gateway:(.+):[^:]+$/.exec(partyId);
+  return m ? kb.entries.find((e) => e.id === m[1]) : undefined;
+}
+
+/** The entry whose declared gateway this request is: an initiator-chain URL matches a gateway's
+ *  loader AND the pathname matches its paths. Callers apply it only to hosts no entry matches. */
+export function lookupGateway(kb: KnowledgeBase, chain: readonly string[], pathname: string): KnowledgeEntry | undefined {
+  if (!chain.length) return undefined;
+  const bare = chain.map((u) => u.replace(/[?#].*$/, ''));
+  for (const e of kb.entries) {
+    for (const g of e.match.gateways ?? []) {
+      if (!g.paths.some((p) => pathRe(p).test(pathname))) continue;
+      if (g.loaders.some((l) => bare.some((u) => pathRe(l).test(u)))) return e;
+    }
+  }
+  return undefined;
+}
+
 /** An entry whose declared stores name this cookie/storage key. */
 export function lookupStore(kb: KnowledgeBase, key: string): KnowledgeEntry | undefined {
   for (const e of kb.entries) {

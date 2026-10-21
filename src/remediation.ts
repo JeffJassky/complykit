@@ -9,7 +9,7 @@ import {
   type RemediationVerifySpec,
   type TrackingEvaluation,
 } from './record/index.js';
-import { COMPLYKIT_PARTY_ID, consentPluginPathPattern, DEFAULT_KB, type KnowledgeBase } from './registry/index.js';
+import { COMPLYKIT_PARTY_ID, consentPluginPathPattern, DEFAULT_KB, kbEntryOf, type KnowledgeBase } from './registry/index.js';
 import { buildConsentReportModel, DOCS_BASE, GTM_GUIDE, platformGuide, shortPage, type ChangeItem, type CompatibilityReport } from './report/index.js';
 import { reconcileRecord } from './consent-compatibility.js';
 import { toolConsentDefault } from './rules/remediation/verify.js';
@@ -551,7 +551,7 @@ function disambiguate(slots: Slot[]): void {
  */
 function classifySubjects(report: CompatibilityReport, ev: TrackingEvaluation, kb: KnowledgeBase): Array<{ partyId: string; label: string; domain: string }> {
   const out = new Map<string, { partyId: string; label: string; domain: string }>();
-  const known = (id: string): boolean => (kb.entries.find((e) => e.id === id)?.categories ?? []).some((c) => String(c) !== 'unknown');
+  const known = (id: string): boolean => (kbEntryOf(kb, id)?.categories ?? []).some((c) => String(c) !== 'unknown');
   const add = (partyId: string, label?: string): void => {
     const p = ev.inventory.find((x) => x.partyId === partyId);
     if (!p || out.has(partyId)) return;

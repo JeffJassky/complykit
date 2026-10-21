@@ -812,6 +812,8 @@ export interface PartyInventoryItem {
   domain: string;
   hosts: string[];
   recognized: boolean;
+  /** Set when this party is a known tool's server gateway: that tool's KB entry id. */
+  gatewayOf?: string;
   kbStatus: 'confirmed' | 'proposed' | 'unrecognized';
   categories: string[];
   behavesLikeTracker: boolean;
@@ -1250,7 +1252,7 @@ export interface KnowledgeEntry {
   id: string;
   vendor: string;
   owner?: string;
-  match: { hosts: string[]; path?: string; /** Regex sources over inline <script> bodies (static markup inspection). */ inline?: string[] };
+  match: { hosts: string[]; path?: string; /** Regex sources over inline <script> bodies (static markup inspection). */ inline?: string[]; /** Server gateways of this tool on otherwise-unknown hosts: recognised by the loader script in the initiator chain AND the endpoint path. */ gateways?: Array<{ loaders: string[]; paths: string[]; note?: string }> };
   categories: PartyCategory[];
   sends: string[];
   stores: Array<{ name: string; kind: 'cookie' | 'local' | 'session'; lifetimeDays?: number }>;
@@ -1259,6 +1261,8 @@ export interface KnowledgeEntry {
   restrictedMode?: string;
   control?: TagControl;
   notes?: string;
+  /** Vendor documentation the entry's gateway rules (`match.gateways`) rest on. */
+  sources?: string[];
   provenance: { proposedBy: string; proposedAt: string; confirmedBy?: string; confirmedAt?: string; sources: string[] };
 }
 /** An entry as written (defaults filled in on parse). */
@@ -1308,6 +1312,10 @@ export function domainLabel(domain: string): string;
 export function isEuEea(country: string): boolean;
 export function buildKnowledgeBase(opts?: { extra?: KnowledgeEntryInput[]; overrides?: SiteOverride[] }): KnowledgeBase;
 export function lookupEntry(kb: KnowledgeBase, host: string, pathname?: string): KnowledgeEntry | undefined;
+/** The entry a party id stands for: the exact entry id, else a server gateway id (`gateway:<entry id>:<domain>`) resolves to its tool's entry. */
+export function kbEntryOf(kb: KnowledgeBase, partyId: string): KnowledgeEntry | undefined;
+/** The entry whose declared server gateway a request is: a loader script in its initiator chain AND the endpoint path. Apply only to hosts no entry matches. */
+export function lookupGateway(kb: KnowledgeBase, chain: readonly string[], pathname: string): KnowledgeEntry | undefined;
 // Vendor install signatures over script text: KB entries' `match.inline`, shared by the markup inspector and the GTM parser.
 export function matchVendorSignatures(text: string, kb?: KnowledgeBase): string[];
 export function inlineRegExp(src: string): RegExp | null;

@@ -56,6 +56,8 @@ export {
   DEFAULT_KB,
   buildKnowledgeBase,
   lookupEntry,
+  kbEntryOf,
+  lookupGateway,
   lookupStore,
   entryStatus,
   matchVendorSignatures,
