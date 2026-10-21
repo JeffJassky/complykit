@@ -200,3 +200,27 @@ script's own origin").
 
 Accuracy limit: IP geolocation misplaces some visitors near state lines and on mobile or VPN
 networks. A Californian placed in Nevada gets no wiretap hold. Say so in the docs.
+
+## Region API (added 2026-10-21)
+
+The site usually knows where the visitor is already (CDN, server or platform), so
+it should be able to say so without any request. `/geo` stays, but only as the last fallback.
+
+- `window.ComplyKitRegion = 'US-CA'`, set before the tool's script. `resolveLocation` reads it
+  synchronously (parsed with `parseRegimeLocation`; anything unparseable is ignored). Order for a
+  non-fixed source: global → meta → header / platform. The decision's source is `'global'`, and a
+  header source with a global set never fetches. Under `fixed`, the global (then the meta) sets
+  only the location; the regime stays fixed. `overrides.regimes` applies to it as to any location.
+  `LocationEnv.window` gains `ComplyKitRegion`.
+- `ComplyKit.setRegion(value): boolean` on the public API (api.ts, exported from index.ts). It
+  parses the value and returns false (no change) when the value isn't a location or no store is
+  running. Otherwise it decides the regime (`fixed` → the fixed regime; else `overriddenRegime ??
+  regimeFor`), calls `store.setRegime(regime, location)`, and sets `diagnostics.location` to
+  `{ source: 'api', pending: false, … }`. A pending header lookup's later answer is then
+  ignored: once setRegion has run, `ready` must not call setRegime. A stored choice is never
+  changed (the store already guarantees this).
+- `LocationSource` gains `'global' | 'api'`.
+- Docs: docs/guide/location.md leads with the two site-supplied ways (the global, or the meta tag),
+  then setRegion and its limit (scripts released before the call cannot be unrun, so prefer the
+  global), then hosted `/geo` as the fallback. Add a CHANGELOG entry.
+- Contract tests: client/test/region-api.test.ts. Core size budget 16 KB.
