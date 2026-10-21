@@ -6,7 +6,8 @@
 // to a third party, the very thing the scanner reports.
 //
 // Sources, first hit wins:
-//   1. fixed     config.regimeSource {kind:'fixed'} — one regime for everyone.
+//   1. fixed     config.regimeSource {kind:'fixed'} — one regime for everyone. The
+//                default meta tag is still read, for the visitor's location only.
 //   2. meta      <meta name="complykit-region" content="US-CA"> written by the
 //                server template (or the name config.regimeSource names).
 //                Checked for every non-fixed source: it is synchronous and
@@ -14,7 +15,8 @@
 //   3. header    {kind:'header'}: a SAME-ORIGIN endpoint that echoes a CDN
 //                header as its body ("DE", "US-CA"). Asynchronous: until it
 //                answers, the visitor is under the strictest regime (`pending`),
-//                then the store moves to the real one. A cross-origin endpoint
+//                then the store moves to the real one (overrides.regimes['*'] does not apply while
+//                pending: scripts released then cannot be unrun). A cross-origin endpoint
 //                is refused.
 //   4. platform  {kind:'platform'}: Shopify `customerPrivacy.getRegion()`, read
 //                only if the platform already loaded it (the bridge is E1's).
@@ -49,7 +51,7 @@ export interface LocationDecision {
   location?: RegimeLocation;
   /** navigator.globalPrivacyControl === true. */
   gpc: boolean;
-  /** True while a header lookup is outstanding: `regime` is the strict placeholder (or the owner's '*' override). */
+  /** True while a header lookup is outstanding: `regime` is the strict placeholder (never an override). */
   pending: boolean;
   /** `regime` came from the owner's `overrides.regimes`, not the built-in table. */
   overridden: boolean;
@@ -145,7 +147,11 @@ export function resolveLocation(config: ConsentToolConfig, env: LocationEnv = {}
   };
 
   if (src.kind === 'fixed') {
-    return done({ regime: src.regime, source: 'fixed', gpc, pending: false, overridden: false });
+    // The regime is fixed and overrides.regimes is ignored, but the meta tag (and only it)
+    // still tells us WHERE the visitor is, so locationDefaults and location-keyed
+    // overrides.defaults apply.
+    const where = readMeta(doc, DEFAULT_REGION_META);
+    return done({ regime: src.regime, source: 'fixed', location: where, gpc, pending: false, overridden: false });
   }
 
   const metaName = src.kind === 'meta' && src.name ? src.name : DEFAULT_REGION_META;
@@ -162,8 +168,9 @@ export function resolveLocation(config: ConsentToolConfig, env: LocationEnv = {}
       if (!url && typeof console !== 'undefined') console.warn(`[complykit] location endpoint ${src.endpoint} is not same-origin; using the strictest regime`);
       return done(decide('unknown'));
     }
-    const o = overriddenRegime(config, undefined);
-    const initial: LocationDecision = { regime: o ?? FALLBACK_REGIME, source: 'unknown', gpc, pending: true, overridden: o !== undefined };
+    // "Not known yet" is not "unknown": scripts released in this window cannot be
+    // unrun, so a pending lookup always starts strict, whatever overrides.regimes['*'] says.
+    const initial: LocationDecision = { regime: FALLBACK_REGIME, source: 'unknown', gpc, pending: true, overridden: false };
     diagnostics.location = { ...initial, source: 'header' };
     const lookup = f(url, { credentials: 'same-origin', cache: 'no-store', redirect: 'error', headers: { accept: 'text/plain' } })
       .then((res) => (res.ok ? res.text() : ''))

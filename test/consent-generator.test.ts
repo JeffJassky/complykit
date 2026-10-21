@@ -679,6 +679,11 @@ describe('wiretap holds and owner overrides (1.1)', () => {
     expect(n?.message).toMatch(/counsel sign-off/);
   });
 
+  it('a note-only overrides block raises no policy-overridden note (matches the proof)', () => {
+    const r = gen(undefined, { overrides: { note: 'just a note' } });
+    expect(r.notes.some((x) => x.code === 'policy-overridden')).toBe(false);
+  });
+
   it('an override naming a category the site does not have is refused', () => {
     expect(() => gen(undefined, { overrides: { defaults: { 'opt-in': { social: true } } } })).toThrow();
   });

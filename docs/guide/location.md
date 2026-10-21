@@ -100,8 +100,10 @@ categories run before a choice. But wiretap-statute suits there reach analytics,
 chat and session recording that fire before consent, and the scanner expects them off. The
 generator therefore writes `locationDefaults` for those states (derived from the registry's
 wiretap requirements): analytics, advertising and any category with a wiretap-kind vendor stay
-off until the visitor accepts. The state needs to be known: a visitor whose location is only
-`US` is held to the regime's defaults. The banner says some purposes stay off until the visitor
+off until the visitor accepts. A visitor known only by
+country (a country-only CDN header, for example `US`) gets every wiretap hold of that
+country: the holds of all five states apply, because the tool cannot tell which state the
+visitor is in. The banner says some purposes stay off until the visitor
 accepts.
 
 ## Overriding the regime and the defaults
@@ -117,7 +119,7 @@ province as `opt-in`, or every location the table does not know as `opt-out`:
 
 Keys are looked up most specific first (`US-CA`, then `US`, then `*`); an unknown location
 matches only `*`. The tool runs what the owner configured, compliant or not. `fixed` ignores
-`overrides.regimes`. `ComplyKit.diagnostics.location` reports whether the regime was overridden.
+`overrides.regimes` (the regime stays the fixed one). `ComplyKit.diagnostics.location` reports whether the regime was overridden.
 
 The scanner and the report are fixed to complykit policy and never read the overrides, so a
 site that loosens past policy shows mismatches in its report. The proof adds a
@@ -125,7 +127,10 @@ site that loosens past policy shows mismatches in its report. The proof adds a
 
 **Unknown means `opt-in`.** If the source is missing, unreadable, cross-origin, slow or
 broken, the visitor gets the strictest regime. The generated config cannot loosen that
-fallback; only an explicit owner override (`overrides.regimes["*"]`) can. A misconfigured
+fallback; only an explicit owner override (`overrides.regimes["*"]`) can, and only once the
+lookup has finished unknown. While a `header` lookup is still pending the visitor is always
+`opt-in`, whatever `"*"` says: "not known yet" is not "unknown", and scripts released in
+that window cannot be unrun. A misconfigured
 location source makes the site stricter, never looser.
 
 ## Global Privacy Control
@@ -150,9 +155,11 @@ The supporting research is in `plans/research-consent-law.md` §1.4 and §8.
 Set the source with `regimeSource` in the config. The tool uses the first source that
 gives an answer:
 
-1. **`fixed`.** One regime applies to every visitor, and nothing else is read.
+1. **`fixed`.** One regime applies to every visitor, and `overrides.regimes` is ignored.
    `{ "kind": "fixed", "regime": "opt-in" }` is the safe choice when you have no
-   location source.
+   location source. The one thing still read is the `complykit-region` meta tag, and only
+   for the visitor's location: `locationDefaults` (the wiretap holds) and location-keyed
+   `overrides.defaults` apply to it, while the regime stays the fixed one.
 2. **Meta tag.** Your server writes
    `<meta name="complykit-region" content="US-CA">` into the page. The tool checks this
    for every non-fixed source because it is synchronous and needs no request. With

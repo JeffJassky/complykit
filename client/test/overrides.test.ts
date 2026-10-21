@@ -50,12 +50,15 @@ describe('location: overrides.regimes', () => {
     expect(at('US-TX')).toMatchObject({ regime: 'opt-out-signal', overridden: false });
     expect(at('DE')).toMatchObject({ regime: 'opt-in', overridden: false });
   });
-  it("'*' covers an unknown location, and a pending header lookup starts on it", () => {
+  it("'*' covers an unknown location; a pending header lookup still starts strict, and an unanswered one then uses it", async () => {
     const star = cfg({ overrides: { regimes: { '*': 'opt-out' } } });
     expect(resolveLocation(star, { document: metaDoc({}), onDate: ON }).initial).toMatchObject({ regime: 'opt-out', source: 'unknown', overridden: true });
     const header = cfg({ overrides: { regimes: { '*': 'opt-out' } } }, { kind: 'header', header: 'cf-ipcountry', endpoint: '/loc' });
     const r = resolveLocation(header, { document: metaDoc({}), pageUrl: 'https://shop.test/', fetch: () => new Promise(() => {}), onDate: ON });
-    expect(r.initial).toMatchObject({ regime: 'opt-out', pending: true, overridden: true });
+    expect(r.initial).toMatchObject({ regime: 'opt-in', pending: true, overridden: false });
+    // After the lookup fails (unknown), '*' applies.
+    const failed = resolveLocation(header, { document: metaDoc({}), pageUrl: 'https://shop.test/', fetch: () => Promise.reject(new Error('x')), onDate: ON });
+    expect(await failed.ready).toMatchObject({ regime: 'opt-out', pending: false, overridden: true, source: 'unknown' });
   });
   it('without overrides a pending lookup still starts strictest', () => {
     const header = cfg({}, { kind: 'header', header: 'cf-ipcountry', endpoint: '/loc' });
@@ -65,6 +68,20 @@ describe('location: overrides.regimes', () => {
   it('a fixed regime ignores overrides.regimes', () => {
     const fixed = cfg({ overrides: { regimes: { '*': 'opt-out' } } }, { kind: 'fixed', regime: 'opt-in' });
     expect(resolveLocation(fixed, { document: metaDoc({ 'complykit-region': 'US-TX' }), onDate: ON }).initial).toMatchObject({ regime: 'opt-in', source: 'fixed', overridden: false });
+  });
+  it('a fixed regime still reads the meta tag (only it) for the visitor location', () => {
+    const fixed = cfg({ overrides: { regimes: { 'US-CA': 'opt-out' } } }, { kind: 'fixed', regime: 'opt-in' });
+    expect(resolveLocation(fixed, { document: metaDoc({ 'complykit-region': 'US-CA' }), onDate: ON }).initial).toMatchObject({
+      regime: 'opt-in',
+      source: 'fixed',
+      overridden: false,
+      location: { country: 'US', region: 'CA' },
+    });
+    expect(resolveLocation(fixed, { document: metaDoc({}), onDate: ON }).initial.location).toBeUndefined();
+    // The location reaches the store defaults: the wiretap hold applies under a fixed regime.
+    const held = cfg({}, { kind: 'fixed', regime: 'opt-out' });
+    const d = resolveLocation(held, { document: metaDoc({ 'complykit-region': 'US-CA' }), onDate: ON }).initial;
+    expect(createStore(held, d.regime, { gpc: false, location: d.location }).state().categories).toEqual({ necessary: true, analytics: false, advertising: false });
   });
 });
 

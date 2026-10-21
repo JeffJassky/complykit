@@ -823,9 +823,9 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
   const locationDefaults: Record<string, Record<string, boolean>> = {};
   if (held.length) for (const code of [...WIRETAP_STATES].sort()) locationDefaults[code.toUpperCase()] = Object.fromEntries(held.map((id) => [id, false]));
   if (held.length) {
-    notes.push({ code: 'wiretap-holds', level: 'info', message: `${held.join(', ')} ${held.length === 1 ? 'is' : 'are'} held until the visitor accepts for visitors in ${Object.keys(locationDefaults).join(', ')}, where wiretap-statute suits reach pre-consent trackers (the scanner expects them off there). Elsewhere under the US regimes they run until the visitor opts out, or sends Global Privacy Control.` });
+    notes.push({ code: 'wiretap-holds', level: 'info', message: `${held.join(', ')} ${held.length === 1 ? 'is' : 'are'} held until the visitor accepts for visitors in ${Object.keys(locationDefaults).join(', ')}, where wiretap-statute suits reach pre-consent trackers (the scanner expects them off there). A visitor known only by country (a country-only CDN header) gets every hold of that country. Elsewhere under the US regimes they run until the visitor opts out, or sends Global Privacy Control.` });
   }
-  if (opts.overrides && (hasOverrides(opts) || opts.overrides.note)) {
+  if (opts.overrides && hasOverrides(opts)) {
     const what = describeOverrides(opts.overrides);
     notes.push({ code: 'policy-overridden', level: 'flag', message: `The site owner’s overrides are in this config${what.length ? `: ${what.join('; ')}` : ''}.${opts.overrides.note ? ` Owner’s note: “${opts.overrides.note}”` : ''} They run as written, compliant or not; the report still judges the site by complykit policy and shows anything they loosen as a mismatch.` });
   }

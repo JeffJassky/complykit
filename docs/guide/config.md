@@ -199,6 +199,7 @@ list in the generator) holding each category that is analytics or advertising, o
 vendor of a wiretap kind (chat, session recording, identity resolution). A held category stays off
 there until the visitor accepts, even in a regime whose `defaultByRegime` would grant it. This is
 what the scanner expects in those states, so the tool passes the scan it is measured by. The schema
+tool treats a visitor known only by country (a country-only CDN header) as being in every one of that country's wiretap states, so all of that country's holds apply. The schema
 refuses `true` (a grant is an override), `necessary`, and a category the config does not list.
 
 **`overrides`** is the owner's say, applied as written, in either direction: stricter or looser

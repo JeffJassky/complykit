@@ -207,7 +207,7 @@ On what this scan saw: 1 page with its HTML inspected, 1 verified location (Germ
 - Meta Pixel: an inline script — edit the existing tag in place (add type="text/plain" data-category="advertising"); the scan does not carry its code.
 - Visitor location: from Shopify (customerPrivacy.getRegion()). Where Shopify does not report a region, the visitor is treated as opt-in.
 - The snippet loads the tool from /complykit/v1/complykit-consent.js — a placeholder. Self-host complykit-consent.js and complykit-consent-ui.js in one folder and adjust the path; a third-party CDN URL means a request before consent.
-- analytics, advertising are held until the visitor accepts for visitors in US-CA, US-FL, US-IL, US-MD, US-PA, where wiretap-statute suits reach pre-consent trackers (the scanner expects them off there). Elsewhere under the US regimes they run until the visitor opts out, or sends Global Privacy Control.
+- analytics, advertising are held until the visitor accepts for visitors in US-CA, US-FL, US-IL, US-MD, US-PA, where wiretap-statute suits reach pre-consent trackers (the scanner expects them off there). A visitor known only by country (a country-only CDN header) gets every hold of that country. Elsewhere under the US regimes they run until the visitor opts out, or sends Global Privacy Control.
 
 This config describes what the scan saw — not a verdict on the site. The rescan after deployment is what shows whether tools are held back.
 "
