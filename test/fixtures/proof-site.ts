@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { withConsentConfigHash, type ConsentToolConfig, type ConsentToolConfigInput } from '../../src/record/index.js';
+import { CONSENT_CONFIG_VERSION, withConsentConfigHash, type ConsentToolConfig, type ConsentToolConfigInput } from '../../src/record/index.js';
 
 // A storefront with complykit's OWN consent tool installed (D10 "done when").
 // Serves the BUILT client (client/dist: core + UI file) on www.proof-shop.test and two
@@ -44,7 +44,7 @@ export interface ProofSite {
 /** The config a scan of this site would generate: fixed opt-in, two vendors, one gate rule each, a GTM section. */
 export function proofConfigInput(site: string, port: number, at = '2026-10-06T10:00:00.000Z', runId = 'run-a'): Omit<ConsentToolConfigInput, 'hash'> {
   return {
-    version: '1.0',
+    version: CONSENT_CONFIG_VERSION,
     generatedFrom: { runId, at, site, complykit: '0.0.0-test' },
     regimeSource: { kind: 'fixed', regime: 'opt-in' },
     categories: [
