@@ -878,6 +878,7 @@ export type ConsentToolProofFindingCode =
   | 'tool-not-running'
   | 'gpc-not-honored'
   | 'vendor-not-in-config'
+  | 'policy-overridden'
   | 'gated-document-write';
 export interface ConsentToolProofFinding {
   code: ConsentToolProofFindingCode;
@@ -1342,6 +1343,11 @@ export type RegimeVerdict = Regime | 'unknown';
  * the client's posture). Codes outside EU/UK/US are 'unknown'.
  */
 export function regimeForCodes(codes: readonly string[], onDate?: string, opts?: { unverifiedUs?: 'baseline' | 'strict' }): RegimeVerdict;
+/**
+ * Jurisdiction codes → the visitor location config location keys are looked up under:
+ * ['us','us-ca'] → { US, CA }; ['eu','eu-de'] → { DE }; ['uk'] → { GB }. A bloc alone ('eu') or no codes → undefined.
+ */
+export function visitorLocationFromCodes(codes: readonly string[]): MeasuredPlace | undefined;
 /** US states with a comprehensive privacy act: in-force date and, where the act requires honoring GPC, that date. */
 export const US_PRIVACY_ACT_STATES: ReadonlyArray<{ state: string; from: string; gpcFrom?: string }>;
 /** US states whose law requires honoring an opt-out preference signal (GPC), with the date that duty starts. */
@@ -1727,6 +1733,8 @@ export interface GenerateConsentConfigOptions {
   blockPage?: boolean;
   theme?: ConsentTheme;
   lifetimeDays?: number;
+  /** The site owner's overrides (schema 1.1), written into the config as given and named in a `policy-overridden` note. */
+  overrides?: ConsentOverrides;
 }
 export interface GeneratorNote {
   code: string;

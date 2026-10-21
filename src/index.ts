@@ -181,6 +181,7 @@ export {
   isWiretapJurisdiction,
   WIRETAP_STATES,
   regimeForCodes,
+  visitorLocationFromCodes,
   isUsPrivacyActState,
   US_PRIVACY_ACT_STATES,
   US_OPT_OUT_SIGNAL_STATES,

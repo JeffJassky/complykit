@@ -176,3 +176,23 @@ export function isUsPrivacyActState(region: string, onDate: string = today()): b
   const st = stateOf(region);
   return !!st && US_PRIVACY_ACT_STATES.some((s) => s.state === st && s.from <= onDate);
 }
+
+/**
+ * A measured location's jurisdiction codes (jurisdictions.ts) as the visitor
+ * location the config's location keys are looked up under: ['us','us-ca'] →
+ * {US, CA}; ['us'] → {US}; ['eu','eu-de'] → {DE}; ['uk'] → {GB}; ['br'] → {BR}.
+ * A bloc alone ('eu') or no codes is no location (undefined: only '*' matches).
+ * The proof uses it to judge the tool by the config's own defaults at that place.
+ */
+export function visitorLocationFromCodes(codes: readonly string[]): RegimeLocation | undefined {
+  const sub = codes.find((c) => /^[a-z]{2}-[a-z0-9]{1,3}$/i.test(c));
+  if (sub) {
+    const [cc, rg] = sub.toUpperCase().split('-');
+    // 'eu-de' names a country inside the EU; 'us-ca' a subdivision of the US.
+    return cc === 'EU' ? { country: rg } : { country: cc === 'UK' ? 'GB' : cc, region: rg };
+  }
+  const country = codes.find((c) => /^[a-z]{2}$/i.test(c) && c.toLowerCase() !== 'eu');
+  if (!country) return undefined;
+  const cc = country.toUpperCase();
+  return { country: cc === 'UK' ? 'GB' : cc };
+}

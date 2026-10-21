@@ -94,15 +94,45 @@ What each regime grants before a choice comes from your config's
 `categories[].defaultByRegime` (see [Consent tool config](./config.md)). Under `opt-in`,
 nothing but `necessary` is ever granted by default.
 
+**Wiretap states hold, whatever the regime.** California, Florida, Pennsylvania, Maryland
+and Illinois are `opt-out-signal` or `opt-out`, where `defaultByRegime` lets non-necessary
+categories run before a choice. But wiretap-statute suits there reach analytics, ad pixels,
+chat and session recording that fire before consent, and the scanner expects them off. The
+generator therefore writes `locationDefaults` for those states (derived from the registry's
+wiretap requirements): analytics, advertising and any category with a wiretap-kind vendor stay
+off until the visitor accepts. The state needs to be known: a visitor whose location is only
+`US` is held to the regime's defaults. The banner says some purposes stay off until the visitor
+accepts.
+
+## Overriding the regime and the defaults
+
+The site owner can change what the tool does at any location with `overrides` in the config
+(`overrides.regimes`, `overrides.defaults`, `overrides.honorGpc`; see
+[Consent tool config](./config.md#locationdefaults-and-overrides-1-1)). For example, treat a
+province as `opt-in`, or every location the table does not know as `opt-out`:
+
+```json
+"overrides": { "regimes": { "CA-QC": "opt-in", "*": "opt-out" } }
+```
+
+Keys are looked up most specific first (`US-CA`, then `US`, then `*`); an unknown location
+matches only `*`. The tool runs what the owner configured, compliant or not. `fixed` ignores
+`overrides.regimes`. `ComplyKit.diagnostics.location` reports whether the regime was overridden.
+
+The scanner and the report are fixed to complykit policy and never read the overrides, so a
+site that loosens past policy shows mismatches in its report. The proof adds a
+`policy-overridden` finding that names each override and the owner's note.
+
 **Unknown means `opt-in`.** If the source is missing, unreadable, cross-origin, slow or
-broken, the visitor gets the strictest regime. That fallback cannot be configured. A
-misconfigured location source makes the site stricter, never looser.
+broken, the visitor gets the strictest regime. The generated config cannot loosen that
+fallback; only an explicit owner override (`overrides.regimes["*"]`) can. A misconfigured
+location source makes the site stricter, never looser.
 
 ## Global Privacy Control
 
 If the browser sends `navigator.globalPrivacyControl === true`, the tool denies every
-non-necessary category by default, in every regime. A visitor's own explicit choice
-still applies afterwards. The consent record stores `gpc: true`, which is your proof
+non-necessary category by default, in every regime, unless the owner set
+`overrides.honorGpc` to `false`. A visitor's own explicit choice still applies afterwards. The consent record stores `gpc: true`, which is your proof
 that the signal was received.
 
 This goes further than the law strictly requires. Only some states require honoring
@@ -141,7 +171,7 @@ gives an answer:
 5. **Unknown.** The visitor gets `opt-in`.
 
 The tool records which source gave the answer in `ComplyKit.diagnostics.location`
-(`{ source, regime, pending, gpc }`). A rescan reads it from there.
+(`{ source, regime, pending, gpc, location, overridden }`). A rescan reads it from there.
 
 ::: warning Cached HTML and the meta tag
 If a CDN or page cache stores your HTML, a meta tag written at the origin is cached

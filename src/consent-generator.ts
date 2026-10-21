@@ -2,6 +2,8 @@ import type { CompanionCmp, Finding, PartyInventoryItem, TrackingEvaluation } fr
 import {
   CONSENT_CONFIG_VERSION,
   NECESSARY_CATEGORY,
+  hasOverrides,
+  type ConsentOverrides,
   type ConsentPlatform,
   type ConsentToolConfig,
   type ConsentVendor,
@@ -13,9 +15,10 @@ import {
   type ConsentTheme,
 } from './record/consent-config-guard.js';
 import { parseConsentToolConfig, withConsentConfigHash, type ConsentToolConfigInput } from './record/consent-config.js';
-import { COMPLYKIT_PARTY_ID, CONSENT_PLUGIN_LABELS, DEFAULT_KB, type KnowledgeBase, type KnowledgeEntry } from './registry/index.js';
+import { COMPLYKIT_PARTY_ID, CONSENT_PLUGIN_LABELS, DEFAULT_KB, WIRETAP_CATEGORIES, WIRETAP_STATES, type KnowledgeBase, type KnowledgeEntry } from './registry/index.js';
 import { knownTrackerReason } from './registry/kb/tracker-reason.js';
 import { purposeScopeOf } from './rules/tracking/compatibility.js';
+import { describeOverrides } from './rules/tracking/consent-tool-proof.js';
 import {
   buildConsentReportModel,
   renderChangeListMarkdown,
@@ -74,6 +77,12 @@ export { scriptJson };
 //     so; without it every visitor is treated as opt-in — fail closed).
 //   - theme and strings empty (the tool's defaults, per regime), layout 'bar',
 //     blockPage off, choices remembered 365 days, no consent-record endpoint unless asked.
+//   - Wiretap holds (schema 1.1, plans/regime-overrides.md): in every wiretap-
+//     litigation state (registry/wiretap.ts) the config holds, before a choice,
+//     every non-necessary category that is analytics or advertising or that has a
+//     vendor of a wiretap kind (WIRETAP_CATEGORIES: chat, session recording, …) —
+//     `locationDefaults`, holds only. The owner's `overrides` (opts.overrides) are
+//     written as given, never decided here, and named in a `policy-overridden` note.
 //   - The output parses against the D2 schema and its hash verifies, or the
 //     generator throws.
 
@@ -96,9 +105,10 @@ const CATEGORY_TEXT: Record<string, { label: string; description: string }> = {
 
 // Granted before a choice, per regime. Under opt-in nothing but necessary (the
 // schema enforces it). Under the two US regimes every category "may run before a
-// choice" — the same expectation the report's behavior matrix applies
+// choice" — the report's behavior matrix expects that outside the wiretap states
 // (src/report/cookie-purpose.ts) — and the tool denies them all when the browser
-// sends Global Privacy Control (the store, D3), or when the visitor opts out.
+// sends Global Privacy Control (the store, D3), or when the visitor opts out. In the
+// wiretap states `locationDefaults` (below) holds the categories the matrix expects off.
 const DEFAULTS: Record<string, ConsentToolConfig['categories'][number]['defaultByRegime']> = {
   necessary: { 'opt-in': true, 'opt-out-signal': true, 'opt-out': true },
 };
@@ -141,7 +151,9 @@ export type GeneratorNoteCode =
   | 'dormant-tags' // tags in the HTML for tools that never ran
   | 'gtag-config-via-gtm' // a Google tag destination GTM loads from a gtag('config') command in the page
   | 'data-url-tag' // a tag whose code is a data: URL (a performance plugin's form)
-  | 'optimizer-delay'; // a tag a performance plugin delays: not consent gating
+  | 'optimizer-delay' // a tag a performance plugin delays: not consent gating
+  | 'wiretap-holds' // locationDefaults: categories held before a choice in the wiretap states
+  | 'policy-overridden'; // the owner's overrides are in the config
 
 export interface GeneratorNote {
   code: GeneratorNoteCode;
@@ -192,6 +204,8 @@ export interface GenerateConsentConfigOptions {
   blockPage?: boolean;
   theme?: ConsentTheme;
   lifetimeDays?: number;
+  /** The site owner's overrides (schema 1.1): written into the config as given (the service keeps them with the consent settings), and named in a `policy-overridden` flag note. They may loosen policy; the report still judges by complykit policy. */
+  overrides?: ConsentOverrides;
 }
 
 export interface GeneratedConsentConfig {
@@ -798,11 +812,31 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
     notes.push({ code: 'script-path', level: 'info', message: `The snippet loads the tool from ${scriptSrc} — a placeholder. Self-host complykit-consent.js and complykit-consent-ui.js in one folder and adjust the path; a third-party CDN URL means a request before consent.` });
   }
 
+  // Policy by location (1.1): the wiretap states hold what the wiretap theories reach, until the visitor accepts.
+  // A category is reached when it is analytics or advertising, or any vendor in it is of a wiretap kind.
+  const reached = new Set<string>(['analytics', 'advertising']);
+  for (const v of vendors) {
+    const cats = new Set([...(ev.inventory.find((p) => p.partyId === v.id)?.categories ?? []), ...(entryOf(v.id)?.categories ?? [])]);
+    if ([...cats].some((c) => (WIRETAP_CATEGORIES as ReadonlySet<string>).has(c))) reached.add(v.category);
+  }
+  const held = categories.filter((c) => c.id !== NECESSARY_CATEGORY && reached.has(c.id)).map((c) => c.id);
+  const locationDefaults: Record<string, Record<string, boolean>> = {};
+  if (held.length) for (const code of [...WIRETAP_STATES].sort()) locationDefaults[code.toUpperCase()] = Object.fromEntries(held.map((id) => [id, false]));
+  if (held.length) {
+    notes.push({ code: 'wiretap-holds', level: 'info', message: `${held.join(', ')} ${held.length === 1 ? 'is' : 'are'} held until the visitor accepts for visitors in ${Object.keys(locationDefaults).join(', ')}, where wiretap-statute suits reach pre-consent trackers (the scanner expects them off there). Elsewhere under the US regimes they run until the visitor opts out, or sends Global Privacy Control.` });
+  }
+  if (opts.overrides && (hasOverrides(opts) || opts.overrides.note)) {
+    const what = describeOverrides(opts.overrides);
+    notes.push({ code: 'policy-overridden', level: 'flag', message: `The site owner’s overrides are in this config${what.length ? `: ${what.join('; ')}` : ''}.${opts.overrides.note ? ` Owner’s note: “${opts.overrides.note}”` : ''} They run as written, compliant or not; the report still judges the site by complykit policy and shows anything they loosen as a mismatch.` });
+  }
+
   const input: Omit<ConsentToolConfigInput, 'hash'> = {
     version: CONSENT_CONFIG_VERSION,
     generatedFrom: { runId: ev.runId, at, site: ev.site.registrableDomain.toLowerCase(), complykit: opts.complykitVersion, kb: ev.versions.kb },
     regimeSource,
     categories,
+    ...(held.length ? { locationDefaults } : {}),
+    ...(opts.overrides ? { overrides: opts.overrides } : {}),
     vendors,
     gate,
     ...(gtm ? { gtm } : {}),

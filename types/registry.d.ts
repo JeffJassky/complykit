@@ -96,6 +96,7 @@ export {
   normalizeRegion,
   regimeFor,
   regimeForCodes,
+  visitorLocationFromCodes,
   parseRegimeLocation,
   isOptOutSignalState,
   isWiretapJurisdiction,

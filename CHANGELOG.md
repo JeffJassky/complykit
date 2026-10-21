@@ -9,6 +9,21 @@ real if CI runs the matrix. See standards/traps.md #10.
 
 ## [Unreleased]
 
+### Added: wiretap holds and owner overrides (config schema 1.1)
+- The generated config now holds analytics, advertising and any category with a
+  wiretap-kind vendor before a choice in the wiretap-litigation states
+  (`locationDefaults`, derived from `WIRETAP_STATES` and `WIRETAP_CATEGORIES`), so
+  the tool passes the scan it is measured by in California and the other wiretap states.
+- `overrides` (regimes, per-location or per-regime defaults, `honorGpc`, a note): the
+  owner can run the tool in any direction. The scanner and the report keep judging by
+  complykit policy; a looser setting shows as mismatches there. The proof judges the
+  tool by its own config at the scanned location and names the overrides in a new
+  `policy-overridden` finding.
+- `generateConsentConfig` takes `overrides` and adds `wiretap-holds` (info) and
+  `policy-overridden` (flag) notes. `expectedGrantedFor` takes a location.
+  `visitorLocationFromCodes` exported. Config `version` is `1.1` (additive: a 1.0 tool
+  ignores both fields; configs without them hash the same).
+
 ### Added: multi-region scans
 - `complykit consent --collect-only` runs only the browser half and leaves a
   `collection.json` handoff; `--merge <dirs>` combines handoffs from several machines
