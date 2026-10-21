@@ -7,6 +7,13 @@ describe('geoFromCityRecord', () => {
   it('country ISO code plus the first subdivision code', () => {
     expect(geoFromCityRecord({ country: { iso_code: 'US' }, subdivisions: [{ iso_code: 'CA' }, { iso_code: 'LA' }] } as never)).toEqual({ country: 'US', region: 'CA' });
   });
+  it('DB-IP Lite names the subdivision without a code: US states and Canadian provinces map from the English name', () => {
+    expect(geoFromCityRecord({ country: { iso_code: 'US' }, subdivisions: [{ names: { en: 'California' } }] } as never)).toEqual({ country: 'US', region: 'CA' });
+    expect(geoFromCityRecord({ country: { iso_code: 'US' }, subdivisions: [{ names: { en: 'New Hampshire' } }] } as never)).toEqual({ country: 'US', region: 'NH' });
+    expect(geoFromCityRecord({ country: { iso_code: 'CA' }, subdivisions: [{ names: { en: 'Québec' } }] } as never)).toEqual({ country: 'CA', region: 'QC' });
+    expect(geoFromCityRecord({ country: { iso_code: 'DE' }, subdivisions: [{ names: { en: 'Bavaria' } }] } as never)).toEqual({ country: 'DE' });
+    expect(geoFromCityRecord({ country: { iso_code: 'US' }, subdivisions: [{ names: { en: 'Atlantis' } }] } as never)).toEqual({ country: 'US' });
+  });
   it('a country with no subdivision has no region', () => {
     expect(geoFromCityRecord({ country: { iso_code: 'DE' } } as never)).toEqual({ country: 'DE' });
     expect(geoFromCityRecord({ country: { iso_code: 'DE' }, subdivisions: [] } as never)).toEqual({ country: 'DE' });
