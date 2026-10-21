@@ -137,7 +137,7 @@ The platform injects these tools itself, so a rewrite of your HTML does not reac
 ### Shopify · Google Ads
 
 - Change id: \`use-platform-api:10caba2c0e06\`
-- use Shopify.customerPrivacy.setTrackingConsent (loadFeatures consent-tracking-api first); dashboard: Settings → Customer privacy (cookie banner, regions)
+- use Shopify.customerPrivacy.setTrackingConsent (loadFeatures consent-tracking-api first); dashboard: Settings → Customer events → the pixel → Customer privacy: Permission "Required" with the purposes it serves, and Data sale where it is one; an app pixel's purposes are fixed by its app (disconnect it, or replace it with a custom pixel). Shopify's banner regions: Settings → Customer privacy
 - Guide: [Installing on Shopify](https://jeffjassky.github.io/complykit/guide/platform-shopify)
 
 ## 6. Vendor consent calls (alongside the block, never instead) (2)
