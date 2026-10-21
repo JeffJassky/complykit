@@ -9,6 +9,16 @@ real if CI runs the matrix. See standards/traps.md #10.
 
 ## [Unreleased]
 
+### Added: region API
+- Client: `window.ComplyKitRegion = 'US-CA'`, set before the tool's script, tells the tool
+  where the visitor is with no request. It is read synchronously, beats the meta tag, the
+  header endpoint (never fetched) and the platform, and reports source `'global'`. Under a
+  `fixed` regime it sets only the location.
+- Client: `ComplyKit.setRegion(value): boolean` does the same after load (source `'api'`).
+  A pending header lookup's late answer is then ignored; a stored choice is never changed.
+  Returns false when the value is not a location or the tool is not running.
+- `LocationSource` gains `'global'` and `'api'`.
+
 ### Added: hosted location
 - Service: public `GET /geo` answers the visitor's `CC-RR` from a local DB-IP City Lite
   database (`GEO_DB_PATH`), reading the IP only from `GEO_IP_HEADER`

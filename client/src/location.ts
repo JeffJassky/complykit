@@ -6,8 +6,13 @@
 // to a third party, the very thing the scanner reports.
 //
 // Sources, first hit wins:
+//   0. global    window.ComplyKitRegion = 'US-CA', set by the site before this script.
+//                Read synchronously, beats everything below (the header endpoint is
+//                never fetched). Anything that is not a location is ignored.
+//                `ComplyKit.setRegion()` (api.ts) is the after-load route, source 'api'.
 //   1. fixed     config.regimeSource {kind:'fixed'} — one regime for everyone. The
-//                default meta tag is still read, for the visitor's location only.
+//                global, then the default meta tag, are still read, for the visitor's
+//                location only.
 //   2. meta      <meta name="complykit-region" content="US-CA"> written by the
 //                server template (or the name config.regimeSource names).
 //                Checked for every non-fixed source: it is synchronous and
@@ -45,7 +50,7 @@ export const DEFAULT_REGION_META = 'complykit-region';
 /** How long the header endpoint gets before the visitor stays on the strictest regime for this page. */
 export const HEADER_TIMEOUT_MS = 3000;
 
-export type LocationSource = 'fixed' | 'meta' | 'header' | 'platform' | 'unknown';
+export type LocationSource = 'fixed' | 'global' | 'api' | 'meta' | 'header' | 'platform' | 'unknown';
 
 export interface LocationDecision {
   regime: Regime;
@@ -65,7 +70,7 @@ export interface LocationEnv {
   document?: Pick<Document, 'querySelector'>;
   navigator?: object;
   /** For the platform source: `window.Shopify`. */
-  window?: { Shopify?: { customerPrivacy?: { getRegion?: () => unknown } } };
+  window?: { ComplyKitRegion?: unknown; Shopify?: { customerPrivacy?: { getRegion?: () => unknown } } };
   fetch?: (url: string, init?: RequestInit) => Promise<{ ok: boolean; text(): Promise<string> }>;
   /** The page URL; the header endpoint may share its origin. */
   pageUrl?: string;
@@ -95,6 +100,14 @@ function readMeta(doc: LocationEnv['document'], name: string): RegimeLocation | 
   if (!doc || !/^[\w.:-]+$/.test(name)) return undefined;
   try {
     return parseRegimeLocation(doc.querySelector(`meta[name="${name}"]`)?.getAttribute('content'));
+  } catch {
+    return undefined;
+  }
+}
+
+function readGlobal(win: LocationEnv['window']): RegimeLocation | undefined {
+  try {
+    return parseRegimeLocation(win?.ComplyKitRegion);
   } catch {
     return undefined;
   }
@@ -162,12 +175,15 @@ export function resolveLocation(config: ConsentToolConfig, env: LocationEnv = {}
   };
 
   if (src.kind === 'fixed') {
-    // The regime is fixed and overrides.regimes is ignored, but the meta tag (and only it)
-    // still tells us WHERE the visitor is, so locationDefaults and location-keyed
+    // The regime is fixed and overrides.regimes is ignored, but the global, then the meta tag
+    // (and only they) still tell us WHERE the visitor is, so locationDefaults and location-keyed
     // overrides.defaults apply.
-    const where = readMeta(doc, DEFAULT_REGION_META);
+    const where = readGlobal(win) ?? readMeta(doc, DEFAULT_REGION_META);
     return done({ regime: src.regime, source: 'fixed', location: where, gpc, pending: false, overridden: false });
   }
+
+  const fromGlobal = readGlobal(win);
+  if (fromGlobal) return done(decide('global', fromGlobal));
 
   const metaName = src.kind === 'meta' && src.name ? src.name : DEFAULT_REGION_META;
   const fromMeta = readMeta(doc, metaName) ?? (metaName !== DEFAULT_REGION_META ? readMeta(doc, DEFAULT_REGION_META) : undefined);
@@ -192,7 +208,7 @@ export function resolveLocation(config: ConsentToolConfig, env: LocationEnv = {}
       .then((body) => decide('header', parseRegimeLocation(body.split(/[\r\n,]/)[0])))
       .catch(() => decide('unknown'));
     const timeout = new Promise<LocationDecision>((r) => setTimeout(() => r(decide('unknown')), env.timeoutMs ?? HEADER_TIMEOUT_MS));
-    const ready = Promise.race([lookup, timeout]).then(note);
+    const ready = Promise.race([lookup, timeout]).then((d) => (diagnostics.location?.pending ? note(d) : d)); // setRegion() ran meanwhile: keep its record
     return { initial, ready };
   }
 

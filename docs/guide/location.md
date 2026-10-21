@@ -9,6 +9,37 @@ would send the visitor's IP address to a third party before consent, which is ex
 what the scanner reports. The location has to come from **your own server, your CDN
 or your platform**. This page covers how to provide it.
 
+## Telling the tool where the visitor is
+
+If your site already knows the visitor's location (from your CDN, server or platform),
+say so. No request is made, and the decision is in place before any tracker can run.
+
+**The global (preferred).** Set `window.ComplyKitRegion` before the tool's script:
+
+```html
+<script>window.ComplyKitRegion = 'US-CA';</script>
+<script src="https://<host>/s/<your-domain>.js"></script>
+```
+
+The tool reads it synchronously. It beats the meta tag, the `header` endpoint (which is
+then never fetched) and the platform source. A value that is not a location (`''`,
+`'Europe'`, a number) is ignored and the next source decides. `ComplyKit.diagnostics.location`
+reports `source: 'global'`.
+
+**The meta tag.** `<meta name="complykit-region" content="US-CA">`, written by your server
+or at the edge (see [Sources](#sources-in-order) and the caching warning there).
+
+**`ComplyKit.setRegion('US-CA')`.** For a location that only becomes known after load.
+It returns `true` and moves the defaults, or returns `false` and changes nothing when the
+value is not a location or the tool is not running. It replaces whatever was decided, and
+a pending `header` lookup's late answer is then ignored. It reports `source: 'api'`. A
+stored choice is never changed. Its limit: scripts the tool released before the call
+cannot be unrun, so a visitor who started under a looser regime keeps what already ran.
+Prefer the global, which is in place before anything is released.
+
+If you do none of these, a hosted install falls back to the hosted `/geo` lookup (see
+[Hosted installs](#hosted-installs)).
+
 ## How the regime is decided
 
 The tool reads a location such as `DE` or `US-CA` (ISO 3166-1 country, with an optional
@@ -155,9 +186,10 @@ The supporting research is in `plans/research-consent-law.md` §1.4 and §8.
 Set the source with `regimeSource` in the config. The tool uses the first source that
 gives an answer:
 
+0. **The global.** `window.ComplyKitRegion` (above) is read first, for every source.
 1. **`fixed`.** One regime applies to every visitor, and `overrides.regimes` is ignored.
    `{ "kind": "fixed", "regime": "opt-in" }` is the safe choice when you have no
-   location source. The one thing still read is the `complykit-region` meta tag, and only
+   location source. The one thing still read is the global, then the `complykit-region` meta tag, and only
    for the visitor's location: `locationDefaults` (the wiretap holds) and location-keyed
    `overrides.defaults` apply to it, while the regime stays the fixed one.
 2. **Meta tag.** Your server writes

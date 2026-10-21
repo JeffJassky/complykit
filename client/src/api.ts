@@ -7,6 +7,8 @@
 //                                      Listeners added before the store exists are
 //                                      kept and attached when it starts.
 //   ComplyKit.open()                 → asks the banner (D9) to show its settings
+//   ComplyKit.setRegion('US-CA')     → true; tells the tool where the visitor is after load
+//                                      (false, nothing changed: not a location, or not running)
 //   ComplyKit.withdraw()             → every non-necessary category denied, a
 //                                      record sent, 'withdraw' emitted
 //
@@ -21,13 +23,18 @@
 import { CONSENT_CONFIG_ELEMENT_ID, guardConsentToolConfig, type ConsentToolConfig, type Regime } from './config.js';
 import { createStore, type ConsentState, type ConsentStore, type Listener, type StoreEvent, type StoreOptions } from './store.js';
 import { TOOL_VERSION } from './version.js';
-import { resolveLocation } from './location.js';
+import { resolveLocation, readGpc } from './location.js';
+import { regimeFor, parseRegimeLocation } from '../../src/registry/regime.js';
+import { overriddenRegime } from './config.js';
+import { diagnostics } from './diagnostics.js';
 import { report } from './events.js';
 
 let store: ConsentStore | undefined;
 let config: ConsentToolConfig | undefined;
 const pending: Array<[StoreEvent, Listener, { off?: () => void }]> = [];
 /** Settles when a pending location lookup has answered or timed out; undefined when none is outstanding. */
+/** setRegion() ran: a pending header lookup's late answer must not move the store. */
+let regionSet = false;
 let locationWait: Promise<void> | undefined;
 export const locationPending = (): Promise<void> | undefined => locationWait;
 const waiting: Array<(s: ConsentStore) => void> = [];
@@ -58,7 +65,7 @@ export function init(raw: unknown, regime?: Regime, opts: StoreOptions = {}): Co
   if (loc?.initial.pending) {
     const started = store;
     void loc.ready.then((d) => {
-      if (store === started) started.setRegime(d.regime, d.location);
+      if (store === started && !regionSet) started.setRegime(d.regime, d.location);
     });
   }
   for (const p of pending) p[2].off = store.on(p[0], p[1]);
@@ -122,6 +129,23 @@ export function on(event: StoreEvent, fn: Listener): () => void {
     if (i >= 0) pending.splice(i, 1);
     entry[2].off?.();
   };
+}
+
+/**
+ * Tell the tool where the visitor is (`'US-CA'`, `'DE'`). Replaces what was decided, and a pending header
+ * lookup's late answer is then ignored; a stored choice is never changed. Scripts released before the call cannot
+ * be unrun, so prefer `window.ComplyKitRegion` before the script. False (nothing changed) for a value that is
+ * not a location, or when the tool is not running.
+ */
+export function setRegion(value: unknown): boolean {
+  const location = parseRegimeLocation(value);
+  if (!location || !store || !config) return false;
+  const o = config.regimeSource.kind === 'fixed' ? undefined : overriddenRegime(config, location);
+  const regime = config.regimeSource.kind === 'fixed' ? config.regimeSource.regime : o ?? regimeFor(location);
+  regionSet = true;
+  store.setRegime(regime, location);
+  diagnostics.location = { source: 'api', regime, location, pending: false, gpc: readGpc(), overridden: o !== undefined };
+  return true;
 }
 
 export function open(): void {

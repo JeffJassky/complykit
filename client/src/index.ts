@@ -3,7 +3,7 @@
 // exposes this module's exports as the global `ComplyKit`.
 export { TOOL_VERSION as version, BUILD as build } from './version.js';
 // Consent state store + public API (D3): ComplyKit.get / on / open / withdraw.
-export { get, on, open, withdraw, init, sync } from './api.js';
+export { get, on, open, withdraw, init, sync, setRegion } from './api.js';
 export { installGtmBridge, consentModeSignals, GTM_CONSENT_EVENT } from './gtm.js';
 export { diagnostics } from './diagnostics.js';
 // D4: the script gate. Exported for pages that run their own store; installed
