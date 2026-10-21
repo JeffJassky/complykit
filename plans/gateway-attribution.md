@@ -49,3 +49,24 @@ report tool card: "<vendor>'s server gateway on <domain>: recognised because <ve
 loaded it and it posts to <vendor>'s event endpoint". Research queue: not queued (recognised).
 
 Tests: `test/gateway-attribution.test.ts` (contract, written first).
+
+## Chain order and the fold (review fixes, 2026-10-21)
+
+- The loader must come BEFORE the first URL on the site's own registrable domain in the initiator
+  chain (nearest initiator first): `[fbevents.js, site.js]` is a gateway, `[site.js, fbevents.js]`
+  is not. `lookupGateway(kb, chain, pathname, siteDomain)` truncates the chain at that URL.
+- A gateway-only change item folds into the loader's fixing task when one exists; else into the
+  loader's own `behavior-mismatch` task; else it stays a task of its own, titled for the loader
+  ("Meta Pixel's server gateway on on.aws …") — a gateway's violation is never discarded. Only
+  `behavior-mismatch`, `needs-a-look` and `accepted-exposure` items fold (an accepted exposure only
+  into a task that removes it); `clear-server-cookie`, `call-consent-api` and other kinds keep
+  their own task. A gateway that keeps its task gets no separate "Confirm in the browser" task.
+
+## Known limits
+
+- `fbevents.js` served from a first-party proxy or CDN (not `connect.facebook.net`) is not matched
+  by the seeded loader; a gateway behind such a script stays `unknown:<domain>` (status quo).
+- A gateway on the site's own subdomain has `domain === siteDomain`, so the cookies it sets are
+  treated as first-party, as today (the party is the tool's gateway, but the cookie's
+  first-party classification and the DNS/CNAME logic are unchanged).
+- Redirect hops are not followed for the gateway check: only the request's initiator chain is read.

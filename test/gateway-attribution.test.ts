@@ -2,10 +2,11 @@
 // on.aws, a first-party relay) is recognised by who loaded it and where it posts, never asked about.
 import { describe, it, expect } from 'vitest';
 import { analyzeTimeline } from '../src/rules/tracking/analyze.js';
-import { DEFAULT_KB, kbEntryOf } from '../src/registry/index.js';
+import { DEFAULT_KB, kbEntryOf, lookupGateway } from '../src/registry/index.js';
 import { knownTrackerReason } from '../src/consent-generator.js';
 import { Timeline, TrackingEvaluation } from '../src/record/index.js';
 import { generateConsentConfig } from '../src/consent-generator.js';
+import { buildRemediationTasks } from '../src/remediation.js';
 import { compatibilityEvaluation, PAGE } from './fixtures/compatibility-report.js';
 
 const SITE = 'https://example-shop.test/';
@@ -49,6 +50,20 @@ describe('a known tool’s server gateway is recognised by its loader and its en
     expect(otherPath.some((p) => p.partyId.startsWith('gateway:'))).toBe(false);
   });
 
+  it('the loader must come before the first URL on the site’s own domain in the chain', () => {
+    const site = 'https://example-shop.test/assets/app.js';
+    // [Meta's script, the site's script]: Meta's script made the call. Accepted.
+    const ok = parties([req('m', FBEVENTS), viaMeta(GATEWAY, { initiator: { type: 'script', chain: [FBEVENTS, site, SITE] } })]);
+    expect(ok.map((p) => p.partyId)).toContain('gateway:meta.pixel:on.aws');
+    // [the site's script, Meta's script]: the site's own code made the call and only fetched Meta's script upstream. Rejected.
+    const rejected = parties([req('m', FBEVENTS), viaMeta(GATEWAY, { initiator: { type: 'script', chain: [site, FBEVENTS, SITE] } })]);
+    expect(rejected.map((p) => p.partyId)).toContain('unknown:on.aws');
+    expect(rejected.some((p) => p.partyId.startsWith('gateway:'))).toBe(false);
+    // The registry function itself.
+    expect(lookupGateway(DEFAULT_KB, [FBEVENTS, site], '/events', 'example-shop.test')?.id).toBe('meta.pixel');
+    expect(lookupGateway(DEFAULT_KB, [site, FBEVENTS], '/events', 'example-shop.test')).toBeUndefined();
+  });
+
   it('a host the knowledge base already knows is never re-attributed as a gateway', () => {
     const ps = parties([req('m', FBEVENTS), viaMeta('https://www.google-analytics.com/events')]);
     expect(ps.some((p) => p.partyId.startsWith('gateway:'))).toBe(false);
@@ -79,7 +94,7 @@ describe('a known tool’s server gateway is recognised by its loader and its en
 // A gateway never gets a to-do of its own: its hold follows its loader's.
 describe('the to-do list folds a server gateway into its loader’s task', () => {
   const GW = 'gateway:meta.pixel:on.aws';
-  const withGateway = (opts: { held?: boolean } = {}): TrackingEvaluation => {
+  const withGateway = (opts: { held?: boolean; gatewayOnly?: boolean; mismatchOnly?: boolean } = {}): TrackingEvaluation => {
     const base = compatibilityEvaluation();
     const meta = base.inventory.find((p) => p.partyId === 'meta.pixel')!;
     const gw = { ...structuredClone(meta), partyId: GW, label: 'Meta Pixel (server gateway on on.aws)', domain: 'on.aws', hosts: ['d3-abc.ecs.us-east-1.on.aws'], gatewayOf: 'meta.pixel', implementation: { class: 'unknown', evidence: [], alsoSeen: [] } };
@@ -95,6 +110,16 @@ describe('the to-do list folds a server gateway into its loader’s task', () =>
       for (const f of [...o.parties]) if (f.partyId === 'meta.pixel') o.parties.push({ ...f, partyId: GW });
     }
     if (opts.held) for (const o of raw.behaviorObservations) o.parties = o.parties.filter((f) => f.partyId !== 'meta.pixel' && f.partyId !== GW);
+    // Gateway only: the consent tool blocks Meta's own hosts, so fbevents.js loads but Meta has no violation, while the gateway still posts before the choice.
+    if (opts.gatewayOnly) {
+      for (const o of raw.behaviorObservations) o.parties = o.parties.filter((f) => f.partyId !== 'meta.pixel');
+      raw.markup.findings = raw.markup.findings.filter((f) => f.partyId !== 'meta.pixel');
+    }
+    // Mismatch only: Meta's tag was never located in the HTML (no markup finding, no usable loader), so its one item is the generic mismatch.
+    if (opts.mismatchOnly) {
+      raw.markup.findings = raw.markup.findings.filter((f) => f.partyId !== 'meta.pixel');
+      raw.inventory = raw.inventory.map((p) => ((p as { partyId: string }).partyId === 'meta.pixel' ? { ...(p as object), implementation: { class: 'server-side-suspected', evidence: [{ class: 'server-side-suspected', kind: 'source', observed: true, note: 'a first-party collect endpoint' }], alsoSeen: [] } } : p));
+    }
     return TrackingEvaluation.parse(raw);
   };
   const tasksOf = (ev: TrackingEvaluation) => generateConsentConfig(ev, { complykitVersion: '0.0.0-test', now: '2026-10-21T12:00:00.000Z' }).tasks;
@@ -117,5 +142,41 @@ describe('the to-do list folds a server gateway into its loader’s task', () =>
   it('a loader held everywhere leaves the gateway no task either', () => {
     const tasks = tasksOf(withGateway({ held: true }));
     expect(tasks.some((t) => t.partyIds.includes(GW))).toBe(false);
+  });
+
+  it('a gateway whose loader has no task of its own keeps its violation: one task, titled for Meta’s server gateway', () => {
+    const tasks = tasksOf(withGateway({ gatewayOnly: true }));
+    const own = tasks.filter((t) => t.partyIds.includes(GW));
+    expect(own).toHaveLength(1);
+    expect(own[0].title).toMatch(/Meta Pixel.s server gateway on on\.aws/);
+    expect(tasks.some((t) => t.partyIds.includes('meta.pixel'))).toBe(false);
+  });
+
+  it('a loader whose only task is a behavior-mismatch one takes the gateway into it', () => {
+    const ev = withGateway({ mismatchOnly: true });
+    const tasks = tasksOf(ev);
+    const own = tasks.filter((t) => t.partyIds.includes(GW));
+    expect(own).toHaveLength(1);
+    const [mismatch] = own;
+    expect(mismatch.kind).toBe('behavior-mismatch');
+    expect(mismatch.partyIds).toEqual(expect.arrayContaining(['meta.pixel', GW]));
+    expect(mismatch.alsoFixes?.join(' ')).toMatch(/Also covers its server gateway on on\.aws/);
+    // Its own item plus the gateway's two (mismatch, needs-a-look) are reachable through it.
+    expect(mismatch.aliases?.length).toBeGreaterThanOrEqual(2);
+    expect(tasks.filter((t) => t.partyIds.length > 0 && t.partyIds.every((id) => id === GW))).toEqual([]);
+  });
+
+  it('a gateway’s server-cookie item is its own work and is not folded into the loader’s task', () => {
+    const ev = withGateway();
+    const generated = structuredClone(generateConsentConfig(ev, { complykitVersion: '0.0.0-test', now: '2026-10-21T12:00:00.000Z' }));
+    const item = { id: 'clear-server-cookie:gw-test', kind: 'clear-server-cookie' as const, tools: ['Meta Pixel (server gateway on on.aws)'], partyIds: [GW], note: 'a server sets _fbp', names: ['_fbp'], cookieOnly: true, page: PAGE };
+    generated.compatibility.groups.push({ id: 'server-cookies', title: 'Server cookies', intro: '', items: [item] });
+    const tasks = buildRemediationTasks(generated, ev);
+    const cookie = tasks.filter((t) => t.kind === 'clear-server-cookie');
+    expect(cookie).toHaveLength(1);
+    expect(cookie[0].partyIds).toEqual([GW]);
+    expect(cookie[0].title).toMatch(/Meta Pixel.s server gateway on on\.aws/);
+    // Meta's own fixing task did not absorb it.
+    expect(tasks.filter((t) => t.kind !== 'clear-server-cookie').some((t) => t.alsoFixes?.some((l) => /gateway/.test(l)) && t.aliases?.includes(item.id))).toBe(false);
   });
 });

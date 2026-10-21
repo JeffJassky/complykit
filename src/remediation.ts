@@ -618,7 +618,10 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
   }
 
   const seen = new Set<string>(slots.map((s) => s.task.id));
-  const add = (it: ChangeItem, group: string, optional: boolean): void => {
+  // A gateway that keeps a task of its own is named for the tool that loads it: “Meta Pixel’s server gateway on on.aws”.
+  const gatewayLabel = (t: string): string => t.replace(/^(.+) \(server gateway on (.+)\)$/, '$1’s server gateway on $2');
+  const add = (item: ChangeItem, group: string, optional: boolean): void => {
+    const it: ChangeItem = item.partyIds.some((id) => evaluation.inventory.find((p) => p.partyId === id)?.gatewayOf) ? { ...item, tools: item.tools.map(gatewayLabel) } : item;
     if (seen.has(it.id)) return; // the same change listed under two tools (merge keys differ, ids agree)
     seen.add(it.id);
     const pages = pagesOf(evaluation, it);
@@ -658,22 +661,30 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
   const installSlot = slots.find((s) => s.task.kind === 'install');
   const confirm = new Map<string, { from: Draft; ids: string[] }>();
   // A server gateway (Meta's Conversions API Gateway on the site's own cloud) is held by holding the tool that
-  // loads it: it never has a task of its own. Its change items fold into the loader's task (the first that
-  // fixes the loader's behavior), which then also names the gateway; with no such task in this run — the loader
-  // is held everywhere — the gateway has none either. The report's rows for it stay: they are verdicts.
+  // loads it. Its behavior-type change items (a mismatch, a needs-a-look, an accepted exposure) fold into the
+  // loader's task that fixes the loader — else, for a mismatch / needs-a-look, into the loader's own
+  // behavior-mismatch task — which then also names the gateway. With neither, the item stays a task of its own,
+  // titled for the loader: a gateway's violation is never discarded. Other kinds (a server cookie to clear, a vendor
+  // call) are the gateway's own work and keep their task. The report's rows for it stay: they are verdicts.
   const gatewayOf = (id: string): string | undefined => evaluation.inventory.find((p) => p.partyId === id)?.gatewayOf;
+  const FOLDS_INTO_LOADER = new Set<RemediationTask['kind']>(['behavior-mismatch', 'needs-a-look', 'accepted-exposure']);
   for (const s of slots) {
     const t = s.task;
     const gateways = t.partyIds.filter((id) => gatewayOf(id) !== undefined);
-    if (!gateways.length || gateways.length !== t.partyIds.length) continue; // a mixed item stays with its other tools
-    s.folded = true;
-    for (const gw of gateways) {
+    if (!gateways.length || gateways.length !== t.partyIds.length || !FOLDS_INTO_LOADER.has(t.kind)) continue; // a mixed item stays with its other tools
+    const exposure = t.kind === 'accepted-exposure';
+    const targets = gateways.map((gw) => {
       const loader = gatewayOf(gw)!;
+      const fixer = fixersOf(slots, loader, exposure ? REMOVES_EXPOSURE : FIXES_BEHAVIOR, t.optional).sort((a, b) => RANK[a.task.kind] - RANK[b.task.kind] || a.seq - b.seq)[0];
+      const mismatch = exposure ? undefined : slots.find((x) => x !== s && !x.folded && x.task.kind === 'behavior-mismatch' && x.task.partyIds.includes(loader) && (t.optional || !x.task.optional));
+      return { gw, target: fixer ?? mismatch };
+    });
+    if (targets.some((x) => !x.target)) continue;
+    s.folded = true;
+    for (const { gw, target } of targets) {
       const host = evaluation.inventory.find((p) => p.partyId === gw)?.domain ?? gw;
-      const fixer = fixersOf(slots, loader, FIXES_BEHAVIOR, t.optional).sort((a, b) => RANK[a.task.kind] - RANK[b.task.kind] || a.seq - b.seq)[0];
-      if (!fixer) continue;
-      addFix(fixer.task, t.id, `Also covers its server gateway on ${host}.`);
-      if (!fixer.task.partyIds.includes(gw)) fixer.task.partyIds.push(gw);
+      addFix(target!.task, t.id, `Also covers its server gateway on ${host}.`);
+      if (!target!.task.partyIds.includes(gw)) target!.task.partyIds.push(gw);
     }
   }
   for (const s of slots) {
@@ -687,7 +698,7 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
       if (!fixers.length) continue;
       for (const f of fixers) addFix(f.task, t.id, `${tools} running before the visitor chooses (seen in the scan).`);
       s.folded = true;
-      if (!fixers.some((f) => checksTool(f.task, party)) && t.verify.check === 'spot-check') confirm.set(party, { from: t, ids: [...(confirm.get(party)?.ids ?? []), t.id] });
+      if (!gatewayOf(party) && !fixers.some((f) => checksTool(f.task, party)) && t.verify.check === 'spot-check') confirm.set(party, { from: t, ids: [...(confirm.get(party)?.ids ?? []), t.id] });
     } else if (t.kind === 'call-consent-api') {
       if (!installSlot || !config.vendors.some((v) => v.id === party && v.adapter)) continue;
       addFix(installSlot.task, t.id, `Telling ${tools} the visitor’s choice${s.api ? ` (${s.api})` : ''} — the tool makes this call for you.`);

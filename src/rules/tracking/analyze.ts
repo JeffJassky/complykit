@@ -263,7 +263,7 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
     // site's own subdomain) is that tool's: its script loaded it and it posts to the tool's endpoint.
     // Only a host no entry matches can be one, and this runs before the first-party short-circuit.
     if (chain.length && !lookupEntry(kb, host, pathname)) {
-      const gw = lookupGateway(kb, chain, pathname);
+      const gw = lookupGateway(kb, chain, pathname, siteDomain);
       if (gw) return { id: `gateway:${gw.id}:${domain}`, entry: gw, domain, gatewayOf: gw.id };
     }
     let effectiveHost = host;
@@ -425,6 +425,8 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
       } catch {
         /* keep */
       }
+      // `chain.slice(i + 1)` is what loaded this script: partyFor matches a gateway's `paths` against THIS script's
+      // pathname (a writer script served from a known tool's gateway), and its `loaders` against that remainder.
       const p = partyFor(host, path, chain.slice(i + 1));
       if (p) return ensure(p, host);
       return undefined; // nearest writer is first-party code

@@ -1,6 +1,6 @@
 import { KnowledgeEntry, type KnowledgeEntryInput, type PartyCategory } from './schema.js';
 import { SEED_ENTRIES } from './entries.js';
-import { hostMatches } from './domains.js';
+import { hostMatches, registrableDomain } from './domains.js';
 
 // The knowledge base (plans/consent-design.md §4): vendor entries + lookup.
 // Pure data and functions; versioned. A site may layer overrides on top (the
@@ -84,10 +84,23 @@ export function kbEntryOf(kb: KnowledgeBase, partyId: string): KnowledgeEntry | 
 }
 
 /** The entry whose declared gateway this request is: an initiator-chain URL matches a gateway's
- *  loader AND the pathname matches its paths. Callers apply it only to hosts no entry matches. */
-export function lookupGateway(kb: KnowledgeBase, chain: readonly string[], pathname: string): KnowledgeEntry | undefined {
-  if (!chain.length) return undefined;
-  const bare = chain.map((u) => u.replace(/[?#].*$/, ''));
+ *  loader AND the pathname matches its paths. The loader must come BEFORE the first URL on the site's own
+ *  registrable domain (the chain runs nearest initiator first): `[fbevents.js, site.js]` — the tool's script
+ *  was called by the site's — is a gateway; `[site.js, fbevents.js]` — the site's own code made the request
+ *  and only fetched the tool's script somewhere upstream — is not. Callers apply it only to hosts no entry matches. */
+export function lookupGateway(kb: KnowledgeBase, chain: readonly string[], pathname: string, siteDomain: string): KnowledgeEntry | undefined {
+  const bare: string[] = [];
+  for (const u of chain) {
+    let host = '';
+    try {
+      host = new URL(u).hostname;
+    } catch {
+      /* not a URL: it cannot be the site's, keep it */
+    }
+    if (host && registrableDomain(host) === siteDomain) break;
+    bare.push(u.replace(/[?#].*$/, ''));
+  }
+  if (!bare.length) return undefined;
   for (const e of kb.entries) {
     for (const g of e.match.gateways ?? []) {
       if (!g.paths.some((p) => pathRe(p).test(pathname))) continue;
