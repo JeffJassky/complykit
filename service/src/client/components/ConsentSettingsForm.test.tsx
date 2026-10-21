@@ -108,6 +108,19 @@ describe('settings form', () => {
     expect(settingsFromDraft({ mode: 'full', privacyPolicyUrl: '  ' })).toEqual({ mode: 'full' });
     expect(settingsFromDraft({ mode: 'companion', cmp: 'tcf', layout: 'bar', blockPage: true })).toEqual({ mode: 'companion', cmp: 'tcf' });
   });
+
+  it('a stored overrides block rides through the form untouched (no editor yet), in either mode', () => {
+    const overrides = { regimes: { CA: 'opt-out' as const }, defaults: { 'US-CA': { analytics: true } }, honorGpc: false, note: 'counsel sign-off' };
+    const entry = (value: unknown) => ws({ 'consent-settings': { value, at } });
+    const stored = consentSettingsOf(entry({ mode: 'full', layout: 'box', overrides }));
+    expect(stored.overrides).toEqual(overrides);
+    // the form's draft starts from the stored settings; the owner changes the layout; Save still sends overrides
+    const draft = { mode: stored.mode, layout: 'modal' as const, overrides: stored.overrides };
+    expect(settingsFromDraft(draft)).toEqual({ mode: 'full', layout: 'modal', overrides });
+    expect(settingsFromDraft({ mode: 'companion', cmp: 'tcf', overrides })).toEqual({ mode: 'companion', cmp: 'tcf', overrides });
+    expect(consentSettingsOf(entry({ mode: 'companion', cmp: 'tcf', overrides })).overrides).toEqual(overrides);
+    expect(consentSettingsOf(entry({ mode: 'full' })).overrides).toBeUndefined();
+  });
 });
 
 const at = '2026-10-06T10:00:00Z';

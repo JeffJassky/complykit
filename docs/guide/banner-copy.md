@@ -43,6 +43,7 @@ and advertising"), so a site with no advertising tools never mentions advertisin
 | `banner.accept` / `banner.reject` / `banner.manage` | Accept all / Reject all / Manage choices |
 | `settings.title` | Privacy settings |
 | `settings.body` | Choose which optional categories to allow. Each stays off until you switch it on. Necessary technologies are always on because the site cannot work without them. |
+| `settings.gpcInfo` | A Global Privacy Control signal from your browser is honored as an opt-out. (Added after `settings.body` in an opt-out regime, only when the config honors GPC: not when `overrides.honorGpc` is `false`.) |
 | `settings.acceptAll` / `rejectAll` / `save` / `close` | Accept all / Reject all / Save choices / Close |
 | `withdraw.confirm` | Your consent has been withdrawn. |
 | `withdraw.note` + `withdraw.recall` | You can withdraw your consent here at any time. Withdrawing stops further collection; data already sent cannot be recalled. |
@@ -56,7 +57,7 @@ and advertising"), so a site with no advertising tools never mentions advertisin
 | `banner.title`, `settings.title`, `privacyChoices.link` | Your Privacy Choices |
 | `banner.body` | We and third parties use cookies and similar technologies for {purposes}. Under California and other US state privacy laws, some of this can be a "sale" or "sharing" of your personal information. You can opt out now, or at any time from "Your Privacy Choices". |
 | `banner.reject`, `settings.rejectAll`, `optOut.link` | Do Not Sell or Share My Personal Information |
-| `settings.body` | Optional categories are on unless you opt out. Switch off any you do not want, or opt out of all of them. A Global Privacy Control signal from your browser is honored as an opt-out. Necessary technologies stay on because the site cannot work without them. |
+| `settings.body` | Optional categories are on unless you opt out. Switch off any you do not want, or opt out of all of them. Necessary technologies stay on because the site cannot work without them. |
 | `withdraw.confirm`, `optOut.confirmed` | Opt-out request honored. |
 | `withdraw.note` | You can opt out at any time. |
 | `gpc.honored` | Your browser sent a Global Privacy Control signal. We have treated it as your request to opt out of the sale and sharing of your personal information. |
@@ -68,7 +69,7 @@ and advertising"), so a site with no advertising tools never mentions advertisin
 |---|---|
 | `banner.title`, `settings.title`, `privacyChoices.link` | Your Privacy Choices |
 | `banner.body` | We and third parties use cookies and similar technologies for {purposes}. Depending on where you live, you may have the right to opt out of targeted advertising and the sale of your personal information. You can opt out now, or at any time from "Your Privacy Choices". |
-| `settings.body` | Optional categories are on unless you opt out. Switch off any you do not want, or reject all of them. A Global Privacy Control signal from your browser is honored as an opt-out. Necessary technologies stay on because the site cannot work without them. |
+| `settings.body` | Optional categories are on unless you opt out. Switch off any you do not want, or reject all of them. Necessary technologies stay on because the site cannot work without them. |
 | `withdraw.confirm` | Opt-out request honored. |
 | `withdraw.note` | You can opt out at any time. |
 

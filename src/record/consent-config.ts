@@ -6,6 +6,7 @@ import {
   NECESSARY_CATEGORY,
   REGIMES,
   CONSENT_STRING_KEYS,
+  LOCATION_KEY_PATTERN,
   consentConfigVersionStatus,
   type ConsentStringKey,
   type ConsentToolConfig,
@@ -61,7 +62,10 @@ export const RegimeSourceSchema = z
     z.object({
       kind: z.literal('header'),
       header: z.string().min(1).describe('The request header the endpoint echoes, e.g. cf-ipcountry.'),
-      endpoint: z.string().regex(/^\//, 'same-origin path').describe('Same-origin path whose body is "CC" or "CC-RR".'),
+      endpoint: z
+        .string()
+        .regex(/^(\/|https?:\/\/)/, 'a same-origin path, or an absolute URL on the tool script\'s own origin')
+        .describe('A same-origin path, or an absolute http(s) URL on the tool script\'s own origin (the hosted install\'s GET <host>/geo), whose body is "CC" or "CC-RR". The client refuses any other origin.'),
     }),
     z.object({
       kind: z.literal('meta'),
@@ -80,6 +84,29 @@ export const ConsentCategorySchema = z.object({
     .object({ 'opt-in': z.boolean(), 'opt-out-signal': z.boolean(), 'opt-out': z.boolean() })
     .describe('Granted before the visitor chooses, per regime.'),
 });
+
+/** 'US-CA', 'US' or '*' (consent-config-guard.ts LocationKey). */
+export const LocationKeySchema = z.string().regex(LOCATION_KEY_PATTERN, "location key: 'US-CA', 'US' or '*' (upper case)");
+
+/**
+ * The owner's overrides (schema 1.1): complykit policy does not apply to them, in
+ * either direction. The client runs them; the scanner keeps judging the site by
+ * complykit policy and names them in a `policy-overridden` proof finding.
+ */
+export const ConsentOverridesSchema = z
+  .strictObject({
+    regimes: z
+      .record(LocationKeySchema, RegimeSchema)
+      .optional()
+      .describe("Location key → regime, before the built-in table: { 'CA-QC': 'opt-in', 'CA': 'opt-out' }. '*' = any location no other key matches, an unknown one included. Ignored when regimeSource is fixed."),
+    defaults: z
+      .record(z.union([LocationKeySchema, RegimeSchema]), z.record(CategoryId, z.boolean()))
+      .optional()
+      .describe("Granted before the visitor chooses, beating complykit policy: key (location key or regime) → category → granted. Lookup: subdivision, country, regime, '*'."),
+    honorGpc: z.boolean().optional().describe('false: Global Privacy Control is not treated as an opt-out. Default true.'),
+    note: z.string().min(1).max(500).optional().describe("The owner's reason, shown with the proof finding."),
+  })
+  .describe('Owner overrides of complykit policy. Kept across regeneration.');
 
 export const VendorControlSchema = z.enum(['gate', 'api', 'platform', 'none']);
 
@@ -197,6 +224,12 @@ export const ConsentToolConfigSchema = z
     hash: z.string().regex(/^[0-9a-f]{64}$/).describe('sha-256 of the canonical JSON of every other field.'),
     regimeSource: RegimeSourceSchema,
     categories: z.array(ConsentCategorySchema).min(1),
+    // No defaults on locationDefaults/overrides: a 1.0 config must hash the same (hashes are over the parsed form).
+    locationDefaults: z
+      .record(LocationKeySchema, z.record(CategoryId, z.boolean()))
+      .optional()
+      .describe('complykit policy by location (generated): category → false holds it until the visitor accepts there (wiretap-litigation states). Holds only; grants belong in overrides.defaults.'),
+    overrides: ConsentOverridesSchema.optional(),
     vendors: z.array(ConsentVendorSchema).default([]),
     gate: z.array(GateRuleSchema).default([]),
     gtm: GtmConfigSchema.optional(),
@@ -245,6 +278,18 @@ export const ConsentToolConfigSchema = z
       if (!nec && c.defaultByRegime['opt-in']) issue(['categories', i, 'defaultByRegime', 'opt-in'], 'nothing but "necessary" is granted by default under opt-in');
     });
     if (!ids.has(NECESSARY_CATEGORY)) issue(['categories'], `the "${NECESSARY_CATEGORY}" category must be present`);
+    for (const [key, row] of Object.entries(cfg.locationDefaults ?? {})) {
+      for (const [cat, v] of Object.entries(row)) {
+        if (!ids.has(cat) || cat === NECESSARY_CATEGORY) issue(['locationDefaults', key, cat], `"${cat}" is not a listed non-necessary category`);
+        else if (v !== false) issue(['locationDefaults', key, cat], 'locationDefaults only holds (false); a grant is an owner override: put it in overrides.defaults');
+      }
+    }
+    for (const [key, row] of Object.entries(cfg.overrides?.defaults ?? {})) {
+      for (const cat of Object.keys(row)) {
+        if (cat === NECESSARY_CATEGORY) issue(['overrides', 'defaults', key, cat], `"${NECESSARY_CATEGORY}" is always granted and cannot be overridden`);
+        else if (!ids.has(cat)) issue(['overrides', 'defaults', key, cat], `unknown category "${cat}"`);
+      }
+    }
     const vendorIds = new Set<string>();
     cfg.vendors.forEach((v, i) => {
       if (vendorIds.has(v.id)) issue(['vendors', i, 'id'], `duplicate vendor "${v.id}"`);

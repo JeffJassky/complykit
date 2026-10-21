@@ -7,13 +7,14 @@ import type { AdapterDiagnostics } from './adapters/index.js';
 import type { WixDiagnostics } from './bridges/wix.js';
 import type { ShopifyDiagnostics } from './bridges/shopify.js';
 import type { UiDiagnostics } from './ui-loader.js';
+import type { LocationDecision } from './location.js';
 import type { WithdrawalReport } from './withdraw.js';
 
 export interface Diagnostics {
   /** Set by the GTM bridge when it installs (ticket D6). */
   gtm?: GtmDiagnostics;
   /** Set by the location resolver (ticket D7): where the regime came from. */
-  location?: { source: 'fixed' | 'meta' | 'header' | 'platform' | 'unknown'; regime: string; pending: boolean; gpc: boolean };
+  location?: Pick<LocationDecision, 'source' | 'regime' | 'location' | 'pending' | 'gpc' | 'overridden'>;
   /** Set by the vendor adapters when they start (ticket D5). */
   adapters?: AdapterDiagnostics;
   /** Set by the Wix consent policy bridge when it activates (ticket E3). */

@@ -16,6 +16,10 @@ import {
   readConsentConfigHeader,
   CONSENT_CONFIG_ELEMENT_ID,
   consentCategoryDefault,
+  locationKeys,
+  overriddenRegime,
+  honorsGpc,
+  hasOverrides,
   consentToolConfigJsonSchema,
   type ConsentToolConfig,
   type ConsentToolConfigInput,
@@ -119,7 +123,12 @@ describe('consent tool config: schema', () => {
   it('GTM container ids are GTM-…', () => invalid((c) => (c.gtm!.containers = ['G-ABC']), 'gtm.containers.0'));
   it('GTM consent-mode mappings name a listed category', () => invalid((c) => (c.gtm!.consentMode = { ad_storage: 'ads' }), 'gtm.consentMode.ad_storage'));
   it("regimeSource 'platform' needs a platform", () => invalid((c) => (c.regimeSource = { kind: 'platform' }), 'regimeSource'));
-  it('header endpoint must be same-origin', () => invalid((c) => (c.regimeSource = { kind: 'header', header: 'x', endpoint: 'https://geo.example/x' }), 'regimeSource.endpoint'));
+  // The hosted install's endpoint is an absolute URL on the tool script's own origin (<host>/geo); the CLIENT refuses
+  // any origin that is neither the page's nor the script's (client/test/location.test.ts). The schema only needs a path or an http(s) URL.
+  it('header endpoint is a path or an http(s) URL', () => {
+    invalid((c) => (c.regimeSource = { kind: 'header', header: 'x', endpoint: 'geo.example/x' }), 'regimeSource.endpoint');
+    invalid((c) => (c.regimeSource = { kind: 'header', header: 'x', endpoint: 'ftp://geo.example/x' }), 'regimeSource.endpoint');
+  });
   it('category ids are lower-case slugs', () => invalid((c) => (c.categories[1]!.id = 'Analytics'), 'categories.1.id'));
   it('language keys are BCP 47 tags', () => invalid((c) => (c.strings = { English: {} }), 'strings'));
   it('string tables refuse unknown keys', () => invalid((c) => (c.strings = { en: { 'banner.titel': 'x' } as never }), 'strings.en'));
@@ -332,6 +341,136 @@ describe('consent tool config: category semantics (fail closed)', () => {
   });
 });
 
+// Schema 1.1: complykit policy by location (wiretap holds) and the owner's
+// overrides. Policy lives in categories[].defaultByRegime and locationDefaults
+// (holds only); every deviation, in either direction, lives in `overrides`.
+describe('consent tool config 1.1: location keys and regime overrides', () => {
+  it('keys a location most specific first', () => {
+    expect(locationKeys({ country: 'US', region: 'CA' })).toEqual(['US-CA', 'US', '*']);
+    expect(locationKeys({ country: 'us', region: 'us-ca' })).toEqual(['US-CA', 'US', '*']);
+    expect(locationKeys({ country: 'DE' })).toEqual(['DE', '*']);
+    expect(locationKeys(undefined)).toEqual(['*']);
+    expect(locationKeys({ country: 'XYZ' })).toEqual(['*']);
+    expect(locationKeys({ country: 'US', region: 'not a region' })).toEqual(['US', '*']);
+  });
+  it('overriddenRegime: subdivision beats country beats *, unknown location matches only *', () => {
+    const cfg = { overrides: { regimes: { 'CA-QC': 'opt-in', CA: 'opt-out', '*': 'opt-out-signal' } as const } };
+    expect(overriddenRegime(cfg, { country: 'CA', region: 'QC' })).toBe('opt-in');
+    expect(overriddenRegime(cfg, { country: 'CA', region: 'ON' })).toBe('opt-out');
+    expect(overriddenRegime(cfg, { country: 'DE' })).toBe('opt-out-signal');
+    expect(overriddenRegime(cfg, undefined)).toBe('opt-out-signal');
+    expect(overriddenRegime({ overrides: { regimes: { CA: 'opt-out' } } }, { country: 'DE' })).toBeUndefined();
+    expect(overriddenRegime({}, { country: 'CA' })).toBeUndefined();
+  });
+  it('honorsGpc defaults to true; hasOverrides ignores an empty block and a note alone', () => {
+    expect(honorsGpc({})).toBe(true);
+    expect(honorsGpc({ overrides: { honorGpc: true } })).toBe(true);
+    expect(honorsGpc({ overrides: { honorGpc: false } })).toBe(false);
+    expect(hasOverrides({})).toBe(false);
+    expect(hasOverrides({ overrides: {} })).toBe(false);
+    expect(hasOverrides({ overrides: { note: 'why' } })).toBe(false);
+    expect(hasOverrides({ overrides: { regimes: {}, defaults: {} } })).toBe(false);
+    expect(hasOverrides({ overrides: { honorGpc: false } })).toBe(true);
+    expect(hasOverrides({ overrides: { regimes: { CA: 'opt-out' } } })).toBe(true);
+    expect(hasOverrides({ overrides: { defaults: { 'opt-in': { analytics: true } } } })).toBe(true);
+  });
+});
+
+describe('consent tool config 1.1: pre-choice defaults with location and overrides', () => {
+  const CA = { country: 'US', region: 'CA' };
+  const TX = { country: 'US', region: 'TX' };
+  const DE = { country: 'DE' };
+  const base = () => withConsentConfigHash({ ...exampleInput(), locationDefaults: { 'US-CA': { analytics: false, advertising: false } } });
+  it('policy: a locationDefaults hold applies at that location only, under opt-out regimes', () => {
+    const cfg = base();
+    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out-signal', CA)).toBe(false);
+    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out-signal', TX)).toBe(true);
+    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out-signal')).toBe(true); // no location: the regime decides
+    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out', { country: 'DE' })).toBe(true);
+  });
+  it('policy: country known, subdivision not (a country-only geo header) → any subdivision hold of that country applies', () => {
+    const cfg = base();
+    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out-signal', { country: 'US' })).toBe(false);
+    expect(consentCategoryDefault(cfg, 'advertising', 'opt-out', { country: 'US' })).toBe(false);
+    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out-signal', TX)).toBe(true); // a known other state is not held
+    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out-signal', { country: 'CA' })).toBe(true); // another country's prefix
+    // An owner override still wins.
+    const over = withConsentConfigHash({ ...base(), overrides: { defaults: { US: { analytics: true } } } });
+    expect(consentCategoryDefault(over, 'analytics', 'opt-out-signal', { country: 'US' })).toBe(true);
+  });
+  it('policy: a country key holds every subdivision of it', () => {
+    const cfg = withConsentConfigHash({ ...exampleInput(), locationDefaults: { US: { analytics: false } } });
+    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out', TX)).toBe(false);
+    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out', { country: 'US' })).toBe(false);
+  });
+  it('overrides beat policy in either direction', () => {
+    const looser = withConsentConfigHash({ ...base(), overrides: { defaults: { 'US-CA': { analytics: true }, 'opt-in': { advertising: true } } } });
+    expect(consentCategoryDefault(looser, 'analytics', 'opt-out-signal', CA)).toBe(true); // wiretap hold lifted
+    expect(consentCategoryDefault(looser, 'advertising', 'opt-in', DE)).toBe(true); // EU pre-grant: non-compliant, allowed
+    expect(consentCategoryDefault(looser, 'analytics', 'opt-in', DE)).toBe(false); // not overridden: policy
+    const stricter = withConsentConfigHash({ ...exampleInput(), overrides: { defaults: { 'opt-out': { analytics: false } } } });
+    expect(consentCategoryDefault(stricter, 'analytics', 'opt-out', TX)).toBe(false);
+  });
+  it('override lookup order: subdivision, country, regime, *', () => {
+    const cfg = withConsentConfigHash({
+      ...exampleInput(),
+      overrides: { defaults: { '*': { analytics: true, advertising: true }, 'opt-out': { analytics: false, advertising: false }, US: { analytics: true }, 'US-CA': { analytics: false } } },
+    });
+    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out', CA)).toBe(false); // US-CA
+    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out', TX)).toBe(true); // US
+    expect(consentCategoryDefault(cfg, 'advertising', 'opt-out', TX)).toBe(false); // regime
+    expect(consentCategoryDefault(cfg, 'advertising', 'opt-in', DE)).toBe(true); // *
+    expect(consentCategoryDefault(cfg, 'advertising', 'opt-in')).toBe(true); // * covers an unknown location
+  });
+  it('overrides never grant a category the config does not list, and never touch necessary', () => {
+    const cfg = { ...base(), overrides: { defaults: { '*': { social: true, necessary: false } } } } as ConsentToolConfig;
+    expect(consentCategoryDefault(cfg, 'social', 'opt-out')).toBe(false);
+    expect(consentCategoryDefault(cfg, NECESSARY_CATEGORY, 'opt-in')).toBe(true);
+  });
+  it('schema: locationDefaults holds only, on listed non-necessary categories', () => {
+    const grant = parseConsentToolConfig({ ...base(), locationDefaults: { 'US-CA': { analytics: true } } });
+    expect(grant.ok).toBe(false);
+    expect(!grant.ok && grant.issues.some((i) => /overrides\.defaults/.test(i.message))).toBe(true);
+    expect(parseConsentToolConfig({ ...base(), locationDefaults: { 'US-CA': { social: false } } }).ok).toBe(false);
+    expect(parseConsentToolConfig({ ...base(), locationDefaults: { 'us-ca': { analytics: false } } }).ok).toBe(false); // keys are upper case
+  });
+  it('schema: overrides may pre-grant under opt-in, name only listed categories, never necessary', () => {
+    expect(parseConsentToolConfig({ ...base(), overrides: { defaults: { 'opt-in': { analytics: true } }, regimes: { 'CA-QC': 'opt-in', '*': 'opt-out' }, honorGpc: false, note: 'counsel sign-off' } }).ok).toBe(true);
+    expect(parseConsentToolConfig({ ...base(), overrides: { defaults: { 'opt-in': { social: true } } } }).ok).toBe(false);
+    expect(parseConsentToolConfig({ ...base(), overrides: { defaults: { '*': { necessary: false } } } }).ok).toBe(false);
+    expect(parseConsentToolConfig({ ...base(), overrides: { regimes: { CA: 'gdpr' } } }).ok).toBe(false);
+    expect(parseConsentToolConfig({ ...base(), overrides: { typo: true } }).ok).toBe(false); // strict: an unknown key is a typo
+  });
+  it('the policy-layer invariant stands: categories[].defaultByRegime still refuses an opt-in grant', () => {
+    const cats = base().categories.map((c) => (c.id === 'analytics' ? { ...c, defaultByRegime: { ...c.defaultByRegime, 'opt-in': true } } : c));
+    expect(parseConsentToolConfig({ ...base(), categories: cats }).ok).toBe(false);
+  });
+  it('a 1.0 config without the new fields hashes the same after parsing (no defaults added)', () => {
+    const cfg = withConsentConfigHash(exampleInput());
+    expect('locationDefaults' in cfg).toBe(false);
+    expect('overrides' in cfg).toBe(false);
+  });
+  it('guard: runs a looser override, refuses a malformed block', () => {
+    const ok = guardConsentToolConfig({ ...base(), overrides: { defaults: { 'opt-in': { analytics: true } } } });
+    expect(ok.ok).toBe(true);
+    for (const bad of [
+      { overrides: 'yes' },
+      { overrides: { regimes: { CA: 'gdpr' } } },
+      { overrides: { defaults: { 'opt-in': { analytics: 'yes' } } } },
+      { overrides: { honorGpc: 'no' } },
+      { locationDefaults: { 'US-CA': { analytics: true } } },
+      { locationDefaults: { 'US-CA': 'held' } },
+      { locationDefaults: { 'us-ca': { analytics: false } } },
+      { overrides: { regimes: { USCA: 'opt-in' } } },
+      { overrides: { defaults: { somewhere: { analytics: true } } } },
+    ]) {
+      const g = guardConsentToolConfig({ ...base(), ...bad });
+      expect(g.ok, JSON.stringify(bad)).toBe(false);
+      expect(!g.ok && g.reason).toBe('missing-field');
+    }
+  });
+});
+
 describe('consent tool config: emitted artifacts are fresh', () => {
   const update = process.env.UPDATE_SCHEMA === '1';
   const pretty = (v: unknown) => JSON.stringify(v, null, 2) + '\n';
@@ -354,7 +493,7 @@ describe('consent tool config: emitted artifacts are fresh', () => {
     expect(s.required).not.toContain('layout'); // has a default
     expect(s.required).not.toContain('blockPage'); // has a default
     expect(Object.keys(s.properties).sort()).toEqual(
-      ['analytics', 'blockPage', 'categories', 'companion', 'consent', 'gate', 'generatedFrom', 'gtm', 'hash', 'layout', 'mode', 'platform', 'privacyPolicyUrl', 'record', 'regimeSource', 'strings', 'theme', 'vendors', 'version'].sort(),
+      ['analytics', 'blockPage', 'categories', 'companion', 'consent', 'gate', 'generatedFrom', 'gtm', 'hash', 'layout', 'locationDefaults', 'mode', 'overrides', 'platform', 'privacyPolicyUrl', 'record', 'regimeSource', 'strings', 'theme', 'vendors', 'version'].sort(),
     );
   });
 

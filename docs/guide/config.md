@@ -14,7 +14,7 @@ same either way. The example below is the self-hosted form.
 
 ```html
 <script type="application/json" id="complykit-config">
-{ "version": "1.0", "generatedFrom": { … }, "hash": "…", … }
+{ "version": "1.1", "generatedFrom": { … }, "hash": "…", … }
 </script>
 <script src="/v1/complykit-consent.js"></script>
 ```
@@ -177,9 +177,67 @@ the state store and in the consent record.
   returns `false` under `opt-in` regardless (defense in depth against a hand edit);
 - a category that is **not listed is denied** in every regime until a visitor grants
   it — which they cannot, because it has no toggle. `consentCategoryDefault(config,
-  id, regime)` encodes this: `necessary` → `true`, unknown → `false`, otherwise the
-  configured default. The store, the gate, the GTM bridge and the adapters all go
-  through it. An unknown `data-category` on a gated script therefore never loads.
+  id, regime, location)` encodes this (the full order is under
+  [`locationDefaults` and `overrides`](#locationdefaults-and-overrides-1-1)). The store,
+  the gate, the GTM bridge and the adapters all go through it. An unknown
+  `data-category` on a gated script therefore never loads.
+
+### `locationDefaults` and `overrides` (1.1)
+
+Two optional layers decide what is granted **before a choice**. Nothing else does.
+
+| Layer | Field | Who writes it | Direction |
+|---|---|---|---|
+| Policy | `categories[].defaultByRegime`, `locationDefaults` | the generator | `opt-in` grants nothing; `locationDefaults` only holds (`false`) |
+| Owner | `overrides` | the site owner (the service's consent settings, or a hand edit) | anything |
+
+**`locationDefaults`** is complykit policy by location: `{ "US-CA": { "analytics": false, "advertising": false } }`.
+Location keys are upper case: `US-CA` (country and subdivision), `US` (country), `*` (anything
+else, an unknown location included). The generator writes a row for every wiretap-litigation
+state (California, Florida, Pennsylvania, Maryland and Illinois; derived from the registry, not a
+list in the generator) holding each category that is analytics or advertising, or that has a
+vendor of a wiretap kind (chat, session recording, identity resolution). A held category stays off
+there until the visitor accepts, even in a regime whose `defaultByRegime` would grant it. This is
+what the scanner expects in those states, so the tool passes the scan it is measured by. The schema
+tool treats a visitor known only by country (a country-only CDN header) as being in every one of that country's wiretap states, so all of that country's holds apply. The schema
+refuses `true` (a grant is an override), `necessary`, and a category the config does not list.
+
+**`overrides`** is the owner's say, applied as written, in either direction: stricter or looser
+than the law, compliant or not.
+
+```json
+"overrides": {
+  "regimes": { "CA-QC": "opt-in", "*": "opt-out" },
+  "defaults": { "US-CA": { "analytics": true }, "opt-out": { "advertising": false } },
+  "honorGpc": false,
+  "note": "Counsel sign-off 2026-10"
+}
+```
+
+- `regimes`: location key → `opt-in`, `opt-out-signal` or `opt-out`. Checked before the
+  built-in table (first matching key, most specific first). Ignored when `regimeSource` is `fixed`.
+- `defaults`: a location key or a regime → category id → granted before a choice. It beats every
+  policy layer. `necessary` cannot be listed.
+- `honorGpc: false` stops a Global Privacy Control signal from being treated as an opt-out.
+- `note`: the owner's reason, shown with the proof finding.
+
+`consentCategoryDefault(config, id, regime, location?)` is the one place precedence lives. First
+answer wins:
+
+1. `necessary` → granted.
+2. A category the config does not list → denied.
+3. `overrides.defaults`: subdivision key, country key, the regime, then `*`.
+4. `opt-in` → denied.
+5. `locationDefaults`, most specific key first.
+6. `categories[].defaultByRegime`.
+
+GPC is applied on top by the store and the proof unless `overrides.honorGpc` is `false`.
+
+**The report still judges by complykit policy.** The scanner and the report never read the
+overrides to decide what to expect. A site that loosens past policy shows mismatches in its
+report; it is not refused. The proof (what the tool did against its own config) names the
+overrides in a `policy-overridden` finding. A 1.0 tool ignores both fields and behaves as before;
+neither has a schema default, so a 1.0 config hashes the same.
 
 ### `vendors[]`
 

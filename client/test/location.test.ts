@@ -258,3 +258,45 @@ describe('location in the browser', () => {
     await plain.page.context().close();
   });
 });
+
+// Hosted location (plans/regime-overrides.md "Hosted location"): the hosted script
+// may ask the host it was itself loaded from (GET <host>/geo). That host already
+// received the visitor's request for the script, so it is no new party. Any other
+// cross-origin endpoint is still refused.
+describe('header source: the endpoint may share the tool script’s own origin', () => {
+  const hosted = baseConfig({ kind: 'header', header: 'complykit-geo', endpoint: 'https://ck.example-host.test/geo' });
+  const env = (calls: string[], scriptUrl?: string): LocationEnv => ({
+    document: noDoc,
+    pageUrl: 'https://www.example-shop.test/products',
+    scriptUrl,
+    fetch: okFetch('US-CA', calls),
+    onDate: ON,
+  });
+
+  it('same origin as the script: asked, and the answer moves the regime', async () => {
+    const calls: string[] = [];
+    const r = resolveLocation(hosted, env(calls, 'https://ck.example-host.test/s/example-shop.test.js'));
+    expect(r.initial).toMatchObject({ pending: true, regime: 'opt-in' });
+    expect(await r.ready).toMatchObject({ source: 'header', regime: 'opt-out-signal', location: { country: 'US', region: 'CA' } });
+    expect(calls).toEqual(['https://ck.example-host.test/geo']);
+  });
+
+  it('neither the page nor the script origin: refused, never fetched', async () => {
+    const calls: string[] = [];
+    const r = resolveLocation(hosted, env(calls, 'https://www.example-shop.test/complykit/v1/complykit-consent.js'));
+    expect(r.initial).toMatchObject({ pending: false, source: 'unknown', regime: 'opt-in' });
+    expect(calls).toEqual([]);
+  });
+
+  it('a meta tag the site writes still wins, with no request', async () => {
+    const calls: string[] = [];
+    const r = resolveLocation(hosted, { ...env(calls, 'https://ck.example-host.test/s/example-shop.test.js'), document: metaDoc({ 'complykit-region': 'US-TX' }) });
+    expect(r.initial).toMatchObject({ source: 'meta', regime: 'opt-out-signal', pending: false });
+    expect(calls).toEqual([]);
+  });
+
+  it('an empty answer is an unknown location (strictest)', async () => {
+    const r = resolveLocation(hosted, { ...env([], 'https://ck.example-host.test/s/x.js'), fetch: okFetch('') });
+    expect(await r.ready).toMatchObject({ source: 'unknown', regime: 'opt-in' });
+  });
+});

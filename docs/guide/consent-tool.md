@@ -469,7 +469,7 @@ output is in `client/dist/`):
 
 | File | What it does | Size budget (gzip) |
 |---|---|---|
-| `complykit-consent.js` | The core: consent store, script gate, vendor adapters, Google Tag Manager bridge, location, platform bridges, the `ComplyKit` API. Blocking, first in `<head>`. | 15 KB |
+| `complykit-consent.js` | The core: consent store, script gate, vendor adapters, Google Tag Manager bridge, location, platform bridges, the `ComplyKit` API. Blocking, first in `<head>`. | 16 KB |
 | `complykit-consent-ui.js` | The banner, the settings layer and the Privacy choices control. Loaded by the core, asynchronously. | 12 KB |
 | `complykit-consent-companion.js` | The add-on sources, loaded only when the config's `mode` is `companion`. | 8 KB |
 

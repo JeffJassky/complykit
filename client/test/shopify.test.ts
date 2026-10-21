@@ -319,12 +319,12 @@ describe('region (coordination with D7)', () => {
   it("regimeSource 'platform' with no region at start: moves the store's regime once the API loads", () => {
     const c = makeConfig('shopify', { kind: 'platform' });
     const store = fakeStore(c, 'opt-in');
-    diagnostics.location = { source: 'unknown', regime: 'opt-in', pending: false, gpc: false };
+    diagnostics.location = { source: 'unknown', regime: 'opt-in', pending: false, gpc: false, overridden: false };
     const { cp, doc } = fakePrivacy({ regionRequiresConsent: false, region: 'USTX' });
     win.Shopify = { loadFeatures: (_f: unknown, cb: () => void) => ((win.Shopify.customerPrivacy = cp), cb()) };
     const b = installShopifyBridge(c, store, { win, doc })!;
     expect(b.diagnostics.region).toBe('USTX');
-    expect(store.setRegime).toHaveBeenCalledWith(regimeFor({ country: 'US', region: 'TX' }));
+    expect(store.setRegime).toHaveBeenCalledWith(regimeFor({ country: 'US', region: 'TX' }), { country: 'US', region: 'TX' });
     expect(regimeFor({ country: 'US', region: 'TX' })).not.toBe('opt-in');
     expect(diagnostics.location?.source).toBe('platform');
     // opt-out defaults granted, Shopify allows (US, outside banner regions): nothing to record
@@ -333,7 +333,7 @@ describe('region (coordination with D7)', () => {
   it('does not touch the regime when D7 already decided it', () => {
     const c = makeConfig('shopify', { kind: 'platform' });
     const store = fakeStore(c, 'opt-in');
-    diagnostics.location = { source: 'platform', regime: 'opt-in', pending: false, gpc: false };
+    diagnostics.location = { source: 'platform', regime: 'opt-in', pending: false, gpc: false, overridden: false };
     const { cp, doc } = fakePrivacy({ regionRequiresConsent: true, region: 'DE' });
     win.Shopify = { customerPrivacy: cp };
     installShopifyBridge(c, store, { win, doc });

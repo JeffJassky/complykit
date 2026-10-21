@@ -2,7 +2,7 @@
 //
 // This file imports NOTHING. It is the one module both sides of the contract
 // share at runtime: the complykit package (scanner, generator, service) and
-// the client package (`client/`, zero runtime deps, 15 KB gzipped budget). The
+// the client package (`client/`, zero runtime deps, 16 KB gzipped budget). The
 // zod schema that fully validates a config lives next door in
 // consent-config.ts and is never bundled into the client; the client imports
 // the types here type-only and calls `guardConsentToolConfig` on the inline
@@ -31,7 +31,7 @@
 export const CONSENT_CONFIG_ELEMENT_ID = 'complykit-config';
 
 export const CONSENT_CONFIG_MAJOR = 1;
-export const CONSENT_CONFIG_VERSION = '1.0';
+export const CONSENT_CONFIG_VERSION = '1.1';
 
 /** The one reserved category: always granted, never toggled, always present. */
 export const NECESSARY_CATEGORY = 'necessary';
@@ -56,7 +56,7 @@ export const FALLBACK_REGIME: Regime = 'opt-in';
 
 /** Where the tool learns the visitor's location (never a third-party geo call). */
 export type RegimeSource =
-  // A same-origin endpoint echoes a CDN / server request header ("cf-ipcountry",
+  // An endpoint (same-origin path, or an absolute URL on the tool script's own origin) echoes a CDN / server request header ("cf-ipcountry",
   // "x-vercel-ip-country", …) as the body: "DE" or "US-CA".
   | { kind: 'header'; header: string; endpoint: string }
   // `<meta name="complykit-region" content="US-CA">` written by the server template.
@@ -169,6 +169,7 @@ export const CONSENT_STRING_KEYS = [
   'banner.manage',
   'settings.title',
   'settings.body',
+  'settings.gpcInfo',
   'settings.acceptAll',
   'settings.rejectAll',
   'settings.save',
@@ -215,6 +216,46 @@ export interface CompanionConfig {
   map?: Record<string, string[]>;
 }
 
+/**
+ * A visitor location key (schema 1.1): 'US-CA' (ISO 3166-1 country, ISO 3166-2
+ * subdivision suffix), 'US' (country), or '*' (any location no other key matches,
+ * an unknown one included). Upper case. Lookups go most specific first:
+ * 'US-CA' → 'US' → '*'.
+ */
+export type LocationKey = string;
+export const LOCATION_KEY_PATTERN = /^(\*|[A-Z]{2}(-[A-Z0-9]{1,3})?)$/;
+
+/** Where the visitor is, as the location source reported it (registry/regime.ts RegimeLocation). */
+export interface VisitorLocation {
+  country: string;
+  region?: string;
+}
+
+/**
+ * The site owner's overrides (schema 1.1). complykit POLICY does not apply to
+ * them: the client runs whatever they say, in either direction — stricter or
+ * looser than the law, compliant or not. The scanner and the report keep
+ * judging the site against complykit policy, so a looser override shows up as
+ * mismatches there (plus a `policy-overridden` proof finding naming it).
+ * Overrides are kept across regeneration (the service stores them with the
+ * owner's consent settings and applies them when it serves the config).
+ */
+export interface ConsentOverrides {
+  /** Location key → regime. Checked before the built-in table (regimeFor). Ignored when regimeSource is 'fixed'. */
+  regimes?: Record<LocationKey, Regime>;
+  /**
+   * Granted before the visitor chooses: key → category id → granted. A key is a
+   * location key or a regime. Beats every policy layer (categories[].defaultByRegime,
+   * locationDefaults). Lookup order: subdivision key, country key, regime key, '*'.
+   * `necessary` cannot be listed (always granted).
+   */
+  defaults?: Record<LocationKey | Regime, Record<string, boolean>>;
+  /** false: a Global Privacy Control signal is not treated as an opt-out. Default true. */
+  honorGpc?: boolean;
+  /** The owner's reason, in their words. Shown with the proof finding. */
+  note?: string;
+}
+
 export interface ConsentToolConfig {
   version: string;
   generatedFrom: { runId: string; at: string; site: string; complykit: string; kb?: string };
@@ -222,6 +263,16 @@ export interface ConsentToolConfig {
   hash: string;
   regimeSource: RegimeSource;
   categories: ConsentCategory[];
+  /**
+   * POLICY layer by location (schema 1.1, generated): category id → false = held
+   * until the visitor accepts, for visitors at that location key, in a regime whose
+   * defaultByRegime would grant it. The generator writes the wiretap-litigation
+   * states here (registry/wiretap.ts). Holds only: the schema refuses `true`
+   * (a grant is an override and belongs in `overrides.defaults`).
+   */
+  locationDefaults?: Record<LocationKey, Record<string, boolean>>;
+  /** The owner's overrides (schema 1.1). Absent = complykit policy throughout. */
+  overrides?: ConsentOverrides;
   vendors: ConsentVendor[];
   gate: GateRule[];
   gtm?: GtmConfig;
@@ -368,6 +419,21 @@ export function guardConsentToolConfig(raw: unknown): ConsentConfigGuardResult {
   if (!isObj(raw.theme)) return missing('theme');
   if (!isObj(raw.strings)) return missing('strings');
   if (typeof raw.platform !== 'string') return missing('platform');
+  // Schema 1.1. Structural only, like the rest: a malformed block refuses the whole
+  // config (gated scripts stay inert) rather than running half of an owner's intent.
+  const boolTable = (v: unknown, onlyFalse = false): boolean =>
+    isObj(v) && Object.values(v).every((row) => isObj(row) && Object.values(row).every((b) => (onlyFalse ? b === false : typeof b === 'boolean')));
+  // Keys too: a key that can never match ('us-ca', 'USCA') would be silently ignored.
+  const keysOk = (v: Record<string, unknown>, regimeKeys = false): boolean =>
+    Object.keys(v).every((k) => LOCATION_KEY_PATTERN.test(k) || (regimeKeys && (REGIMES as readonly string[]).includes(k)));
+  if (raw.locationDefaults !== undefined && !(boolTable(raw.locationDefaults, true) && keysOk(raw.locationDefaults as Record<string, unknown>))) return missing('locationDefaults');
+  if (raw.overrides !== undefined) {
+    const o = raw.overrides;
+    if (!isObj(o)) return missing('overrides');
+    if (o.regimes !== undefined && !(isObj(o.regimes) && keysOk(o.regimes) && Object.values(o.regimes).every((r) => (REGIMES as readonly unknown[]).includes(r)))) return missing('overrides.regimes');
+    if (o.defaults !== undefined && !(boolTable(o.defaults) && keysOk(o.defaults as Record<string, unknown>, true))) return missing('overrides.defaults');
+    if (o.honorGpc !== undefined && typeof o.honorGpc !== 'boolean') return missing('overrides.honorGpc');
+  }
   // A copy, never the caller's object: the rescan hashes the raw config as deployed.
   // Configs older than `blockPage` get false.
   return { ok: true, config: { ...raw, blockPage: raw.blockPage === true } as unknown as ConsentToolConfig, version };
@@ -380,18 +446,87 @@ export function isNecessaryCategory(id: string): boolean {
 }
 
 /**
- * Whether a category is granted BEFORE the visitor chooses, in a regime.
- * `necessary` → true. A category the config does not list → false: an unknown
- * category is denied until explicitly granted, and the store never grants what
- * it cannot name. Everything else → the configured default for that regime.
+ * The keys a location is looked up under, most specific first: {US, CA} →
+ * ['US-CA', 'US', '*']; {DE} → ['DE', '*']; no location → ['*'].
  */
-export function consentCategoryDefault(config: ConsentToolConfig, categoryId: string, regime: Regime): boolean {
+export function locationKeys(location?: VisitorLocation): LocationKey[] {
+  const cc = typeof location?.country === 'string' ? location.country.trim().toUpperCase() : '';
+  if (!/^[A-Z]{2}$/.test(cc)) return ['*'];
+  const rg = typeof location?.region === 'string' ? location.region.trim().toUpperCase().replace(new RegExp(`^${cc}[-_]`), '') : '';
+  return /^[A-Z0-9]{1,3}$/.test(rg) ? [`${cc}-${rg}`, cc, '*'] : [cc, '*'];
+}
+
+/**
+ * The regime `overrides.regimes` assigns to a location (first matching key,
+ * most specific first), or undefined when no override applies and the
+ * built-in table decides. An unknown location matches only '*'.
+ */
+export function overriddenRegime(config: Pick<ConsentToolConfig, 'overrides'>, location?: VisitorLocation): Regime | undefined {
+  const table = config.overrides?.regimes;
+  if (!isObj(table)) return undefined;
+  for (const k of locationKeys(location)) {
+    const r = table[k];
+    if ((REGIMES as readonly unknown[]).includes(r)) return r;
+  }
+  return undefined;
+}
+
+/** Whether the tool treats Global Privacy Control as an opt-out (default true; `overrides.honorGpc: false` turns it off). */
+export function honorsGpc(config: Pick<ConsentToolConfig, 'overrides'>): boolean {
+  return config.overrides?.honorGpc !== false;
+}
+
+/** Whether the config carries any owner override (an empty block counts as none). */
+export function hasOverrides(config: Pick<ConsentToolConfig, 'overrides'>): boolean {
+  const o = config.overrides;
+  if (!isObj(o)) return false;
+  return (isObj(o.regimes) && Object.keys(o.regimes).length > 0) || (isObj(o.defaults) && Object.keys(o.defaults).length > 0) || o.honorGpc === false;
+}
+
+/**
+ * Whether a category is granted BEFORE the visitor chooses, for a visitor in
+ * `regime` at `location`. GPC is NOT applied here (the store and the proof
+ * apply it on top, when `honorsGpc`). Precedence, first answer wins:
+ *   1. `necessary` → true.
+ *   2. A category the config does not list → false (fail closed: the store never
+ *      grants what it cannot name), overrides included.
+ *   3. overrides.defaults: subdivision key, country key, the regime, '*'.
+ *   4. Policy: opt-in (or a regime this build does not know) → false.
+ *   5. Policy: locationDefaults, most specific key first (holds only). With the
+ *      country known and the subdivision not, a hold on any of its subdivisions applies.
+ *   6. Policy: categories[].defaultByRegime[regime].
+ */
+export function consentCategoryDefault(config: ConsentToolConfig, categoryId: string, regime: Regime, location?: VisitorLocation): boolean {
   if (isNecessaryCategory(categoryId)) return true;
-  // A regime this build does not know is the strictest one; under opt-in nothing
-  // else is granted, whatever the config says (defense in depth over the guard).
-  const r: Regime = REGIMES.includes(regime) ? regime : FALLBACK_REGIME;
-  if (r === 'opt-in') return false;
   const cat = config.categories.find((c) => c.id === categoryId);
   if (!cat) return false;
+  const keys = locationKeys(location);
+  const od = config.overrides?.defaults;
+  if (isObj(od)) {
+    const order = [...keys.filter((k) => k !== '*'), regime, '*'];
+    for (const k of order) {
+      const v = isObj(od[k]) ? od[k][categoryId] : undefined;
+      if (typeof v === 'boolean') return v;
+    }
+  }
+  // A regime this build does not know is the strictest one; under opt-in nothing
+  // else is granted by policy, whatever the config says (defense in depth over the guard).
+  const r: Regime = REGIMES.includes(regime) ? regime : FALLBACK_REGIME;
+  if (r === 'opt-in') return false;
+  const ld = config.locationDefaults;
+  if (isObj(ld)) {
+    for (const k of keys) {
+      if (isObj(ld[k]) && ld[k][categoryId] === false) return false;
+    }
+    // Subdivision not reported (a country-only geo header): the visitor may be in
+    // any of them, so a hold on ANY subdivision of the country applies — the same
+    // cautious reading as regimeFor's "US, state unknown ⇒ strictest US regime".
+    if (keys.length === 2 && keys[0] !== '*') {
+      const prefix = `${keys[0]}-`;
+      for (const k of Object.keys(ld)) {
+        if (k.startsWith(prefix) && isObj(ld[k]) && ld[k][categoryId] === false) return false;
+      }
+    }
+  }
   return cat.defaultByRegime[r] === true;
 }

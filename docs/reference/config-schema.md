@@ -2,7 +2,7 @@
 
 # Consent tool config reference
 
-Every field of the consent tool config, generated from the JSON Schema (`complykit consent tool config v1.0`).
+Every field of the consent tool config, generated from the JSON Schema (`complykit consent tool config v1.1`).
 What the fields mean, how the generator fills them and the rules the tool applies are in
 [Consent tool config](/guide/config); the install steps are in
 [Installing the consent tool](/guide/consent-tool).
@@ -30,7 +30,7 @@ rules). Those are described in [Consent tool config](/guide/config).
 | `hash` | `string` | yes |  | sha-256 of the canonical JSON of every other field. pattern `^[0-9a-f]{64}$` |
 | `regimeSource` | one of | yes |  | Where the tool learns the visitor location. Never a third-party geo call; unknown ⇒ opt-in |
 | `regimeSource.header` | `string` | yes |  | The request header the endpoint echoes, e.g. cf-ipcountry. min length 1. only when kind `"header"` |
-| `regimeSource.endpoint` | `string` | yes |  | Same-origin path whose body is "CC" or "CC-RR". pattern `^\/`. only when kind `"header"` |
+| `regimeSource.endpoint` | `string` | yes |  | A same-origin path, or an absolute http(s) URL on the tool script's own origin (the hosted install's GET &lt;host&gt;/geo), whose body is "CC" or "CC-RR". The client refuses any other origin. pattern `^(\/\|https?:\/\/)`. only when kind `"header"` |
 | `regimeSource.name` | `string` |  | `"complykit-region"` | &lt;meta name&gt; whose content is "CC" or "CC-RR". min length 1. only when kind `"meta"` |
 | `regimeSource.regime` | `"opt-in"` / `"opt-out-signal"` / `"opt-out"` | yes |  | only when kind `"fixed"` |
 | `categories` | object[] | yes |  | at least 1 item |
@@ -41,6 +41,12 @@ rules). Those are described in [Consent tool config](/guide/config).
 | `categories[].defaultByRegime.opt-in` | `boolean` | yes |  |  |
 | `categories[].defaultByRegime.opt-out-signal` | `boolean` | yes |  |  |
 | `categories[].defaultByRegime.opt-out` | `boolean` | yes |  |  |
+| `locationDefaults` | map |  |  | complykit policy by location (generated): category → false holds it until the visitor accepts there (wiretap-litigation states). Holds only; grants belong in overrides.defaults. Keys match `^(\*\|[A-Z]{2}(-[A-Z0-9]{1,3})?)$` |
+| `overrides` | `object` |  |  | Owner overrides of complykit policy. Kept across regeneration |
+| `overrides.regimes` | map |  |  | Location key → regime, before the built-in table: { 'CA-QC': 'opt-in', 'CA': 'opt-out' }. '*' = any location no other key matches, an unknown one included. Ignored when regimeSource is fixed. Keys match `^(\*\|[A-Z]{2}(-[A-Z0-9]{1,3})?)$` |
+| `overrides.defaults` | map |  |  | Granted before the visitor chooses, beating complykit policy: key (location key or regime) → category → granted. Lookup: subdivision, country, regime, '*' |
+| `overrides.honorGpc` | `boolean` |  |  | false: Global Privacy Control is not treated as an opt-out. Default true |
+| `overrides.note` | `string` |  |  | The owner's reason, shown with the proof finding. min length 1 |
 | `vendors` | object[] |  | `[]` |  |
 | `vendors[].id` | `string` | yes |  | Knowledge-base entry id, e.g. meta.pixel. min length 1 |
 | `vendors[].label` | `string` | yes |  | min length 1 |
@@ -79,7 +85,7 @@ rules). Those are described in [Consent tool config](/guide/config).
 | `theme.border` | `string` |  |  |  |
 | `theme.radius` | `string` |  |  |  |
 | `strings.<key>` | map |  | `{}` | language tag → string table (overrides only). Keys match `^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$`. Overrides by string key; unknown keys and empty strings are refused |
-| `strings.<key>.<string key>` | `string` |  |  | Keys: `banner.title`, `banner.body`, `banner.accept`, `banner.reject`, `banner.manage`, `settings.title`, `settings.body`, `settings.acceptAll`, `settings.rejectAll`, `settings.save`, `settings.close`, `withdraw.link`, `withdraw.confirm`, `withdraw.note`, `withdraw.recall`, `privacyChoices.link`, `optOut.link`, `optOut.confirmed`, `optOut.iconAlt`, `gpc.honored`, `privacyPolicy.link`. Each value is a non-empty string |
+| `strings.<key>.<string key>` | `string` |  |  | Keys: `banner.title`, `banner.body`, `banner.accept`, `banner.reject`, `banner.manage`, `settings.title`, `settings.body`, `settings.gpcInfo`, `settings.acceptAll`, `settings.rejectAll`, `settings.save`, `settings.close`, `withdraw.link`, `withdraw.confirm`, `withdraw.note`, `withdraw.recall`, `privacyChoices.link`, `optOut.link`, `optOut.confirmed`, `optOut.iconAlt`, `gpc.honored`, `privacyPolicy.link`. Each value is a non-empty string |
 | `strings.<key>.byRegime` | `object` |  |  | Per-regime overrides of the same keys |
 | `strings.<key>.byRegime.opt-in` | `object` |  |  |  |
 | `strings.<key>.byRegime.opt-in.<string key>` | `string` |  |  | Same keys as `strings.<key>.<string key>` |

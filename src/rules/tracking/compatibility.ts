@@ -200,7 +200,10 @@ export function consentTypesFor(categories: string[]): string[] {
 }
 
 const PLATFORM_API: Record<PlatformFingerprint['name'], { api: string; where: string }> = {
-  shopify: { api: 'Shopify.customerPrivacy.setTrackingConsent (loadFeatures consent-tracking-api first)', where: 'Settings → Customer privacy (cookie banner, regions)' },
+  shopify: {
+    api: 'Shopify.customerPrivacy.setTrackingConsent (loadFeatures consent-tracking-api first)',
+    where: 'Settings → Customer events → the pixel → Customer privacy: Permission "Required" with the purposes it serves, and Data sale where it is one; an app pixel\'s purposes are fixed by its app (disconnect it, or replace it with a custom pixel). Shopify\'s banner regions: Settings → Customer privacy',
+  },
   wix: { api: 'Wix consentPolicy (window.consentPolicy / wixEmbedsAPI)', where: 'Settings → Privacy & cookies → cookie consent banner' },
   squarespace: { api: 'no page-level consent API documented: the Squarespace cookie banner setting', where: 'Settings → Cookies & visitor data' },
   wordpress: { api: 'WordPress Consent API (wp_set_consent / wp_has_consent) through the consent plugin', where: 'the consent plugin’s settings (the pixel plugin must read wp_has_consent)' },
@@ -925,6 +928,12 @@ export function compatibilityFor(party: PartyInventoryItem, input: Compatibility
         for (const { f, ref } of gateable) reasons.push({ source: 'markup', note: `${whereOf(f)} at ${f.page}:${f.line} (${f.matchedBy}: ${f.match})`, ref });
         changes.push(...rewriteChanges());
         changes.push(...googleTagChanges());
+        // Shopify's checkout runs no theme code: a tag in the theme covers the
+        // storefront only. Events from checkout (purchases) need a custom pixel,
+        // which Shopify gates through its own Customer privacy settings.
+        if (input.platform?.name === 'shopify') {
+          reasons.push({ source: 'platform', note: `theme code does not run in Shopify's checkout: this tag reaches the storefront only; if ${party.label} must also see checkout (purchases), add it as a custom pixel under Settings → Customer events with Permission "Required" — not as a second theme tag` });
+        }
       } else if (held.length) {
         verdict = 'unknown';
         for (const { f, ref } of held) reasons.push({ source: 'markup', note: `${whereOf(f)} at ${f.page}:${f.line} is already held back (type="text/plain" / data-src)`, ref });

@@ -3,7 +3,7 @@
 //
 //   complykit-consent.js     core: store, gate, adapters, GTM bridge, location,
 //                            platform bridges, API. Blocking, in <head>, before
-//                            any gated tag or the GTM snippet. ≤15 KB gz.
+//                            any gated tag or the GTM snippet. ≤16 KB gz.
 //   complykit-consent-ui.js  banner, settings layer, Privacy choices control
 //                            (theming F1 and strings F2 land here). ≤12 KB gz.
 //                            Loaded BY THE CORE, async — never pasted.
@@ -25,7 +25,7 @@
 // made, the defaults stand (nothing non-necessary under opt-in), a console
 // warning is printed and `ComplyKit.diagnostics.ui` says why.
 
-import { getConfig, getStore, on } from './api.js';
+import { getConfig, getStore, locationPending, on } from './api.js';
 import { diagnostics } from './diagnostics.js';
 import { report } from './events.js';
 import type { ConsentStore } from './store.js';
@@ -49,6 +49,7 @@ export const uiHost: UiHost = {
   opener: null,
   pendingOpen: false,
   mounted: false,
+  locationPending,
   requestOpen(from) {
     uiHost.opener = from;
     getStore()?.open();

@@ -196,11 +196,12 @@ describe('overrides and edge cases', () => {
     await page.context().close();
   });
 
-  it('the regime arriving late re-renders the visible banner (GPC on: same grants, new words)', async () => {
+  it('the banner waits for a late regime, then shows the real words (GPC on: same grants, new words)', async () => {
     const c = config({ regimeSource: { kind: 'header', header: 'cf-ipcountry', endpoint: '/__region' } });
     const page = await load(c, { gpc: true, region: { body: 'US-CA', delayMs: 400 } });
-    expect((await words(page)).title).toBe('Cookies on this site'); // unknown ⇒ opt-in
-    await page.waitForFunction(() => document.querySelector('.ck-banner .ck-title')?.textContent === 'Your Privacy Choices');
+    // load() returns once the banner has rendered buttons: it waited for the lookup, so the strict
+    // wording was never shown to a visitor it may not govern.
+    expect((await words(page)).title).toBe('Your Privacy Choices');
     const w = await words(page);
     expect(w.actions[0]).toBe(DNSS);
     expect(w.gpc).toContain('Global Privacy Control');

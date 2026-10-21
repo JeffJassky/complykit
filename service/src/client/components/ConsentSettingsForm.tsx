@@ -116,7 +116,7 @@ export function ConsentSettingsFormView({ draft, defaults, categoryIds, saving, 
 export function ConsentSettingsForm({ settings, defaults, detectedBanner, categoryIds, onSave }: { settings: ConsentSettings; defaults: SettingsDefaults; detectedBanner?: DetectedBanner; categoryIds: readonly string[]; onSave: (s: ConsentSettings) => Promise<void> }) {
   // Stored add-on settings with no detection now keep both radios, naming "your current banner", so nothing changes silently.
   const banner: DetectedBanner | undefined = detectedBanner ?? (settings.mode === 'companion' && settings.cmp ? { label: 'your current banner', cmp: settings.cmp } : undefined);
-  const [draft, setDraft] = useState<SettingsDraft>(() => ({ mode: banner ? settings.mode : 'full', cmp: banner?.cmp ?? settings.cmp, layout: settings.layout, blockPage: settings.blockPage, privacyPolicyUrl: settings.privacyPolicyUrl }));
+  const [draft, setDraft] = useState<SettingsDraft>(() => ({ mode: banner ? settings.mode : 'full', cmp: banner?.cmp ?? settings.cmp, layout: settings.layout, blockPage: settings.blockPage, privacyPolicyUrl: settings.privacyPolicyUrl, overrides: settings.overrides }));
   const [state, setState] = useState<{ saving?: boolean; saved?: boolean; error?: string }>({});
   return (
     <ConsentSettingsFormView

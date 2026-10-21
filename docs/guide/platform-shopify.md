@@ -8,6 +8,26 @@ choice into that signal. Your config needs `"platform": "shopify"`
 ([config](/guide/config)); the bridge also switches itself on if it finds
 `window.Shopify` on the page.
 
+## Which goes where
+
+Shopify has two places code can run, and the rule is one implementation per tool:
+
+| The tool needs | Put it | Gated by |
+|---|---|---|
+| Checkout events (purchase, payment, shipping steps), with or without storefront events | **One custom pixel** in Settings > Customer events, Permission **Required** | Shopify, from the visitor's banner choice |
+| The storefront page itself (a widget, chat, session replay, a payment-messaging snippet), never checkout | A theme tag with `type="text/plain" data-category="…"` | complykit, from the same choice |
+
+Google Analytics, Google Ads, Merchant Center and Meta belong in the first row: a
+theme tag for them is blind in checkout, and a second copy of the same vendor as a
+pixel means two implementations to keep in step. Microsoft Clarity, a chat widget
+or Affirm's price messaging belong in the second: a pixel runs in a sandbox with
+no page to draw on. Do not split one vendor across both.
+
+An **app pixel** (the Google & YouTube app, Meta's app) is the first row with the
+purposes the app declares; if those are wrong for the store, disconnect the app
+pixel and add a custom pixel. Theme code never runs in checkout, so moving an app
+pixel into the theme loses every checkout event.
+
 ## Install
 
 There is no complykit Shopify app yet, so the install path is the theme.
@@ -138,9 +158,10 @@ declared purposes.
 - **The API not loading.** If `Shopify.customerPrivacy` does not appear within 15
   seconds the choice is **not** sent, and `ComplyKit.diagnostics.shopify.gaveUp` is
   true. Nothing is reported as compliant on that basis.
-- **Checkout.** Theme code does not run on checkout. Checkout reads the consent
-  Shopify stored on the storefront, which is what the bridge writes; it is not
-  verified until a scan walks through checkout.
+- **Checkout.** Theme code does not run on checkout, so neither the script gate nor
+  a theme tag reaches it; only pixels run there ([which goes where](#which-goes-where)).
+  Checkout reads the consent Shopify stored on the storefront, which is what the
+  bridge writes; it is not verified until a scan walks through checkout.
 - **What Shopify itself sends while denied.** Shopify's own analytics requests are
   not documented per purpose.
 

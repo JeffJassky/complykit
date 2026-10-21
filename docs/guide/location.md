@@ -94,15 +94,50 @@ What each regime grants before a choice comes from your config's
 `categories[].defaultByRegime` (see [Consent tool config](./config.md)). Under `opt-in`,
 nothing but `necessary` is ever granted by default.
 
+**Wiretap states hold, whatever the regime.** California, Florida, Pennsylvania, Maryland
+and Illinois are `opt-out-signal` or `opt-out`, where `defaultByRegime` lets non-necessary
+categories run before a choice. But wiretap-statute suits there reach analytics, ad pixels,
+chat and session recording that fire before consent, and the scanner expects them off. The
+generator therefore writes `locationDefaults` for those states (derived from the registry's
+wiretap requirements): analytics, advertising and any category with a wiretap-kind vendor stay
+off until the visitor accepts. A visitor known only by
+country (a country-only CDN header, for example `US`) gets every wiretap hold of that
+country: the holds of all five states apply, because the tool cannot tell which state the
+visitor is in. The banner says some purposes stay off until the visitor
+accepts.
+
+## Overriding the regime and the defaults
+
+The site owner can change what the tool does at any location with `overrides` in the config
+(`overrides.regimes`, `overrides.defaults`, `overrides.honorGpc`; see
+[Consent tool config](./config.md#locationdefaults-and-overrides-1-1)). For example, treat a
+province as `opt-in`, or every location the table does not know as `opt-out`:
+
+```json
+"overrides": { "regimes": { "CA-QC": "opt-in", "*": "opt-out" } }
+```
+
+Keys are looked up most specific first (`US-CA`, then `US`, then `*`); an unknown location
+matches only `*`. The tool runs what the owner configured, compliant or not. `fixed` ignores
+`overrides.regimes` (the regime stays the fixed one). `ComplyKit.diagnostics.location` reports whether the regime was overridden.
+
+The scanner and the report are fixed to complykit policy and never read the overrides, so a
+site that loosens past policy shows mismatches in its report. The proof adds a
+`policy-overridden` finding that names each override and the owner's note.
+
 **Unknown means `opt-in`.** If the source is missing, unreadable, cross-origin, slow or
-broken, the visitor gets the strictest regime. That fallback cannot be configured. A
-misconfigured location source makes the site stricter, never looser.
+broken, the visitor gets the strictest regime. The generated config cannot loosen that
+fallback; only an explicit owner override (`overrides.regimes["*"]`) can, and only once the
+lookup has finished unknown. While a `header` lookup is still pending the visitor is always
+`opt-in`, whatever `"*"` says: "not known yet" is not "unknown", and scripts released in
+that window cannot be unrun. A misconfigured
+location source makes the site stricter, never looser.
 
 ## Global Privacy Control
 
 If the browser sends `navigator.globalPrivacyControl === true`, the tool denies every
-non-necessary category by default, in every regime. A visitor's own explicit choice
-still applies afterwards. The consent record stores `gpc: true`, which is your proof
+non-necessary category by default, in every regime, unless the owner set
+`overrides.honorGpc` to `false`. A visitor's own explicit choice still applies afterwards. The consent record stores `gpc: true`, which is your proof
 that the signal was received.
 
 This goes further than the law strictly requires. Only some states require honoring
@@ -120,17 +155,21 @@ The supporting research is in `plans/research-consent-law.md` §1.4 and §8.
 Set the source with `regimeSource` in the config. The tool uses the first source that
 gives an answer:
 
-1. **`fixed`.** One regime applies to every visitor, and nothing else is read.
+1. **`fixed`.** One regime applies to every visitor, and `overrides.regimes` is ignored.
    `{ "kind": "fixed", "regime": "opt-in" }` is the safe choice when you have no
-   location source.
+   location source. The one thing still read is the `complykit-region` meta tag, and only
+   for the visitor's location: `locationDefaults` (the wiretap holds) and location-keyed
+   `overrides.defaults` apply to it, while the regime stays the fixed one.
 2. **Meta tag.** Your server writes
    `<meta name="complykit-region" content="US-CA">` into the page. The tool checks this
    for every non-fixed source because it is synchronous and needs no request. With
    `{ "kind": "meta", "name": "…" }` you can choose a different name; the tool still
    checks `complykit-region` as well.
 3. **`header`.** `{ "kind": "header", "header": "cf-ipcountry", "endpoint": "/.well-known/complykit-location" }`
-   points to a **same-origin** endpoint that returns the location as plain text
-   (`DE`, `US-CA`). The tool refuses a cross-origin endpoint. **Until the endpoint
+   points to an endpoint that returns the location as plain text
+   (`DE`, `US-CA`). The endpoint must be on the page's origin or on the origin the tool
+   script itself was loaded from (the hosted install's host, below). The tool refuses an
+   endpoint on any other origin. **Until the endpoint
    answers, the visitor is under `opt-in`**. When the answer arrives, the defaults
    move, but only if the visitor has not made a choice yet. The tool waits 3 seconds,
    then stays strict for the rest of that page. `header` is a label for the people
@@ -141,7 +180,7 @@ gives an answer:
 5. **Unknown.** The visitor gets `opt-in`.
 
 The tool records which source gave the answer in `ComplyKit.diagnostics.location`
-(`{ source, regime, pending, gpc }`). A rescan reads it from there.
+(`{ source, regime, pending, gpc, location, overridden }`). A rescan reads it from there.
 
 ::: warning Cached HTML and the meta tag
 If a CDN or page cache stores your HTML, a meta tag written at the origin is cached
@@ -150,6 +189,26 @@ the tag **after** the cache, at the edge (Cloudflare Worker `HTMLRewriter`, Netl
 Function, Vercel middleware), or use the `header` endpoint instead. Give that endpoint
 `Cache-Control: private, no-store`.
 :::
+
+## Hosted installs
+
+A hosted install (`<script src="https://<host>/s/<your-domain>.js">`) needs no location
+source from you. The host serves `GET /geo`, which looks up the visitor's IP address in a
+local GeoIP database and answers `US-CA`, `DE` or nothing. The served config points the
+tool at it. That request goes to the host the visitor already loaded the script from, so
+it adds no party, sets no cookie and is never cached. The host does not log or store the
+IP address.
+
+A `complykit-region` meta tag that you write still wins and no request is made. A
+`platform` source, a `fixed` regime or a `header` source you chose yourself are left as
+they are.
+
+**Accuracy.** IP geolocation is approximate. It can place a visitor in the wrong state,
+particularly near a state line, on a mobile network or behind a VPN. A Californian
+placed in Nevada gets no wiretap hold. An unknown answer (empty) leaves the visitor under
+`opt-in`. If you need exact placement, write the meta tag from your own server.
+
+IP geolocation by [DB-IP](https://db-ip.com) (IP to City Lite, CC BY 4.0).
 
 ## Recipes
 

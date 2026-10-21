@@ -27,6 +27,9 @@ import { report } from './events.js';
 let store: ConsentStore | undefined;
 let config: ConsentToolConfig | undefined;
 const pending: Array<[StoreEvent, Listener, { off?: () => void }]> = [];
+/** Settles when a pending location lookup has answered or timed out; undefined when none is outstanding. */
+let locationWait: Promise<void> | undefined;
+export const locationPending = (): Promise<void> | undefined => locationWait;
 const waiting: Array<(s: ConsentStore) => void> = [];
 
 /**
@@ -50,11 +53,12 @@ export function init(raw: unknown, regime?: Regime, opts: StoreOptions = {}): Co
   // synchronous); a header lookup starts strict and moves the store when it answers.
   const loc = regime ? undefined : resolveLocation(config);
   const r = regime ?? loc!.initial.regime;
-  store = createStore(config, r, { toolVersion: TOOL_VERSION, ...opts });
+  locationWait = loc?.initial.pending ? loc.ready.then(() => undefined) : undefined;
+  store = createStore(config, r, { toolVersion: TOOL_VERSION, location: loc?.initial.location, ...opts });
   if (loc?.initial.pending) {
     const started = store;
     void loc.ready.then((d) => {
-      if (store === started) started.setRegime(d.regime);
+      if (store === started) started.setRegime(d.regime, d.location);
     });
   }
   for (const p of pending) p[2].off = store.on(p[0], p[1]);

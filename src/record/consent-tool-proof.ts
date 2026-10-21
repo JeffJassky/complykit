@@ -105,6 +105,7 @@ export const ConsentToolProofFindingCode = z.enum([
   'tool-not-running', // config element present, store never started in any scenario
   'gpc-not-honored', // the gpc scenario sent the signal; the running tool's state did not record it
   'vendor-not-in-config', // a tracker the config does not list ran where every non-necessary category was denied
+  'policy-overridden', // the deployed config carries the owner's overrides (schema 1.1): judged by its own settings, named here
   'gated-document-write', // a script the config gates calls document.write: not gateable asynchronously (released late, the write is ignored or wipes the page)
 ]);
 export type ConsentToolProofFindingCode = z.infer<typeof ConsentToolProofFindingCode>;

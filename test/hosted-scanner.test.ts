@@ -11,10 +11,11 @@ import { compatibilityEvaluation, PAGE } from './fixtures/compatibility-report.j
 const NOW = '2026-10-06T12:00:00.000Z';
 
 describe('the complykit KB entry', () => {
+  // /geo is the hosted script's location lookup: before consent it is the consent tool's own request, never a pre-consent tracker.
   it('every complykit host resolves to consent.complykit, category consent', () => {
     expect(COMPLYKIT_HOSTS.length).toBeGreaterThan(0);
     for (const h of COMPLYKIT_HOSTS) {
-      for (const p of ['/s/example-shop.test.js', '/e', '/api/consent-records']) {
+      for (const p of ['/s/example-shop.test.js', '/e', '/api/consent-records', '/geo']) {
         const e = lookupEntry(DEFAULT_KB, h, p);
         expect(e?.id, `${h}${p}`).toBe(COMPLYKIT_PARTY_ID);
         expect(e?.categories).toEqual(['consent']);

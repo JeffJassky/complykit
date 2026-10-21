@@ -11,6 +11,8 @@ import { DIST, launchBrowser, startFixtureServer, type FixtureServer } from './h
 const here = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG = JSON.parse(fs.readFileSync(path.join(here, '..', '..', 'test', 'fixtures', 'consent-config', 'example.json'), 'utf8'));
 
+const OPT_OUT = { ...structuredClone(CONFIG), regimeSource: { kind: 'fixed', regime: 'opt-out' } };
+
 type Entry = { kind: 'command'; args: unknown[] } | { kind: 'data'; value: Record<string, unknown> };
 
 let browser: Browser;
@@ -41,6 +43,27 @@ async function open(file: string, regime: string, config: unknown = CONFIG): Pro
   }, [config, regime] as const);
   await page.goto(`${server.origin}/${file}`);
   return { page, warnings };
+}
+
+/** The real store (auto-started from the inline config) with the location meta tag, above the fake GTM snippet. */
+async function openRouted(config: unknown, region: string, gpc = false): Promise<Page> {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  if (gpc) await page.addInitScript(() => Object.defineProperty(Navigator.prototype, 'globalPrivacyControl', { get: () => true }));
+  const full = { ...(config as object), generatedFrom: { site: 'example-shop.test', ...(config as { generatedFrom?: object }).generatedFrom } };
+  await page.route('**/gtm-routed', (route) =>
+    route.fulfill({
+      contentType: 'text/html; charset=utf-8',
+      body: `<!doctype html><html><head><meta charset="utf-8"><meta name="complykit-region" content="${region}">
+<script type="application/json" id="complykit-config">${JSON.stringify(full)}</script>
+<script src="/complykit-consent.js"></script>
+<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s);j.async=true;j.src='/gtm-recording.js?id='+i;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','GTM-XXXX01');</script>
+</head><body></body></html>`,
+    }),
+  );
+  await page.goto(`${server.origin}/gtm-routed`);
+  await containerLoaded(page);
+  return page;
 }
 
 const containerLoaded = (page: Page) => page.waitForFunction(() => Array.isArray((window as any).__gtmQueueAtLoad));
@@ -87,9 +110,9 @@ describe('GTM bridge: defaults before the container', () => {
   });
 
   it('uses the regime defaults: opt-out grants what the config grants for opt-out', async () => {
-    const { page } = await open('gtm-ordered.html', 'opt-out');
-    await containerLoaded(page);
-    const def = (await queueAtLoad(page)).find((e) => isCmd(e, 'default')) as { args: unknown[] };
+    const page = await openRouted(OPT_OUT, 'US-TX');
+    const q = await queueAtLoad(page);
+    const def = q.find((e) => isCmd(e, 'default')) as { args: unknown[] };
     expect(def.args[2]).toMatchObject({
       ad_storage: 'granted',
       analytics_storage: 'granted',
@@ -100,12 +123,38 @@ describe('GTM bridge: defaults before the container', () => {
   });
 
   it('never grants a tracking signal mapped to necessary (fail closed on a hand-edited config)', async () => {
-    const bad = structuredClone(CONFIG);
+    const bad = structuredClone(OPT_OUT);
     bad.gtm.consentMode.analytics_storage = 'necessary';
-    const { page } = await open('gtm-ordered.html', 'opt-out', bad);
-    await containerLoaded(page);
+    const page = await openRouted(bad, 'US-TX');
     const def = (await queueAtLoad(page)).find((e) => isCmd(e, 'default')) as { args: unknown[] };
     expect(def.args[2]).toMatchObject({ analytics_storage: 'denied', security_storage: 'granted' });
+    await page.close();
+  });
+
+  it('a wiretap-state visitor: the default command itself denies the held categories, and no update precedes gtm.js', async () => {
+    const held = { ...structuredClone(CONFIG), locationDefaults: { 'US-CA': { analytics: false, advertising: false } } };
+    const ca = await openRouted(held, 'US-CA');
+    const q = await queueAtLoad(ca);
+    const iDefault = q.findIndex((e) => isCmd(e, 'default'));
+    expect(iDefault).toBeGreaterThanOrEqual(0);
+    expect((q[iDefault] as { args: unknown[] }).args[2]).toMatchObject({ analytics_storage: 'denied', ad_storage: 'denied', ad_user_data: 'denied' });
+    expect(q.findIndex((e) => isCmd(e, 'update'))).toBe(-1);
+    expect(q.findIndex((e) => isEvent(e, 'gtm.js'))).toBeGreaterThan(iDefault);
+    await ca.close();
+
+    // The same config in Texas holds nothing.
+    const tx = await openRouted(held, 'US-TX');
+    const def = (await queueAtLoad(tx)).find((e) => isCmd(e, 'default')) as { args: unknown[] };
+    expect(def.args[2]).toMatchObject({ analytics_storage: 'granted', ad_storage: 'denied' }); // opt-out-signal: advertising off by policy, analytics on
+    await tx.close();
+  });
+
+  it('GPC denies the default command (opt-out state), and no update precedes gtm.js', async () => {
+    const page = await openRouted(OPT_OUT, 'US-TX', true);
+    const q = await queueAtLoad(page);
+    const iDefault = q.findIndex((e) => isCmd(e, 'default'));
+    expect((q[iDefault] as { args: unknown[] }).args[2]).toMatchObject({ analytics_storage: 'denied', ad_storage: 'denied', security_storage: 'granted' });
+    expect(q.some((e) => isCmd(e, 'update'))).toBe(false);
     await page.close();
   });
 

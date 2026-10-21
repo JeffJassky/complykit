@@ -132,6 +132,58 @@ describe('PUT /api/sites/:domain/consent-settings', () => {
   });
 });
 
+// Schema 1.1 (plans/regime-overrides.md): the owner's overrides of complykit
+// policy are a consent setting, so they survive every regeneration and land in
+// the served config. The service mirrors the package's structural rules (it does
+// not import the package) and drops entries for categories the current config lacks.
+describe('overrides as a consent setting (1.1)', () => {
+  const overrides = { regimes: { 'CA-QC': 'opt-in', CA: 'opt-out' } as const, defaults: { 'US-CA': { analytics: true }, 'opt-in': { advertising: true } }, honorGpc: false, note: 'counsel sign-off' };
+
+  it('normalize accepts a well-formed overrides block, alone or with other settings', () => {
+    expect(normalizeConsentSettings({ mode: 'full', overrides })).toEqual({ mode: 'full', overrides });
+    expect(normalizeConsentSettings({ mode: 'full', layout: 'box', overrides: { honorGpc: false } })).toEqual({ mode: 'full', layout: 'box', overrides: { honorGpc: false } });
+  });
+
+  it('normalize refuses a malformed one with a 400', () => {
+    const bad = [
+      { overrides: 'yes' },
+      { overrides: { typo: 1 } },
+      { overrides: { regimes: { 'us-ca': 'opt-in' } } }, // keys are upper case
+      { overrides: { regimes: { CA: 'gdpr' } } },
+      { overrides: { defaults: { 'US-CA': { analytics: 'yes' } } } },
+      { overrides: { defaults: { 'US-CA': { necessary: false } } } },
+      { overrides: { defaults: { somewhere: { analytics: true } } } },
+      { overrides: { honorGpc: 'no' } },
+      { overrides: { note: 'x'.repeat(501) } },
+    ];
+    for (const b of bad) {
+      let err: unknown;
+      try {
+        normalizeConsentSettings({ mode: 'full', ...b });
+      } catch (e) {
+        err = e;
+      }
+      expect(err, JSON.stringify(b)).toBeInstanceOf(WorkspaceError);
+      expect((err as WorkspaceError).status).toBe(400);
+    }
+  });
+
+  it('hostedConfig puts them in the served config, re-hashed, dropping categories the config does not list', () => {
+    const withGone = { ...overrides, defaults: { ...overrides.defaults, US: { social: true } } };
+    const out = hostedConfig(example(), ORIGIN, { mode: 'full', overrides: withGone });
+    expect(out.overrides).toEqual(overrides);
+    expect(out.hash).toBe(configHash(out));
+    expect(hostedConfig(example(), ORIGIN, { mode: 'full' }).overrides).toBeUndefined();
+  });
+
+  it('a regenerated config keeps the stored overrides when served', async () => {
+    const { s } = await service();
+    await request(s.app).put(`/api/sites/${DOMAIN}/consent-settings`).send({ mode: 'full', overrides }).expect(200);
+    await s.workspaces.patch(DOMAIN, { config: { value: { config: { ...example(), hash: 'f'.repeat(64) }, snippet: '', changeList: '', notes: [], tasks: [] } } });
+    expect((await served(s)).overrides).toEqual(overrides);
+  });
+});
+
 describe('the to-do list in add-on mode', () => {
   it('hides remove-existing-tool tasks; the rest stay', async () => {
     const { s } = await service();

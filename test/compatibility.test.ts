@@ -144,6 +144,15 @@ describe('each verdict', () => {
     expect(r.reasons.at(-1)?.note).toMatch(/behavior not established/);
   });
 
+  it('gateable on Shopify: the theme tag is storefront-only; checkout needs a custom pixel, said once and only there', () => {
+    const r = compatibilityFor(party('meta.pixel', 'direct-script'), { platform: { name: 'shopify' }, markup: markup([finding('meta.pixel', 'gateable')]) });
+    expect(r.verdict).toBe('gateable');
+    expect(r.reasons.filter((x) => /does not run in Shopify's checkout/.test(x.note))).toHaveLength(1);
+    expect(r.reasons.find((x) => /does not run in Shopify's checkout/.test(x.note))?.note).toMatch(/custom pixel .*Permission "Required"/);
+    const other = compatibilityFor(party('meta.pixel', 'direct-script'), { platform: { name: 'wix' }, markup: markup([finding('meta.pixel', 'gateable')]) });
+    expect(other.reasons.some((x) => /checkout/.test(x.note))).toBe(false);
+  });
+
   it('gateable → unknown when the HTML was not inspected, even with the implementation class set', () => {
     const r = compatibilityFor(party('meta.pixel', 'direct-script'), {});
     expect(r.verdict).toBe('unknown');

@@ -880,6 +880,7 @@ export type ConsentToolProofFindingCode =
   | 'tool-not-running'
   | 'gpc-not-honored'
   | 'vendor-not-in-config'
+  | 'policy-overridden'
   | 'gated-document-write';
 export interface ConsentToolProofFinding {
   code: ConsentToolProofFindingCode;
@@ -1348,6 +1349,11 @@ export type RegimeVerdict = Regime | 'unknown';
  * the client's posture). Codes outside EU/UK/US are 'unknown'.
  */
 export function regimeForCodes(codes: readonly string[], onDate?: string, opts?: { unverifiedUs?: 'baseline' | 'strict' }): RegimeVerdict;
+/**
+ * Jurisdiction codes → the visitor location config location keys are looked up under:
+ * ['us','us-ca'] → { US, CA }; ['eu','eu-de'] → { DE }; ['uk'] → { GB }. A bloc alone ('eu') or no codes → undefined.
+ */
+export function visitorLocationFromCodes(codes: readonly string[]): MeasuredPlace | undefined;
 /** US states with a comprehensive privacy act: in-force date and, where the act requires honoring GPC, that date. */
 export const US_PRIVACY_ACT_STATES: ReadonlyArray<{ state: string; from: string; gpcFrom?: string }>;
 /** US states whose law requires honoring an opt-out preference signal (GPC), with the date that duty starts. */
@@ -1733,6 +1739,8 @@ export interface GenerateConsentConfigOptions {
   blockPage?: boolean;
   theme?: ConsentTheme;
   lifetimeDays?: number;
+  /** The site owner's overrides (schema 1.1), written into the config as given and named in a `policy-overridden` note. */
+  overrides?: ConsentOverrides;
 }
 export interface GeneratorNote {
   code: string;
@@ -2134,12 +2142,32 @@ export interface CompanionConfig {
   cmp: CompanionCmp;
   map?: Record<string, string[]>;
 }
+/** 'US-CA' (country-subdivision), 'US' (country) or '*' (any other location, an unknown one included). */
+export type LocationKey = string;
+export const LOCATION_KEY_PATTERN: RegExp;
+export interface VisitorLocation {
+  country: string;
+  region?: string;
+}
+/** Owner overrides of complykit policy (schema 1.1). The client runs them; the scanner still judges by policy. */
+export interface ConsentOverrides {
+  /** Location key → regime, before the built-in table. Ignored when regimeSource is 'fixed'. */
+  regimes?: Record<LocationKey, Regime>;
+  /** Key (location key or regime) → category → granted before a choice. Lookup: subdivision, country, regime, '*'. */
+  defaults?: Record<LocationKey | Regime, Record<string, boolean>>;
+  /** false: Global Privacy Control is not treated as an opt-out. Default true. */
+  honorGpc?: boolean;
+  note?: string;
+}
 export interface ConsentToolConfig {
   version: string;
   generatedFrom: { runId: string; at: string; site: string; complykit: string; kb?: string };
   hash: string;
   regimeSource: RegimeSource;
   categories: ConsentCategory[];
+  /** complykit policy by location (generated): category → false = held until the visitor accepts there. */
+  locationDefaults?: Record<LocationKey, Record<string, boolean>>;
+  overrides?: ConsentOverrides;
   vendors: ConsentVendor[];
   gate: GateRule[];
   gtm?: GtmConfig;
@@ -2190,7 +2218,11 @@ export type ConsentConfigGuardResult =
   | { ok: false; reason: 'not-an-object' | 'invalid-version' | 'newer-major' | 'older-major' | 'missing-field'; detail: string };
 export function guardConsentToolConfig(raw: unknown): ConsentConfigGuardResult;
 export function isNecessaryCategory(id: string): boolean;
-export function consentCategoryDefault(config: ConsentToolConfig, categoryId: string, regime: Regime): boolean;
+export function consentCategoryDefault(config: ConsentToolConfig, categoryId: string, regime: Regime, location?: VisitorLocation): boolean;
+export function locationKeys(location?: VisitorLocation): LocationKey[];
+export function overriddenRegime(config: Pick<ConsentToolConfig, 'overrides'>, location?: VisitorLocation): Regime | undefined;
+export function honorsGpc(config: Pick<ConsentToolConfig, 'overrides'>): boolean;
+export function hasOverrides(config: Pick<ConsentToolConfig, 'overrides'>): boolean;
 export function canonicalJson(value: unknown): string;
 export function hashConsentToolConfig(config: Omit<ConsentToolConfig, 'hash'> & { hash?: string }): string;
 export function withConsentConfigHash(input: Omit<ConsentToolConfigInput, 'hash'> & { hash?: string }): ConsentToolConfig;

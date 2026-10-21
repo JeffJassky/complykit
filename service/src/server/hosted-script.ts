@@ -46,6 +46,10 @@ export function hostedConfig(stored: Record<string, unknown>, publicOrigin: stri
     analytics: { endpoint: `${publicOrigin}/e` },
     hash: '',
   };
+  // A site on the generated meta source learns the location from this host (GET /geo); the client
+  // still reads the meta tag first, so a site that writes one keeps it. platform, fixed and an
+  // owner-chosen header source stay as they are.
+  if (isObj(out.regimeSource) && out.regimeSource.kind === 'meta') out.regimeSource = { kind: 'header', header: 'complykit-geo', endpoint: `${publicOrigin}/geo` };
   if (settings?.mode === 'companion') delete out.record;
   else out.record = { endpoint: `${publicOrigin}/api/consent-records` };
   const hash = configHash(out);
