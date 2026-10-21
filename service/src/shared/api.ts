@@ -399,8 +399,8 @@ export type CompanionCmp = 'onetrust' | 'cookiebot' | 'usercentrics' | 'didomi' 
 
 /** Mirror of the package's ConsentOverrides (schema 1.1): the owner's overrides of complykit policy. Keys are upper-case locations ('US-CA', 'US', '*'); `defaults` keys may also be a regime. */
 export interface ConsentOverrides {
-  /** Values: opt-in, opt-out-signal or opt-out (checked on save). */
-  regimes?: Record<string, string>;
+  /** Location key ('US-CA', 'US', '*') → regime. */
+  regimes?: Record<string, 'opt-in' | 'opt-out-signal' | 'opt-out'>;
   defaults?: Record<string, Record<string, boolean>>;
   honorGpc?: boolean;
   /** 1–500 characters. */

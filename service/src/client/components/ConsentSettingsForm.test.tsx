@@ -110,7 +110,7 @@ describe('settings form', () => {
   });
 
   it('a stored overrides block rides through the form untouched (no editor yet), in either mode', () => {
-    const overrides = { regimes: { CA: 'opt-out' }, defaults: { 'US-CA': { analytics: true } }, honorGpc: false, note: 'counsel sign-off' };
+    const overrides = { regimes: { CA: 'opt-out' as const }, defaults: { 'US-CA': { analytics: true } }, honorGpc: false, note: 'counsel sign-off' };
     const entry = (value: unknown) => ws({ 'consent-settings': { value, at } });
     const stored = consentSettingsOf(entry({ mode: 'full', layout: 'box', overrides }));
     expect(stored.overrides).toEqual(overrides);

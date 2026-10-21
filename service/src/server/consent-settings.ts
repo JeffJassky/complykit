@@ -42,7 +42,7 @@ function normalizeOverrides(raw: unknown): ConsentOverrides {
     for (const [k, r] of Object.entries(raw.regimes)) {
       if (!LOCATION_KEY.test(k)) bad(`\`overrides.regimes\` key ${JSON.stringify(k.slice(0, 40))} is not a location ('US-CA', 'US' or '*', upper case)`);
       if (!(REGIMES as readonly unknown[]).includes(r)) bad(`\`overrides.regimes.${k}\` must be opt-in, opt-out-signal or opt-out`);
-      regimes[k] = r as string;
+      regimes[k] = r as (typeof REGIMES)[number];
     }
     out.regimes = regimes;
   }

@@ -137,7 +137,7 @@ describe('PUT /api/sites/:domain/consent-settings', () => {
 // the served config. The service mirrors the package's structural rules (it does
 // not import the package) and drops entries for categories the current config lacks.
 describe('overrides as a consent setting (1.1)', () => {
-  const overrides = { regimes: { 'CA-QC': 'opt-in', CA: 'opt-out' }, defaults: { 'US-CA': { analytics: true }, 'opt-in': { advertising: true } }, honorGpc: false, note: 'counsel sign-off' };
+  const overrides = { regimes: { 'CA-QC': 'opt-in', CA: 'opt-out' } as const, defaults: { 'US-CA': { analytics: true }, 'opt-in': { advertising: true } }, honorGpc: false, note: 'counsel sign-off' };
 
   it('normalize accepts a well-formed overrides block, alone or with other settings', () => {
     expect(normalizeConsentSettings({ mode: 'full', overrides })).toEqual({ mode: 'full', overrides });
