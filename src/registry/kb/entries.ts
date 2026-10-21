@@ -22,7 +22,7 @@ export const COMPLYKIT_HOSTS: readonly string[] = ['complykit-6v9s6.ondigitaloce
 const SEEDED = '2026-10-02';
 const seed = (e: Omit<KnowledgeEntryInput, 'provenance'> & { sources?: string[] }): KnowledgeEntryInput => {
   const { sources, ...rest } = e;
-  return { ...rest, ...(rest.match.gateways?.length ? { sources: sources ?? [] } : {}), provenance: { proposedBy: 'complykit-seed', proposedAt: SEEDED, sources: sources ?? [] } };
+  return { ...rest, provenance: { proposedBy: 'complykit-seed', proposedAt: SEEDED, sources: sources ?? [] } };
 };
 
 const GOOGLE_CONSENT = 'https://developers.google.com/tag-platform/security/guides/consent';

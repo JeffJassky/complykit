@@ -128,9 +128,6 @@ export const KnowledgeEntry = z.object({
   // How the tag is controlled, as data (see TagControl).
   control: TagControl.optional(),
   notes: z.string().optional(),
-  // Vendor documentation the entry's gateway rules (`match.gateways`) rest on; a gateway rule without one is not seeded.
-  // (Provenance.sources stays the general list; this is the citation a reader of the entry sees next to the rule.)
-  sources: z.array(z.string().url()).optional(),
   provenance: z.object({
     proposedBy: z.string(), // 'complykit-seed' | 'agent:<model>' | a person
     proposedAt: z.string(),

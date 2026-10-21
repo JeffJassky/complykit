@@ -657,7 +657,27 @@ export function buildRemediationTasks(generated: RemediationSource, evaluation: 
   // --- fold --------------------------------------------------------------------------
   const installSlot = slots.find((s) => s.task.kind === 'install');
   const confirm = new Map<string, { from: Draft; ids: string[] }>();
+  // A server gateway (Meta's Conversions API Gateway on the site's own cloud) is held by holding the tool that
+  // loads it: it never has a task of its own. Its change items fold into the loader's task (the first that
+  // fixes the loader's behavior), which then also names the gateway; with no such task in this run — the loader
+  // is held everywhere — the gateway has none either. The report's rows for it stay: they are verdicts.
+  const gatewayOf = (id: string): string | undefined => evaluation.inventory.find((p) => p.partyId === id)?.gatewayOf;
   for (const s of slots) {
+    const t = s.task;
+    const gateways = t.partyIds.filter((id) => gatewayOf(id) !== undefined);
+    if (!gateways.length || gateways.length !== t.partyIds.length) continue; // a mixed item stays with its other tools
+    s.folded = true;
+    for (const gw of gateways) {
+      const loader = gatewayOf(gw)!;
+      const host = evaluation.inventory.find((p) => p.partyId === gw)?.domain ?? gw;
+      const fixer = fixersOf(slots, loader, FIXES_BEHAVIOR, t.optional).sort((a, b) => RANK[a.task.kind] - RANK[b.task.kind] || a.seq - b.seq)[0];
+      if (!fixer) continue;
+      addFix(fixer.task, t.id, `Also covers its server gateway on ${host}.`);
+      if (!fixer.task.partyIds.includes(gw)) fixer.task.partyIds.push(gw);
+    }
+  }
+  for (const s of slots) {
+    if (s.folded) continue;
     const t = s.task;
     const party = t.partyIds[0];
     if (!party || t.partyIds.length !== 1) continue;

@@ -1261,8 +1261,6 @@ export interface KnowledgeEntry {
   restrictedMode?: string;
   control?: TagControl;
   notes?: string;
-  /** Vendor documentation the entry's gateway rules (`match.gateways`) rest on. */
-  sources?: string[];
   provenance: { proposedBy: string; proposedAt: string; confirmedBy?: string; confirmedAt?: string; sources: string[] };
 }
 /** An entry as written (defaults filled in on parse). */
