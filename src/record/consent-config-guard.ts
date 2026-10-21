@@ -422,12 +422,15 @@ export function guardConsentToolConfig(raw: unknown): ConsentConfigGuardResult {
   // config (gated scripts stay inert) rather than running half of an owner's intent.
   const boolTable = (v: unknown, onlyFalse = false): boolean =>
     isObj(v) && Object.values(v).every((row) => isObj(row) && Object.values(row).every((b) => (onlyFalse ? b === false : typeof b === 'boolean')));
-  if (raw.locationDefaults !== undefined && !boolTable(raw.locationDefaults, true)) return missing('locationDefaults (key → category → false)');
+  // Keys too: a key that can never match ('us-ca', 'USCA') would be silently ignored.
+  const keysOk = (v: Record<string, unknown>, regimeKeys = false): boolean =>
+    Object.keys(v).every((k) => LOCATION_KEY_PATTERN.test(k) || (regimeKeys && (REGIMES as readonly string[]).includes(k)));
+  if (raw.locationDefaults !== undefined && !(boolTable(raw.locationDefaults, true) && keysOk(raw.locationDefaults as Record<string, unknown>))) return missing('locationDefaults');
   if (raw.overrides !== undefined) {
     const o = raw.overrides;
     if (!isObj(o)) return missing('overrides');
-    if (o.regimes !== undefined && !(isObj(o.regimes) && Object.values(o.regimes).every((r) => (REGIMES as readonly unknown[]).includes(r)))) return missing('overrides.regimes');
-    if (o.defaults !== undefined && !boolTable(o.defaults)) return missing('overrides.defaults');
+    if (o.regimes !== undefined && !(isObj(o.regimes) && keysOk(o.regimes) && Object.values(o.regimes).every((r) => (REGIMES as readonly unknown[]).includes(r)))) return missing('overrides.regimes');
+    if (o.defaults !== undefined && !(boolTable(o.defaults) && keysOk(o.defaults as Record<string, unknown>, true))) return missing('overrides.defaults');
     if (o.honorGpc !== undefined && typeof o.honorGpc !== 'boolean') return missing('overrides.honorGpc');
   }
   // A copy, never the caller's object: the rescan hashes the raw config as deployed.
@@ -488,7 +491,8 @@ export function hasOverrides(config: Pick<ConsentToolConfig, 'overrides'>): bool
  *      grants what it cannot name), overrides included.
  *   3. overrides.defaults: subdivision key, country key, the regime, '*'.
  *   4. Policy: opt-in (or a regime this build does not know) → false.
- *   5. Policy: locationDefaults, most specific key first (holds only).
+ *   5. Policy: locationDefaults, most specific key first (holds only). With the
+ *      country known and the subdivision not, a hold on any of its subdivisions applies.
  *   6. Policy: categories[].defaultByRegime[regime].
  */
 export function consentCategoryDefault(config: ConsentToolConfig, categoryId: string, regime: Regime, location?: VisitorLocation): boolean {
@@ -512,6 +516,15 @@ export function consentCategoryDefault(config: ConsentToolConfig, categoryId: st
   if (isObj(ld)) {
     for (const k of keys) {
       if (isObj(ld[k]) && ld[k][categoryId] === false) return false;
+    }
+    // Subdivision not reported (a country-only geo header): the visitor may be in
+    // any of them, so a hold on ANY subdivision of the country applies — the same
+    // cautious reading as regimeFor's "US, state unknown ⇒ strictest US regime".
+    if (keys.length === 2 && keys[0] !== '*') {
+      const prefix = `${keys[0]}-`;
+      for (const k of Object.keys(ld)) {
+        if (k.startsWith(prefix) && isObj(ld[k]) && ld[k][categoryId] === false) return false;
+      }
     }
   }
   return cat.defaultByRegime[r] === true;

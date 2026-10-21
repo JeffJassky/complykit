@@ -381,7 +381,17 @@ describe('consent tool config 1.1: pre-choice defaults with location and overrid
     expect(consentCategoryDefault(cfg, 'analytics', 'opt-out-signal', CA)).toBe(false);
     expect(consentCategoryDefault(cfg, 'analytics', 'opt-out-signal', TX)).toBe(true);
     expect(consentCategoryDefault(cfg, 'analytics', 'opt-out-signal')).toBe(true); // no location: the regime decides
-    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out', { country: 'US' })).toBe(true); // state unknown: no subdivision hold
+    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out', { country: 'DE' })).toBe(true);
+  });
+  it('policy: country known, subdivision not (a country-only geo header) → any subdivision hold of that country applies', () => {
+    const cfg = base();
+    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out-signal', { country: 'US' })).toBe(false);
+    expect(consentCategoryDefault(cfg, 'advertising', 'opt-out', { country: 'US' })).toBe(false);
+    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out-signal', TX)).toBe(true); // a known other state is not held
+    expect(consentCategoryDefault(cfg, 'analytics', 'opt-out-signal', { country: 'CA' })).toBe(true); // another country's prefix
+    // An owner override still wins.
+    const over = withConsentConfigHash({ ...base(), overrides: { defaults: { US: { analytics: true } } } });
+    expect(consentCategoryDefault(over, 'analytics', 'opt-out-signal', { country: 'US' })).toBe(true);
   });
   it('policy: a country key holds every subdivision of it', () => {
     const cfg = withConsentConfigHash({ ...exampleInput(), locationDefaults: { US: { analytics: false } } });
@@ -445,6 +455,9 @@ describe('consent tool config 1.1: pre-choice defaults with location and overrid
       { overrides: { honorGpc: 'no' } },
       { locationDefaults: { 'US-CA': { analytics: true } } },
       { locationDefaults: { 'US-CA': 'held' } },
+      { locationDefaults: { 'us-ca': { analytics: false } } },
+      { overrides: { regimes: { USCA: 'opt-in' } } },
+      { overrides: { defaults: { somewhere: { analytics: true } } } },
     ]) {
       const g = guardConsentToolConfig({ ...base(), ...bad });
       expect(g.ok, JSON.stringify(bad)).toBe(false);
