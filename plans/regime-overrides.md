@@ -156,3 +156,47 @@ never changed by a regime or location move.
 
 At the end: Fable area reviews of (1) the client store/location/gate path and (2) the
 proof + generator. Not one per task.
+
+## Hosted location (added 2026-10-21)
+
+Problem: the hosted install (`/s/<domain>.js`) gives the client no visitor location
+unless the site writes the `complykit-region` meta tag, so every visitor is
+opt-in. That throws away US data, and it puts no wiretap hold on anything, because
+there is no location to hold on. DigitalOcean App Platform forwards no Cloudflare geo
+headers, only the client IP in `do-connecting-ip`.
+
+Design:
+- Host: `GET /geo` (public, mounted before basic auth, like `/s/` and `/e`). It reads
+  the visitor IP ONLY from the header named by `GEO_IP_HEADER` (config `geoIpHeader`,
+  production `do-connecting-ip`), never from x-forwarded-for. With `TRUST_CF_GEO=1`,
+  `cf-ipcountry` / `cf-region-code` win. It looks the IP up in a local GeoIP database
+  (DB-IP "IP to City Lite", mmdb, CC BY 4.0). It answers `text/plain`: `CC-RR`, `CC`,
+  or empty for unknown. Headers: `Cache-Control: no-store, private`,
+  `Access-Control-Allow-Origin: *`. No cookie. The IP is not logged or stored.
+  `service/src/server/geo.ts` exports `type GeoLookup = (ip: string) => { country: string; region?: string } | undefined`
+  and an opener for the mmdb file (path from `GEO_DB_PATH`). A missing file means no lookup
+  and a log line at boot. `AppDeps.geo` injects one for tests.
+- Database in the image: `Dockerfile.host` downloads the current month's
+  `dbip-city-lite-YYYY-MM.mmdb.gz` at build time (falling back to last month), gunzips it, and
+  sets `GEO_DB_PATH`. `.do/app.yaml` sets `GEO_IP_HEADER=do-connecting-ip`. Reader: the
+  `maxmind` (or `mmdb-lib`) npm package, a service dependency only. The subdivision code is the
+  ISO 3166-2 suffix ("CA"). Attribution ("IP geolocation by DB-IP", https://db-ip.com)
+  goes in docs/guide/location.md and the service README.
+- Served config: `hostedConfig` replaces a `meta` regimeSource (the generator's default for
+  non-platform sites) with `{ kind: 'header', header: 'complykit-geo', endpoint: '<publicOrigin>/geo' }`.
+  platform, fixed and an owner-chosen header source stay as they are. The client still reads the
+  meta tag first for every non-fixed source, so a site that writes one keeps it.
+- Client: `sameOriginEndpoint` also accepts an endpoint on the tool script's own origin
+  (`document.currentScript` at load, injectable as `LocationEnv.scriptUrl`). Any other origin is
+  still refused. A pending lookup starts strict (opt-in) and moves when answered, as today. Check
+  whether the UI shows the banner before the lookup settles. If it does, defer showing it until
+  `pending` is false (bounded by HEADER_TIMEOUT_MS), so a US visitor doesn't see EU wording flash.
+- Scanner: the complykit host is already the `complykit` KB party (COMPLYKIT_HOSTS), so the
+  `/geo` request is the consent tool's own. Add a test that a `/geo` request before consent is not
+  reported as a tracker.
+
+Tests (contract): `service/test/geo.test.ts`, `client/test/location.test.ts` ("may share the tool
+script's own origin").
+
+Accuracy limit: IP geolocation misplaces some visitors near state lines and on mobile or VPN
+networks. A Californian placed in Nevada gets no wiretap hold. Say so in the docs.
