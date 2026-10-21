@@ -397,6 +397,16 @@ export interface DetectedBanner {
 /** The banners add-on mode can follow (complykit's CompanionCmp). */
 export type CompanionCmp = 'onetrust' | 'cookiebot' | 'usercentrics' | 'didomi' | 'trustarc' | 'shopify' | 'wordpress' | 'tcf' | 'consent-mode' | 'manual';
 
+/** Mirror of the package's ConsentOverrides (schema 1.1): the owner's overrides of complykit policy. Keys are upper-case locations ('US-CA', 'US', '*'); `defaults` keys may also be a regime. */
+export interface ConsentOverrides {
+  /** Values: opt-in, opt-out-signal or opt-out (checked on save). */
+  regimes?: Record<string, string>;
+  defaults?: Record<string, Record<string, boolean>>;
+  honorGpc?: boolean;
+  /** 1–500 characters. */
+  note?: string;
+}
+
 /** The owner's settings for the hosted tool: workspace entry `consent-settings` (plans/hosted-script.md "Owner settings"). */
 export interface ConsentSettings {
   mode: 'full' | 'companion';
@@ -406,6 +416,8 @@ export interface ConsentSettings {
   blockPage?: boolean;
   /** https only. */
   privacyPolicyUrl?: string;
+  /** Owner overrides of complykit policy (schema 1.1). No editor yet: the form carries a stored value through. */
+  overrides?: ConsentOverrides;
 }
 
 /** GET / PUT /api/sites/:domain/consent-settings */
