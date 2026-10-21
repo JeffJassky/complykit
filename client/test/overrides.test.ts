@@ -201,4 +201,22 @@ describe('overrides in the browser', () => {
     expect(await ran(page)).toEqual(['advertising', 'analytics']);
     await page.context().close();
   });
+  it('the settings text names Global Privacy Control only when the config honors it', async () => {
+    const settingsBody = async (page: Page) => {
+      await page.evaluate(() => (window as any).ComplyKit.open());
+      return page.locator('.ck-settings #complykit-settings-body').textContent();
+    };
+    const honors = await open(cfg(), 'US-TX');
+    expect(await settingsBody(honors)).toContain('Global Privacy Control signal from your browser is honored');
+    await honors.context().close();
+    const ignores = await open(cfg({ overrides: { honorGpc: false } }), 'US-TX');
+    expect(await settingsBody(ignores)).not.toMatch(/Global Privacy Control/);
+    await ignores.context().close();
+    // The held copy (California) claims nothing it cannot back: no "the rest are on".
+    const ca = await open(cfg({ overrides: { honorGpc: false } }), 'US-CA');
+    const body = await settingsBody(ca);
+    expect(body).not.toMatch(/Global Privacy Control|The rest are on/);
+    expect(body).toMatch(/stay off until you switch them on/);
+    await ca.context().close();
+  });
 });

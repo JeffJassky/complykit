@@ -524,6 +524,10 @@
             "type": "string",
             "minLength": 1
           },
+          "settings.gpcInfo": {
+            "type": "string",
+            "minLength": 1
+          },
           "settings.acceptAll": {
             "type": "string",
             "minLength": 1
@@ -612,6 +616,10 @@
                     "minLength": 1
                   },
                   "settings.body": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.gpcInfo": {
                     "type": "string",
                     "minLength": 1
                   },
@@ -705,6 +713,10 @@
                     "type": "string",
                     "minLength": 1
                   },
+                  "settings.gpcInfo": {
+                    "type": "string",
+                    "minLength": 1
+                  },
                   "settings.acceptAll": {
                     "type": "string",
                     "minLength": 1
@@ -792,6 +804,10 @@
                     "minLength": 1
                   },
                   "settings.body": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "settings.gpcInfo": {
                     "type": "string",
                     "minLength": 1
                   },

@@ -49,6 +49,8 @@ const EN_BASE: Record<ConsentStringKey, string> = {
   'banner.manage': 'Manage choices',
   'settings.title': 'Privacy settings',
   'settings.body': 'Choose which optional categories to allow. Each stays off until you switch it on. Necessary technologies are always on because the site cannot work without them.',
+  // Shown after settings.body only when the config honors GPC and the regime is an opt-out one (ui/copy.ts settingsBody).
+  'settings.gpcInfo': 'A Global Privacy Control signal from your browser is honored as an opt-out.',
   'settings.acceptAll': 'Accept all',
   'settings.rejectAll': 'Reject all',
   'settings.save': 'Save choices',
@@ -75,7 +77,7 @@ const EN_OPT_OUT_SIGNAL: Table = {
     'We and third parties use cookies and similar technologies for {purposes}. Under California and other US state privacy laws, some of this can be a "sale" or "sharing" of your personal information. You can opt out now, or at any time from "Your Privacy Choices".',
   'banner.reject': DNSS,
   'settings.title': YPC,
-  'settings.body': 'Optional categories are on unless you opt out. Switch off any you do not want, or opt out of all of them. A Global Privacy Control signal from your browser is honored as an opt-out. Necessary technologies stay on because the site cannot work without them.',
+  'settings.body': 'Optional categories are on unless you opt out. Switch off any you do not want, or opt out of all of them. Necessary technologies stay on because the site cannot work without them.',
   'settings.rejectAll': DNSS,
   'withdraw.confirm': 'Opt-out request honored.',
   'withdraw.note': 'You can opt out at any time.',
@@ -88,7 +90,7 @@ const EN_OPT_OUT: Table = {
   'banner.body':
     'We and third parties use cookies and similar technologies for {purposes}. Depending on where you live, you may have the right to opt out of targeted advertising and the sale of your personal information. You can opt out now, or at any time from "Your Privacy Choices".',
   'settings.title': YPC,
-  'settings.body': 'Optional categories are on unless you opt out. Switch off any you do not want, or reject all of them. A Global Privacy Control signal from your browser is honored as an opt-out. Necessary technologies stay on because the site cannot work without them.',
+  'settings.body': 'Optional categories are on unless you opt out. Switch off any you do not want, or reject all of them. Necessary technologies stay on because the site cannot work without them.',
   'withdraw.confirm': 'Opt-out request honored.',
   'withdraw.note': 'You can opt out at any time.',
   'privacyChoices.link': YPC,
@@ -100,7 +102,7 @@ const EN_HELD: Table = {
   'banner.body':
     'We and third parties use cookies and similar technologies for {purposes}. Some of these stay off until you accept them. The rest are on unless you opt out. Depending on where you live, some of this can count as a "sale" or "sharing" of your personal information. You can choose now, or at any time from "Your Privacy Choices".',
   'settings.body':
-    'Some optional categories stay off until you switch them on. The rest are on unless you opt out. Switch off any you do not want, or reject all of them. Necessary technologies stay on because the site cannot work without them.',
+    'Some optional categories stay off until you switch them on. Others may be on until you opt out. Each switch below shows its current state. Switch off any you do not want, or reject all of them. Necessary technologies stay on because the site cannot work without them.',
 };
 
 /** Built-in tables, by language. English only for now (design §10). */

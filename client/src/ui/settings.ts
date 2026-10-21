@@ -15,7 +15,7 @@ import type { ConsentToolConfig } from '../config.js';
 import { isNecessaryCategory } from '../config.js';
 import { button, focusIf, h, wrapTab } from './dom.js';
 import { t } from './strings.js';
-import { gpcNote, policyLink, withdrawNote } from './copy.js';
+import { gpcNote, policyLink, settingsBody, withdrawNote } from './copy.js';
 
 export interface SettingsActions {
   acceptAll(): void;
@@ -71,7 +71,7 @@ export function createSettings(config: ConsentToolConfig, act: SettingsActions, 
     for (const k in boxes) delete boxes[k];
     el.replaceChildren(
       h('h2', { id: 'complykit-settings-title', class: 'ck-title' }, t('settings.title')),
-      h('p', { id: 'complykit-settings-body', class: 'ck-body' }, t('settings.body')),
+      h('p', { id: 'complykit-settings-body', class: 'ck-body' }, settingsBody()),
       gpcNote(),
       withdrawNote(),
       h('div', { class: 'ck-categories' }, ...config.categories.map((c) => row(c, grants[c.id] === true))),

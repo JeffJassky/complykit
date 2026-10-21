@@ -85,7 +85,7 @@ rules). Those are described in [Consent tool config](/guide/config).
 | `theme.border` | `string` |  |  |  |
 | `theme.radius` | `string` |  |  |  |
 | `strings.<key>` | map |  | `{}` | language tag → string table (overrides only). Keys match `^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$`. Overrides by string key; unknown keys and empty strings are refused |
-| `strings.<key>.<string key>` | `string` |  |  | Keys: `banner.title`, `banner.body`, `banner.accept`, `banner.reject`, `banner.manage`, `settings.title`, `settings.body`, `settings.acceptAll`, `settings.rejectAll`, `settings.save`, `settings.close`, `withdraw.link`, `withdraw.confirm`, `withdraw.note`, `withdraw.recall`, `privacyChoices.link`, `optOut.link`, `optOut.confirmed`, `optOut.iconAlt`, `gpc.honored`, `privacyPolicy.link`. Each value is a non-empty string |
+| `strings.<key>.<string key>` | `string` |  |  | Keys: `banner.title`, `banner.body`, `banner.accept`, `banner.reject`, `banner.manage`, `settings.title`, `settings.body`, `settings.gpcInfo`, `settings.acceptAll`, `settings.rejectAll`, `settings.save`, `settings.close`, `withdraw.link`, `withdraw.confirm`, `withdraw.note`, `withdraw.recall`, `privacyChoices.link`, `optOut.link`, `optOut.confirmed`, `optOut.iconAlt`, `gpc.honored`, `privacyPolicy.link`. Each value is a non-empty string |
 | `strings.<key>.byRegime` | `object` |  |  | Per-regime overrides of the same keys |
 | `strings.<key>.byRegime.opt-in` | `object` |  |  |  |
 | `strings.<key>.byRegime.opt-in.<string key>` | `string` |  |  | Same keys as `strings.<key>.<string key>` |

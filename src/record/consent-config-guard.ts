@@ -169,6 +169,7 @@ export const CONSENT_STRING_KEYS = [
   'banner.manage',
   'settings.title',
   'settings.body',
+  'settings.gpcInfo',
   'settings.acceptAll',
   'settings.rejectAll',
   'settings.save',

@@ -14,6 +14,7 @@
 // and the recommended alt text is "California Consumer Privacy Act (CCPA)
 // Opt-Out Icon" (string key optOut.iconAlt). Theming hook: `.ck-icon`.
 
+import { honorsGpc } from '../config.js';
 import { h } from './dom.js';
 import { host } from './host.js';
 import { regime, t } from './strings.js';
@@ -56,6 +57,13 @@ export function policyLink(): HTMLElement | '' {
 export function gpcNote(): HTMLElement | '' {
   const s = host().getStore()?.state();
   return s?.gpcHonored && s.regime !== 'opt-in' ? h('p', { class: 'ck-note', 'data-ck-note': 'gpc' }, t('gpc.honored')) : '';
+}
+
+/** The settings text: the body, plus the GPC sentence only where an opt-out regime runs and the config honors the signal. */
+export function settingsBody(): string {
+  const cfg = host().getConfig();
+  const r = regime();
+  return r && r !== 'opt-in' && cfg && honorsGpc(cfg) ? `${t('settings.body')} ${t('settings.gpcInfo')}` : t('settings.body');
 }
 
 /** In the settings layer after a choice that granted something: how to withdraw, and what it cannot undo. */
