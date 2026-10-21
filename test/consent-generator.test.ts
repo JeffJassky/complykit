@@ -12,7 +12,7 @@ import {
   type GenerateConsentConfigOptions,
 } from '../src/consent-generator.js';
 import { parseConsentToolConfig, guardConsentToolConfig, CONSENT_CONFIG_ELEMENT_ID, writeTrackingEvaluation, parseMarkup, redactMarkupPages, type TrackingEvaluation, type PartyInventoryItem } from '../src/record/index.js';
-import { DEFAULT_KB } from '../src/registry/index.js';
+import { DEFAULT_KB, WIRETAP_STATES } from '../src/registry/index.js';
 import { containsBannedVocabulary, buildConsentReportModel } from '../src/report/index.js';
 import { classificationKey, type WorkspaceSnapshot } from '../src/site-workspace.js';
 import { cmdConsentConfig } from '../src/cli/commands/consent-config.js';
@@ -623,5 +623,63 @@ describe('detectedBanner: the existing banner, named, and how complykit follows 
     const { CONSENT_PLUGIN_LABELS } = await import('../src/registry/index.js');
     expect(ids.length).toBeGreaterThan(5);
     for (const id of ids) expect(CONSENT_PLUGIN_LABELS[id], id).toBeTruthy();
+  });
+});
+
+// Schema 1.1 (plans/regime-overrides.md): the generator writes complykit policy for
+// the wiretap-litigation states into locationDefaults, and passes the owner's
+// overrides through untouched (the service re-applies them on every regeneration).
+describe('wiretap holds and owner overrides (1.1)', () => {
+  const keys = [...WIRETAP_STATES].map((c) => c.toUpperCase()).sort();
+
+  it('every wiretap state holds analytics and advertising before a choice; nothing else is keyed', () => {
+    const c = gen().config;
+    expect(c.version).toBe('1.1');
+    expect(Object.keys(c.locationDefaults ?? {}).sort()).toEqual(keys);
+    const present = new Set(c.categories.map((x) => x.id));
+    for (const k of keys) {
+      const row = c.locationDefaults![k];
+      for (const id of ['analytics', 'advertising']) if (present.has(id)) expect(row[id], `${k} ${id}`).toBe(false);
+      expect(row.necessary).toBeUndefined();
+      expect(Object.values(row).every((v) => v === false)).toBe(true);
+    }
+  });
+
+  it('a category is held there when any of its vendors is a wiretap kind (chat lands in functional and holds it)', () => {
+    const e = compatibilityEvaluation();
+    e.inventory.push(party('example.chat', 'Example chat', ['chat']));
+    const c = gen(e).config;
+    const cat = c.vendors.find((v) => v.id === 'example.chat')?.category;
+    expect(cat).toBeDefined();
+    expect(c.locationDefaults!['US-CA'][cat!]).toBe(false);
+  });
+
+  it('a category with no wiretap vendor runs there (fonts only → functional is not held)', () => {
+    const e = compatibilityEvaluation();
+    e.inventory.push(party('google.fonts', 'Google Fonts', ['fonts']));
+    const c = gen(e).config;
+    expect(c.vendors.find((v) => v.id === 'google.fonts')?.category).toBe('functional');
+    expect(c.locationDefaults!['US-CA'].functional).toBeUndefined();
+  });
+
+  it('the generated config is valid and still pre-grants nothing under opt-in', () => {
+    const r = gen();
+    const p = parseConsentToolConfig(JSON.parse(r.json));
+    expect(p.ok && p.hashMatches).toBe(true);
+    expect(r.config.overrides).toBeUndefined();
+  });
+
+  it('overrides pass through untouched, validate, and raise a flag note naming them', () => {
+    const overrides = { regimes: { 'CA-QC': 'opt-in' as const, CA: 'opt-out' as const }, defaults: { 'US-CA': { analytics: true } }, note: 'counsel sign-off' };
+    const r = gen(undefined, { overrides });
+    expect(r.config.overrides).toEqual(overrides);
+    expect(parseConsentToolConfig(JSON.parse(r.json)).ok).toBe(true);
+    const n = r.notes.find((x) => x.code === 'policy-overridden');
+    expect(n?.level).toBe('flag');
+    expect(n?.message).toMatch(/counsel sign-off/);
+  });
+
+  it('an override naming a category the site does not have is refused', () => {
+    expect(() => gen(undefined, { overrides: { defaults: { 'opt-in': { social: true } } } })).toThrow();
   });
 });

@@ -347,6 +347,46 @@ describe('D10 proof: detection and the per-vendor decision', () => {
   });
 });
 
+// Schema 1.1 (plans/regime-overrides.md): the proof judges the tool against its
+// own config at the visitor's location (wiretap holds, owner overrides, honorGpc),
+// and names any override, since the report still judges by complykit policy.
+describe('D10 proof: location defaults and owner overrides (1.1)', () => {
+  const CA = { country: 'US', region: 'CA' };
+  const held = () => config({ locationDefaults: { 'US-CA': { analytics: false, advertising: false } } });
+  it('expected-state table takes the location: a wiretap hold is expected off before a choice', () => {
+    expect(expectedGrantedFor(held(), 'analytics', 'opt-out-signal', 'browse', false, CA)).toBe(false);
+    expect(expectedGrantedFor(held(), 'analytics', 'opt-out-signal', 'browse', false, { country: 'US', region: 'TX' })).toBe(true);
+    expect(expectedGrantedFor(held(), 'analytics', 'opt-out-signal', 'accept', false, CA)).toBe(true);
+  });
+  it('expected-state table follows overrides, and honorGpc false makes the gpc scenario the defaults', () => {
+    const looser = config({ overrides: { defaults: { 'opt-in': { analytics: true } }, honorGpc: false } });
+    expect(expectedGrantedFor(looser, 'analytics', 'opt-in', 'browse', false, { country: 'DE' })).toBe(true);
+    expect(expectedGrantedFor(looser, 'analytics', 'opt-out', 'gpc', true)).toBe(true);
+    expect(expectedGrantedFor(config(), 'analytics', 'opt-out', 'gpc', true)).toBe(false);
+  });
+  it('from a California location, stats firing before a choice under a wiretap hold is a mismatch', () => {
+    const ev = evaluation({
+      cfg: held(),
+      jurisdictions: ['us', 'us-ca'],
+      snap: { state: { status: 'unset', regime: 'opt-out-signal', gpc: false, categories: { necessary: true, analytics: false, advertising: false } } },
+      scenarios: [{ scenario: 'browse' }, { scenario: 'accept', choice: { kind: 'accept', ok: true, method: 'selector:complykit' } }],
+      observations: [observation('de', 'browse', { 'fixture.stats': { 'before-choice': 1 } }, KNOWN), observation('de', 'accept', { 'fixture.stats': { 'after-accept': 1 } }, KNOWN)],
+    });
+    expect(vendor(ev, 'fixture.stats').observations[0]).toMatchObject({ regime: 'opt-out-signal', expectedGranted: false, observed: 'fired' });
+  });
+  it('a deployed config with overrides gets a policy-overridden finding naming them and the owner note; none without', () => {
+    const over = config({ overrides: { regimes: { CA: 'opt-out' }, defaults: { 'opt-in': { analytics: true } }, honorGpc: false, note: 'counsel sign-off 2026-10' } });
+    const f = evaluateConsentToolProof(evaluation({ cfg: over })).findings.find((x) => x.code === 'policy-overridden');
+    expect(f).toBeDefined();
+    expect(f!.message).toMatch(/counsel sign-off 2026-10/);
+    expect(f!.message).toMatch(/GPC|Global Privacy Control/);
+    expect(f!.message).toMatch(/opt-in/);
+    expect(f!.details).toMatchObject({ overrides: { regimes: { CA: 'opt-out' }, honorGpc: false } });
+    expect(codes(evaluation())).not.toContain('policy-overridden');
+    expect(codes(evaluation({ cfg: config({ overrides: { note: 'nothing changed' } }) }))).not.toContain('policy-overridden');
+  });
+});
+
 describe('D10 proof: add-on mode', () => {
   it("the site's banner decides: the config's regime defaults and GPC contract produce no behavior mismatch, and no unlisted-tracker finding before a choice", () => {
     const cfg = config({ mode: 'companion', companion: { cmp: 'shopify' } } as Partial<ConsentToolConfigInput>);

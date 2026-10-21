@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   describeLocationRules,
   regimeForCodes,
+  visitorLocationFromCodes,
+  WIRETAP_STATES,
   jurisdictionsFor,
   requirementScopeFor,
   getRequirement,
@@ -126,6 +128,21 @@ describe('regimeForCodes', () => {
     expect(regimeForCodes(['br'], ON)).toBe('unknown');
     expect(regimeForCodes(['ca'], ON)).toBe('unknown');
     expect(regimeForCodes([], ON)).toBe('unknown');
+  });
+});
+
+describe('visitorLocationFromCodes (1.1: the proof keys config defaults by location)', () => {
+  it('turns jurisdiction codes into a visitor location', () => {
+    expect(visitorLocationFromCodes(['us', 'us-ca'])).toEqual({ country: 'US', region: 'CA' });
+    expect(visitorLocationFromCodes(['us'])).toEqual({ country: 'US' });
+    expect(visitorLocationFromCodes(['eu', 'eu-de'])).toEqual({ country: 'DE' });
+    expect(visitorLocationFromCodes(['uk'])).toEqual({ country: 'GB' });
+    expect(visitorLocationFromCodes(['br'])).toEqual({ country: 'BR' });
+    expect(visitorLocationFromCodes([])).toBeUndefined();
+    expect(visitorLocationFromCodes(['eu'])).toBeUndefined(); // a bloc, not a country
+  });
+  it('every wiretap state code maps to a US subdivision', () => {
+    for (const code of WIRETAP_STATES) expect(visitorLocationFromCodes(['us', code])).toMatchObject({ country: 'US', region: code.slice(3).toUpperCase() });
   });
 });
 

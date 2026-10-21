@@ -1,5 +1,5 @@
 {
-  "version": "1.0",
+  "version": "1.1",
   "generatedFrom": {
     "runId": "2026-10-06T00-00-00-000Z",
     "at": "2026-10-06T00:00:00.000Z",
@@ -7,7 +7,7 @@
     "complykit": "0.0.0",
     "kb": "2026-10-02"
   },
-  "hash": "cfe422f58dd900c1ea1dc7a196e6f3be70264bd693645fad085a217ba71379a4",
+  "hash": "638ce5207863325aa832ec59f9e424512a3b820685a2e22b1165ac4994a5e82d",
   "regimeSource": {
     "kind": "header",
     "header": "cf-ipcountry",

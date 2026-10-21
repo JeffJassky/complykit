@@ -23,8 +23,15 @@ export {
   guardConsentToolConfig,
   isNecessaryCategory,
   consentCategoryDefault,
+  locationKeys,
+  overriddenRegime,
+  honorsGpc,
+  hasOverrides,
 } from '../../src/record/consent-config-guard.js';
 export type {
+  ConsentOverrides,
+  LocationKey,
+  VisitorLocation,
   Regime,
   RegimeSource,
   ConsentCategory,

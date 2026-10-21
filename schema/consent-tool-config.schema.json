@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://jeffjassky.github.io/complykit/schema/consent-tool-config.schema.json",
-  "title": "complykit consent tool config v1.0",
+  "title": "complykit consent tool config v1.1",
   "description": "Inline configuration of the complykit consent tool, generated from a scan. Hand edits invalidate `hash`; the rescan reports them.",
   "type": "object",
   "properties": {
@@ -175,6 +175,89 @@
           "defaultByRegime"
         ]
       }
+    },
+    "locationDefaults": {
+      "description": "complykit policy by location (generated): category → false holds it until the visitor accepts there (wiretap-litigation states). Holds only; grants belong in overrides.defaults.",
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^(\\*|[A-Z]{2}(-[A-Z0-9]{1,3})?)$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "propertyNames": {
+          "description": "Category id, as used in data-category and the consent record.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "additionalProperties": {
+          "type": "boolean"
+        }
+      }
+    },
+    "overrides": {
+      "description": "Owner overrides of complykit policy. Kept across regeneration.",
+      "type": "object",
+      "properties": {
+        "regimes": {
+          "description": "Location key → regime, before the built-in table: { 'CA-QC': 'opt-in', 'CA': 'opt-out' }. '*' = any location no other key matches, an unknown one included. Ignored when regimeSource is fixed.",
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^(\\*|[A-Z]{2}(-[A-Z0-9]{1,3})?)$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "opt-in",
+              "opt-out-signal",
+              "opt-out"
+            ]
+          }
+        },
+        "defaults": {
+          "description": "Granted before the visitor chooses, beating complykit policy: key (location key or regime) → category → granted. Lookup: subdivision, country, regime, '*'.",
+          "type": "object",
+          "propertyNames": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(\\*|[A-Z]{2}(-[A-Z0-9]{1,3})?)$"
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "opt-in",
+                  "opt-out-signal",
+                  "opt-out"
+                ]
+              }
+            ]
+          },
+          "additionalProperties": {
+            "type": "object",
+            "propertyNames": {
+              "description": "Category id, as used in data-category and the consent record.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$"
+            },
+            "additionalProperties": {
+              "type": "boolean"
+            }
+          }
+        },
+        "honorGpc": {
+          "description": "false: Global Privacy Control is not treated as an opt-out. Default true.",
+          "type": "boolean"
+        },
+        "note": {
+          "description": "The owner's reason, shown with the proof finding.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      },
+      "additionalProperties": false
     },
     "vendors": {
       "default": [],
