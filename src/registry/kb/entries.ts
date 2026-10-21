@@ -433,12 +433,14 @@ const BASE_ENTRIES: KnowledgeEntryInput[] = [
     stores: [{ name: '^(s_cc|s_sq|s_vi|AMCV_.*|demdex)$', kind: 'cookie', lifetimeDays: 395 }],
     sources: ['https://experienceleague.adobe.com/docs/core-services/interface/administration/ec-cookies/cookies-privacy.html'],
   }),
+  // Platform telemetry of the store's own host: the merchant cannot switch it off, so it is functional, not analytics;
+  // before consent it sends no stored browser ID.
   seed({
     id: 'shopify.monorail',
     vendor: 'Shopify analytics (Monorail)',
     owner: 'Shopify Inc.',
     match: { hosts: ['monorail-edge.shopifysvc.com', 'shopifysvc.com'] },
-    categories: ['analytics'],
+    categories: ['functional'],
     sends: ['page-address', 'browser-id', 'event-name'],
     stores: [{ name: '^(_shopify_y|_shopify_s|_shopify_sa_p|_shopify_sa_t|_shopify_analytics)$', kind: 'cookie', lifetimeDays: 365 }],
     consentApi: 'Shopify Customer Privacy API — customerPrivacy.setTrackingConsent({analytics, marketing, preferences, sale_of_data})',

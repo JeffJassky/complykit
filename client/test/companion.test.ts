@@ -114,6 +114,27 @@ const TCF_REVOKE = `window.__tcfState={eventStatus:'useractioncomplete',gdprAppl
 const SHOPIFY = `<script>window.__shop={analytics:'yes',marketing:'yes',preferences:'yes',sale_of_data:'yes'};window.Shopify={customerPrivacy:{currentVisitorConsent:function(){return window.__shop}}};</script>`;
 const SHOPIFY_REVOKE = `window.__shop=Object.assign({},window.__shop,{analytics:'no'});document.dispatchEvent(new CustomEvent('visitorConsentCollected',{detail:{analyticsAllowed:false,marketingAllowed:true,preferencesAllowed:true,saleOfDataAllowed:true}}));`;
 
+// Shopify's sale-of-data opt-out (US opt-out page / GPC) leaves marketing allowed but stops the
+// store's SALE_OF_DATA pixels: for the add-on it is an advertising refusal. Effective functions, then the fallback.
+const SHOPIFY_FN = `<script>window.__shop={analytics:'yes',marketing:'yes',preferences:'yes',sale_of_data:'yes'};window.Shopify={customerPrivacy:{currentVisitorConsent:function(){return window.__shop},analyticsProcessingAllowed:function(){return window.__shop.analytics==='yes'},marketingAllowed:function(){return window.__shop.marketing==='yes'},preferencesProcessingAllowed:function(){return window.__shop.preferences==='yes'},saleOfDataAllowed:function(){return window.__shop.sale_of_data!=='no'}}};</script>`;
+const SHOPIFY_SALE_OPT_OUT = `window.__shop=Object.assign({},window.__shop,{sale_of_data:'no'});document.dispatchEvent(new CustomEvent('visitorConsentCollected',{detail:{analyticsAllowed:true,marketingAllowed:true,preferencesAllowed:true,saleOfDataAllowed:false}}));`;
+
+describe('add-on mode: Shopify sale-of-data opt-out is an advertising refusal', () => {
+  for (const [name, fake] of [['effective functions', SHOPIFY_FN], ['currentVisitorConsent fallback', SHOPIFY]] as const) {
+    it(`${name}: marketing allowed + sale opted out denies advertising and cleans its cookies`, async () => {
+      const o = await open(companionConfig('shopify'), { before: fake });
+      await settle(o.page);
+      expect(await state(o.page)).toMatchObject({ analytics: true, advertising: true });
+      await o.page.evaluate(SHOPIFY_SALE_OPT_OUT);
+      await settle(o.page);
+      expect(await state(o.page)).toMatchObject({ analytics: true, advertising: false });
+      // The advertising cookie goes; analytics and the site's own cookie stay.
+      expect(await cookies(o.page)).toEqual(['_ga', 'site_pref']);
+      await o.ctx.close();
+    });
+  }
+});
+
 describe('add-on mode: follow the banner, clean up what it revokes', () => {
   const cases: Array<[string, string, string]> = [
     ['onetrust', ONETRUST, ONETRUST_REVOKE],

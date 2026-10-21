@@ -155,6 +155,7 @@ export function choiceGap(s: TrackingEvaluation['locations'][number]['scenarios'
     const link = walk?.linkText ? `“${walk.linkText}”` : 'The opt-out link';
     if (fields.length) return `The opt-out was not completed: ${link} leads to a page that asks for ${fields.join(', ')}, and the scan does not submit personal data.`;
     if (walk && !walk.performed) return `The opt-out was not completed: ${link} leads to a page with no opt-out button or switch the scan could use.`;
+    if (walk?.stored === false) return `The opt-out was not completed: ${link} was clicked but the stored consent state does not show the opt-out.`;
     return `The opt-out through ${link} could not be confirmed.`;
   }
   return `The scan could not confirm ${CHOICE_NAME[s.choice?.kind ?? s.scenario] ?? 'this visitor choice'} worked.`;

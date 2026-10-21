@@ -32,6 +32,7 @@ import {
   reopenSettings,
   rejectInOpenSettings,
   walkOptOutLink,
+  type OptOutWalk,
   findConfirmation,
   siteReportedRegion,
 } from './banner.js';
@@ -452,6 +453,17 @@ class Visit {
   }
 }
 
+/** The opt-out took: the control was clicked and the readable stored state (when there is one) shows it. */
+export const optOutTook = (walk: OptOutWalk): boolean => walk.performed === true && walk.stored !== false;
+
+/** Why an opt-out choice is not ok beyond a missing link: personal data asked for, or a click that stored nothing. */
+export function optOutNote(walk: OptOutWalk): string | undefined {
+  const notes: string[] = [];
+  if (walk.requiredFields.length) notes.push(`requires ${walk.requiredFields.join(', ')} — not submitted`);
+  if (walk.performed && walk.stored === false) notes.push('opt-out control clicked but the stored consent state does not show the opt-out');
+  return notes.join('; ') || undefined;
+}
+
 function typeMarkers(v: Visit, markers: Markers): Promise<string[]> {
   return step('type-markers', () => typeMarkersUntimed(v, markers));
 }
@@ -586,9 +598,10 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
         v.ev({ type: 'opt-out-walk', ...walk });
         // The choice is timed at the opt-out control's click (walk.performedAt), not at the start of
         // the walk: what the page fires while the scan scrolls to the link is before the opt-out.
-        v.ev({ type: 'choice', choice: 'opt-out-link', ok: walk.performed === true, method: walk.performed ? 'link+control' : walk.found ? 'link' : 'none', note: walk.requiredFields.length ? `requires ${walk.requiredFields.join(', ')} — not submitted` : undefined }, walk.performedAt ?? tLink);
+        v.ev({ type: 'choice', choice: 'opt-out-link', ok: optOutTook(walk), method: walk.performed ? 'link+control' : walk.found ? 'link' : 'none', note: optOutNote(walk) }, walk.performedAt ?? tLink);
         await v.shot('opt-out-link');
-        if (walk.performed) {
+        // Only a stored opt-out is browsed: a visit whose opt-out did not take is not "after the opt-out".
+        if (optOutTook(walk)) {
           await navigate(v.page, cap, landing, journey);
           await dwell(v.page, cap, journey.pageDwellMs);
           await browse(v.page, cap, journey, landing, search);
@@ -605,7 +618,7 @@ async function runTimedScenario(input: ScenarioInput, timer: StepTimer, trace: (
         const tLink = cap.now();
         const walk = await step('opt-out-link', () => walkOptOutLink(v.page, true, () => cap.now()));
         v.ev({ type: 'opt-out-walk', ...walk });
-        v.ev({ type: 'choice', choice: 'opt-out-link', ok: walk.performed === true, method: walk.performed ? 'link+control' : walk.found ? 'link' : 'none', note: walk.requiredFields.length ? `requires ${walk.requiredFields.join(', ')} — not submitted` : undefined }, walk.performedAt ?? tLink);
+        v.ev({ type: 'choice', choice: 'opt-out-link', ok: optOutTook(walk), method: walk.performed ? 'link+control' : walk.found ? 'link' : 'none', note: optOutNote(walk) }, walk.performedAt ?? tLink);
         await v.shot('after-opt-out');
         await navigate(v.page, cap, landing, journey);
         await dwell(v.page, cap, journey.pageDwellMs);
