@@ -3,7 +3,7 @@
 //
 //   complykit-consent.js     core: store, gate, adapters, GTM bridge, location,
 //                            platform bridges, API. Blocking, in <head>, before
-//                            any gated tag or the GTM snippet. ≤15 KB gz.
+//                            any gated tag or the GTM snippet. ≤16 KB gz.
 //   complykit-consent-ui.js  banner, settings layer, Privacy choices control
 //                            (theming F1 and strings F2 land here). ≤12 KB gz.
 //                            Loaded BY THE CORE, async — never pasted.

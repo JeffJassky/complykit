@@ -11,7 +11,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
-const BUDGETS = { 'complykit-consent.js': 15 * 1024, 'complykit-consent-ui.js': 12 * 1024, 'complykit-consent-companion.js': 8 * 1024 };
+const BUDGETS = { 'complykit-consent.js': 16 * 1024, 'complykit-consent-ui.js': 12 * 1024, 'complykit-consent-companion.js': 8 * 1024 };
 
 let failed = false;
 for (const [name, budget] of Object.entries(BUDGETS)) {

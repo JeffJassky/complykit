@@ -2,7 +2,7 @@
 //
 // This file imports NOTHING. It is the one module both sides of the contract
 // share at runtime: the complykit package (scanner, generator, service) and
-// the client package (`client/`, zero runtime deps, 15 KB gzipped budget). The
+// the client package (`client/`, zero runtime deps, 16 KB gzipped budget). The
 // zod schema that fully validates a config lives next door in
 // consent-config.ts and is never bundled into the client; the client imports
 // the types here type-only and calls `guardConsentToolConfig` on the inline
