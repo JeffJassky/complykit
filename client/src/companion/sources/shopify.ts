@@ -9,12 +9,30 @@
 //     SALE_OF_DATA stop on it, so a refused sale is a refused advertising category here too (marketing alone stays 'yes').
 //   - document event 'visitorConsentCollected', detail {analyticsAllowed, marketingAllowed,
 //     preferencesAllowed, saleOfDataAllowed}; "published only when consent changes", so we re-read.
+//   - The API exists only once something calls Shopify.loadFeatures([{name: 'consent-tracking-api', version: '0.1'}], cb)
+//     ("When invoked without an error, the API is globally available at window.Shopify.customerPrivacy"). Shopify's banner
+//     does not expose it on its own, so the add-on asks for it once (as bridges/shopify.ts does) and reads in the callback.
 import { listen, win, type Source } from './types.js';
 
 export const shopify: Source = (push) => {
+  let requested = false;
   const read = (): string[] | undefined => {
-    const p = win().Shopify?.customerPrivacy;
-    if (typeof p?.currentVisitorConsent !== 'function') return undefined;
+    const s = win().Shopify;
+    const p = s?.customerPrivacy;
+    if (typeof p?.currentVisitorConsent !== 'function') {
+      if (!requested && typeof s?.loadFeatures === 'function') {
+        requested = true;
+        try {
+          s.loadFeatures([{ name: 'consent-tracking-api', version: '0.1' }], () => {
+            const g = read();
+            if (g) push(g);
+          });
+        } catch {
+          // A throwing loader leaves the poll to find the API if something else loads it.
+        }
+      }
+      return undefined;
+    }
     const c = p.currentVisitorConsent() ?? {};
     const eff: Record<string, string> = { analytics: 'analyticsProcessingAllowed', marketing: 'marketingAllowed', preferences: 'preferencesProcessingAllowed' };
     // Advertising also needs the sale of data not refused: effective function when present, else sale_of_data !== 'no'.

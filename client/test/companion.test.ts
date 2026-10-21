@@ -119,6 +119,23 @@ const SHOPIFY_REVOKE = `window.__shop=Object.assign({},window.__shop,{analytics:
 const SHOPIFY_FN = `<script>window.__shop={analytics:'yes',marketing:'yes',preferences:'yes',sale_of_data:'yes'};window.Shopify={customerPrivacy:{currentVisitorConsent:function(){return window.__shop},analyticsProcessingAllowed:function(){return window.__shop.analytics==='yes'},marketingAllowed:function(){return window.__shop.marketing==='yes'},preferencesProcessingAllowed:function(){return window.__shop.preferences==='yes'},saleOfDataAllowed:function(){return window.__shop.sale_of_data!=='no'}}};</script>`;
 const SHOPIFY_SALE_OPT_OUT = `window.__shop=Object.assign({},window.__shop,{sale_of_data:'no'});document.dispatchEvent(new CustomEvent('visitorConsentCollected',{detail:{analyticsAllowed:true,marketingAllowed:true,preferencesAllowed:true,saleOfDataAllowed:false}}));`;
 
+// Shopify's banner on its own: customerPrivacy exists only after Shopify.loadFeatures (async), never on the page before.
+const SHOPIFY_LAZY = `<script>window.__loads=0;window.__shop={analytics:'yes',marketing:'yes',preferences:'yes',sale_of_data:'yes'};window.Shopify={loadFeatures:function(f,cb){window.__loads++;setTimeout(function(){window.Shopify.customerPrivacy={currentVisitorConsent:function(){return window.__shop}};cb();},50);}};</script>`;
+
+describe('add-on mode: Shopify API loaded on demand', () => {
+  it('asks Shopify.loadFeatures for the consent API once and follows it', async () => {
+    const o = await open(companionConfig('shopify'), { before: SHOPIFY_LAZY });
+    await settle(o.page);
+    expect(await state(o.page)).toMatchObject({ analytics: true, advertising: true });
+    expect(await o.page.evaluate(() => (window as any).__loads)).toBe(1);
+    expect(await o.page.evaluate(() => (window as any).ComplyKit.diagnostics.companion.state)).toBe('ready');
+    await o.page.evaluate(SHOPIFY_REVOKE);
+    await settle(o.page);
+    expect(await state(o.page)).toMatchObject({ analytics: false, advertising: true });
+    await o.ctx.close();
+  });
+});
+
 describe('add-on mode: Shopify sale-of-data opt-out is an advertising refusal', () => {
   for (const [name, fake] of [['effective functions', SHOPIFY_FN], ['currentVisitorConsent fallback', SHOPIFY]] as const) {
     it(`${name}: marketing allowed + sale opted out denies advertising and cleans its cookies`, async () => {
