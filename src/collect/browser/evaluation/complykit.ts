@@ -111,12 +111,18 @@ export async function readComplykit(page: Page): Promise<ComplykitToolSnapshot |
   }
 }
 
-/** Is the tool running on this page (store started)? */
+/**
+ * Is the tool running on this page (store started) AND asking the visitor itself? In add-on mode
+ * (config.mode 'companion') complykit shows no banner and follows the site's own: the scan must drive
+ * that banner, not complykit's hooks. The core marks add-on mode synchronously with the companion
+ * script element it inserts; diagnostics.companion follows once that file runs.
+ */
 export async function complykitRunning(page: Page): Promise<boolean> {
   return page
     .evaluate(() => {
-      const ck = (window as unknown as { ComplyKit?: { get?: () => unknown } }).ComplyKit;
+      const ck = (window as unknown as { ComplyKit?: { get?: () => unknown; diagnostics?: { companion?: unknown } } }).ComplyKit;
       try {
+        if (ck?.diagnostics?.companion || document.querySelector('script[data-complykit-companion]')) return false;
         return typeof ck?.get === 'function' && ck.get() !== null;
       } catch {
         return false;

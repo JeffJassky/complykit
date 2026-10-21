@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import type { Browser, Page } from 'playwright';
 import { optOutTook, optOutNote } from '../src/collect/browser/evaluation/scenarios.js';
+import { complykitRunning } from '../src/collect/browser/evaluation/complykit.js';
 import { findBanner, readoutConfirms, consentModeMismatch, findConfirmation, detectBlock, walkOptOutLink, readoutConfirmsOptOut } from '../src/collect/browser/evaluation/banner.js';
 
 // Regressions from the 2026-10-03 field run: a storefront with no banner was
@@ -241,5 +242,29 @@ walkSuite('opt-out link walk: required fields belong to the opt-out control', ()
     expect(walk.performed).toBe(false);
     expect(posted).toEqual([]);
     await context.close();
+  });
+});
+
+suite('complykit on the page: who owns the banner', () => {
+  let browser: Browser;
+  let page: Page;
+  beforeAll(async () => {
+    const { chromium } = await import('playwright');
+    browser = await chromium.launch();
+    page = await browser.newPage();
+  });
+  afterAll(async () => browser?.close());
+
+  it('full mode: complykit asks, so the scan drives its hooks', async () => {
+    await page.setContent('<script>window.ComplyKit={get:function(){return {status:"chosen"}},diagnostics:{}};</script>');
+    expect(await complykitRunning(page)).toBe(true);
+  });
+
+  it('add-on mode: the site banner asks, so complykit is not the banner to drive', async () => {
+    await page.setContent('<script>window.ComplyKit={get:function(){return {status:"chosen"}},diagnostics:{companion:{cmp:"shopify",state:"ready"}}};</script>');
+    expect(await complykitRunning(page)).toBe(false);
+    // Before the companion file has run: the core's companion script element already says so.
+    await page.setContent('<script>window.ComplyKit={get:function(){return {status:"chosen"}},diagnostics:{}};</script><script type="text/plain" data-complykit-companion="1"></script>');
+    expect(await complykitRunning(page)).toBe(false);
   });
 });
