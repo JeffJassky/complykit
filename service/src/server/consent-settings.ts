@@ -3,14 +3,20 @@
 // (the route and the reader share it), applied to the served config by
 // hostedConfig, and read by the to-do list (add-on mode hides remove-existing-tool).
 
-import type { CompanionCmp, ConsentSettings, DetectedBanner, SiteWorkspace } from '../shared/api.js';
+import type { CompanionCmp, ConsentOverrides, ConsentSettings, DetectedBanner, SiteWorkspace } from '../shared/api.js';
 import { CONSENT_SETTINGS_ENTRY, WorkspaceError } from './workspace.js';
 
 export const CONSENT_SETTINGS_KEY = CONSENT_SETTINGS_ENTRY;
 
 export const COMPANION_CMP_IDS: readonly CompanionCmp[] = ['onetrust', 'cookiebot', 'usercentrics', 'didomi', 'trustarc', 'shopify', 'wordpress', 'tcf', 'consent-mode', 'manual'];
 const LAYOUTS = ['bar', 'box', 'modal'] as const;
-const KEYS = new Set(['mode', 'cmp', 'layout', 'blockPage', 'privacyPolicyUrl']);
+const KEYS = new Set(['mode', 'cmp', 'layout', 'blockPage', 'privacyPolicyUrl', 'overrides']);
+const OVERRIDE_KEYS = new Set(['regimes', 'defaults', 'honorGpc', 'note']);
+const REGIMES = ['opt-in', 'opt-out-signal', 'opt-out'] as const;
+// Mirrors of the package's LOCATION_KEY_PATTERN and CategoryId (consent-config-guard.ts, consent-config.ts).
+const LOCATION_KEY = /^(\*|[A-Z]{2}(-[A-Z0-9]{1,3})?)$/;
+const CATEGORY_ID = /^[a-z][a-z0-9-]*$/;
+const MAX_NOTE = 500;
 const MAX_URL = 2048;
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -23,6 +29,49 @@ export function detectedBannerOf(configValue: unknown): DetectedBanner | undefin
   const b = isObj(configValue) ? configValue.detectedBanner : undefined;
   if (!isObj(b) || typeof b.label !== 'string' || !b.label.trim() || !(COMPANION_CMP_IDS as readonly unknown[]).includes(b.cmp)) return undefined;
   return { label: b.label.slice(0, 100), cmp: b.cmp as CompanionCmp };
+}
+
+/** `overrides` as the package's ConsentOverridesSchema would take it (strict keys, upper-case location keys, no `necessary`). Throws WorkspaceError(400). */
+function normalizeOverrides(raw: unknown): ConsentOverrides {
+  if (!isObj(raw)) return bad('`overrides` must be an object');
+  for (const k of Object.keys(raw)) if (!OVERRIDE_KEYS.has(k)) bad(`unknown override ${JSON.stringify(k.slice(0, 40))}`);
+  const out: ConsentOverrides = {};
+  if (raw.regimes !== undefined) {
+    if (!isObj(raw.regimes)) return bad('`overrides.regimes` must be an object');
+    const regimes: NonNullable<ConsentOverrides['regimes']> = {};
+    for (const [k, r] of Object.entries(raw.regimes)) {
+      if (!LOCATION_KEY.test(k)) bad(`\`overrides.regimes\` key ${JSON.stringify(k.slice(0, 40))} is not a location ('US-CA', 'US' or '*', upper case)`);
+      if (!(REGIMES as readonly unknown[]).includes(r)) bad(`\`overrides.regimes.${k}\` must be opt-in, opt-out-signal or opt-out`);
+      regimes[k] = r as string;
+    }
+    out.regimes = regimes;
+  }
+  if (raw.defaults !== undefined) {
+    if (!isObj(raw.defaults)) return bad('`overrides.defaults` must be an object');
+    const defaults: NonNullable<ConsentOverrides['defaults']> = {};
+    for (const [k, row] of Object.entries(raw.defaults)) {
+      if (!LOCATION_KEY.test(k) && !(REGIMES as readonly unknown[]).includes(k)) bad(`\`overrides.defaults\` key ${JSON.stringify(k.slice(0, 40))} is not a location or a regime`);
+      if (!isObj(row)) return bad(`\`overrides.defaults.${k}\` must be an object`);
+      const cats: Record<string, boolean> = {};
+      for (const [cat, v] of Object.entries(row)) {
+        if (!CATEGORY_ID.test(cat)) bad(`\`overrides.defaults.${k}\` category ${JSON.stringify(cat.slice(0, 40))} is not a category id`);
+        if (cat === 'necessary') bad('`necessary` is always granted and cannot be overridden');
+        if (typeof v !== 'boolean') bad(`\`overrides.defaults.${k}.${cat}\` must be true or false`);
+        cats[cat] = v as boolean;
+      }
+      defaults[k] = cats;
+    }
+    out.defaults = defaults;
+  }
+  if (raw.honorGpc !== undefined) {
+    if (typeof raw.honorGpc !== 'boolean') bad('`overrides.honorGpc` must be true or false');
+    out.honorGpc = raw.honorGpc as boolean;
+  }
+  if (raw.note !== undefined) {
+    if (typeof raw.note !== 'string' || raw.note.length < 1 || raw.note.length > MAX_NOTE) bad(`\`overrides.note\` must be 1 to ${MAX_NOTE} characters`);
+    out.note = raw.note as string;
+  }
+  return out;
 }
 
 /** The settings as stored: only the allow-listed keys, each checked. Throws WorkspaceError(400). */
@@ -56,6 +105,7 @@ export function normalizeConsentSettings(raw: unknown): ConsentSettings {
     if (!ok) bad('`privacyPolicyUrl` must be an https URL');
     out.privacyPolicyUrl = u as string;
   }
+  if (raw.overrides !== undefined) out.overrides = normalizeOverrides(raw.overrides);
   return out;
 }
 
@@ -72,7 +122,7 @@ export function storedConsentSettings(ws: Pick<SiteWorkspace, 'entries'>): Conse
 
 export const isCompanion = (s: ConsentSettings | undefined): boolean => s?.mode === 'companion';
 
-/** Applies the settings to a config (a copy): only the keys present; full drops mode/companion, add-on drops `record`. */
+/** Applies the settings to a config (a copy): only the keys present (overrides pruned to the config's categories); full drops mode/companion, add-on drops `record`. */
 export function applyConsentSettings(config: Record<string, unknown>, settings: ConsentSettings | undefined): Record<string, unknown> {
   const out = { ...config };
   if (!settings) return out;
@@ -87,5 +137,21 @@ export function applyConsentSettings(config: Record<string, unknown>, settings: 
   if (settings.layout !== undefined) out.layout = settings.layout;
   if (settings.blockPage !== undefined) out.blockPage = settings.blockPage;
   if (settings.privacyPolicyUrl !== undefined) out.privacyPolicyUrl = settings.privacyPolicyUrl;
+  if (settings.overrides !== undefined) out.overrides = pruneOverrides(settings.overrides, config);
+  return out;
+}
+
+/** The overrides for a config: category entries it does not list are dropped (the package refuses them), and rows left empty with them. */
+function pruneOverrides(o: ConsentOverrides, config: Record<string, unknown>): ConsentOverrides {
+  const out: ConsentOverrides = { ...o };
+  if (!o.defaults) return out;
+  const listed = new Set(Array.isArray(config.categories) ? config.categories.filter(isObj).map((c) => c.id) : []);
+  const defaults: NonNullable<ConsentOverrides['defaults']> = {};
+  for (const [k, row] of Object.entries(o.defaults)) {
+    const kept = Object.fromEntries(Object.entries(row).filter(([cat]) => listed.has(cat)));
+    if (Object.keys(kept).length) defaults[k] = kept;
+  }
+  if (Object.keys(defaults).length) out.defaults = defaults;
+  else delete out.defaults;
   return out;
 }

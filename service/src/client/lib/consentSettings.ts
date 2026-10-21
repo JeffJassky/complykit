@@ -49,6 +49,8 @@ export interface SettingsDraft {
   layout?: ConsentSettings['layout'];
   blockPage?: boolean;
   privacyPolicyUrl?: string;
+  /** Not edited by the form: carried so Save does not drop what is stored. */
+  overrides?: ConsentSettings['overrides'];
 }
 
 /** The generated config's values, shown as the defaults. */
@@ -59,19 +61,23 @@ export interface SettingsDefaults {
 }
 
 export function settingsFromDraft(d: SettingsDraft): ConsentSettings {
-  if (d.mode === 'companion') return { mode: 'companion', ...(d.cmp ? { cmp: d.cmp } : {}) };
+  const overrides = d.overrides ? { overrides: d.overrides } : {};
+  if (d.mode === 'companion') return { mode: 'companion', ...(d.cmp ? { cmp: d.cmp } : {}), ...overrides };
   const url = d.privacyPolicyUrl?.trim();
-  return { mode: 'full', ...(d.layout ? { layout: d.layout } : {}), ...(d.blockPage !== undefined ? { blockPage: d.blockPage } : {}), ...(url ? { privacyPolicyUrl: url } : {}) };
+  return { mode: 'full', ...overrides, ...(d.layout ? { layout: d.layout } : {}), ...(d.blockPage !== undefined ? { blockPage: d.blockPage } : {}), ...(url ? { privacyPolicyUrl: url } : {}) };
 }
 
 /** The stored settings, or { mode: 'full' } (also for an entry that is not valid: the service ignores those too). */
 export function consentSettingsOf(ws: Pick<SiteWorkspace, 'entries'>): ConsentSettings {
   const v = ws.entries[CONSENT_SETTINGS_ENTRY]?.value;
   if (!isObject(v)) return { mode: 'full' };
-  if (v.mode === 'companion') return typeof v.cmp === 'string' && COMPANION_BANNERS.some((b) => b.cmp === v.cmp) ? { mode: 'companion', cmp: v.cmp as CompanionCmp } : { mode: 'full' };
+  // Passed through unchecked (the service validated it): the form only has to hand it back on Save.
+  const overrides = isObject(v.overrides) ? { overrides: v.overrides as ConsentSettings['overrides'] } : {};
+  if (v.mode === 'companion') return typeof v.cmp === 'string' && COMPANION_BANNERS.some((b) => b.cmp === v.cmp) ? { mode: 'companion', cmp: v.cmp as CompanionCmp, ...overrides } : { mode: 'full' };
   if (v.mode !== 'full') return { mode: 'full' };
   return {
     mode: 'full',
+    ...overrides,
     ...(v.layout === 'bar' || v.layout === 'box' || v.layout === 'modal' ? { layout: v.layout } : {}),
     ...(typeof v.blockPage === 'boolean' ? { blockPage: v.blockPage } : {}),
     ...(typeof v.privacyPolicyUrl === 'string' ? { privacyPolicyUrl: v.privacyPolicyUrl } : {}),
