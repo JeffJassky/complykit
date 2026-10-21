@@ -467,8 +467,9 @@ export function evaluateConsentToolProof(ev: TrackingEvaluation, input: ConsentT
         // Phase sets compared in this scenario: the scenario's own, and (choice scenarios) the time before the choice.
         const windows: Array<{ phases: Phase[]; beforeChoice: boolean }> = [{ phases, beforeChoice: false }, ...(isChoice ? [{ phases: PRE_CHOICE, beforeChoice: true }] : [])];
 
-        // Unlisted trackers: all-denied windows only (after reject / withdraw; before any choice under opt-in).
-        const deniedAll = [...(REFUSED_SCENARIOS.has(s.scenario) ? phases : []), ...(regime === 'opt-in' && (isChoice || !SCENARIO_PHASES[s.scenario]) ? PRE_CHOICE : [])];
+        // Unlisted trackers: all-denied windows only (after reject / withdraw; before any choice under opt-in — never in add-on
+        // mode, where the tool's regime is not what decides before a choice).
+        const deniedAll = [...(REFUSED_SCENARIOS.has(s.scenario) ? phases : []), ...(regime === 'opt-in' && config.mode !== 'companion' && (isChoice || !SCENARIO_PHASES[s.scenario]) ? PRE_CHOICE : [])];
         if (deniedAll.length) {
           for (const { o, i } of visits) {
             for (const f of o.parties) {
@@ -494,7 +495,9 @@ export function evaluateConsentToolProof(ev: TrackingEvaluation, input: ConsentT
         for (const v of config.vendors) {
           const party = inventory.get(v.id);
           for (const win of windows) {
-            const expectedUnder = (r: Regime): boolean | undefined => (win.beforeChoice ? (v.category === NECESSARY_CATEGORY ? true : consentCategoryDefault(config, v.category, r)) : expectedGrantedFor(config, v.category, r, s.scenario, snap?.state?.gpc === true));
+            // Add-on mode: the site's own banner decides and complykit follows it, so the config's regime defaults and
+            // its GPC contract are not what the visit should show — the location's rules judge it (the grid), not the proof.
+            const expectedUnder = (r: Regime): boolean | undefined => config.mode === 'companion' ? undefined : (win.beforeChoice ? (v.category === NECESSARY_CATEGORY ? true : consentCategoryDefault(config, v.category, r)) : expectedGrantedFor(config, v.category, r, s.scenario, snap?.state?.gpc === true));
             const expected = expectedUnder(regime);
             if (expected === undefined) continue;
             const byLaw = lawWeaker && expected ? expectedUnder(lawWeaker) : undefined;

@@ -347,6 +347,30 @@ describe('D10 proof: detection and the per-vendor decision', () => {
   });
 });
 
+describe('D10 proof: add-on mode', () => {
+  it("the site's banner decides: the config's regime defaults and GPC contract produce no behavior mismatch, and no unlisted-tracker finding before a choice", () => {
+    const cfg = config({ mode: 'companion', companion: { cmp: 'shopify' } } as Partial<ConsentToolConfigInput>);
+    const scenarios = [
+      { scenario: 'do-nothing' as const },
+      { scenario: 'gpc' as const },
+    ];
+    const obs = [
+      observation('de', 'do-nothing', { 'fixture.ads': { 'before-choice': 2 }, 'fixture.stats': { 'before-choice': 1 }, 'other.tracker': { 'before-choice': 1 } }, [...KNOWN, 'other.tracker']),
+      observation('de', 'gpc', { 'fixture.ads': { 'before-choice': 1 } }, KNOWN),
+    ];
+    const inventory = [...INVENTORY, party('other.tracker', 'Other Tracker', ['advertising'])];
+    const p = evaluateConsentToolProof(evaluation({ cfg, scenarios, observations: obs, inventory }));
+    expect(p.detected).toBe(true);
+    expect(configBehaviorCells(p)).toEqual([]);
+    expect(p.findings.map((f) => f.code)).not.toContain('vendor-not-controlled');
+    expect(p.findings.map((f) => f.code)).not.toContain('vendor-not-in-config');
+    // The same visits in full mode are judged against the config (control).
+    const full = evaluateConsentToolProof(evaluation({ scenarios, observations: obs, inventory }));
+    expect(configBehaviorCells(full).length).toBeGreaterThan(0);
+    expect(full.findings.map((f) => f.code)).toContain('vendor-not-in-config');
+  });
+});
+
 describe('D10 proof: the deployed config', () => {
   it('edited by hand since generation: the hash does not match', () => {
     const c = { ...config(), layout: 'box' };
