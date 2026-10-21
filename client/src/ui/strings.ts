@@ -2,8 +2,14 @@
 // `t(key)`, the one lookup:
 //   config.strings[lang].byRegime[regime][key]
 //   → config.strings[lang][key]
+//   → DEFAULTS[lang].held[key]            (only while an opt-out regime still holds something back)
 //   → DEFAULTS[lang].byRegime[regime][key] → DEFAULTS[lang].base[key]
 //   → the English default.
+// The held variant exists because the opt-out copy says "optional categories are
+// on unless you opt out", which is false where complykit policy holds the wiretap
+// categories (California, …) or an owner override does: `holdsBeforeChoice`
+// decides, from the store's regime and location. It only replaces the two body
+// strings; the buttons (reject as prominent as accept) keep their regime words.
 // `lang` is the first of navigator.languages the config (or the defaults) has
 // a table for (exact tag, then its primary subtag), else 'en'. A second
 // language is a second entry in DEFAULTS (and/or a config table); nothing else
@@ -19,12 +25,15 @@
 // actually has — a site without advertising tools never says "advertising".
 
 import type { ConsentStringKey, ConsentStringTable, Regime } from '../config.js';
+import { holdsBeforeChoice } from '../store.js';
 import { host } from './host.js';
 
 type Table = Partial<Record<ConsentStringKey, string>>;
 interface LangDefaults {
   base: Record<ConsentStringKey, string>;
   byRegime: Partial<Record<Regime, Table>>;
+  /** Bodies for an opt-out regime where some categories are held until the visitor accepts. */
+  held?: Table;
 }
 
 const DNSS = 'Do Not Sell or Share My Personal Information';
@@ -85,9 +94,18 @@ const EN_OPT_OUT: Table = {
   'privacyChoices.link': YPC,
 };
 
+// An opt-out regime where policy (or the owner) still holds some purposes off: say
+// which way each kind goes, without the opt-out copy's "everything is on".
+const EN_HELD: Table = {
+  'banner.body':
+    'We and third parties use cookies and similar technologies for {purposes}. Some of these stay off until you accept them. The rest are on unless you opt out. Depending on where you live, some of this can count as a "sale" or "sharing" of your personal information. You can choose now, or at any time from "Your Privacy Choices".',
+  'settings.body':
+    'Some optional categories stay off until you switch them on. The rest are on unless you opt out. Switch off any you do not want, or reject all of them. Necessary technologies stay on because the site cannot work without them.',
+};
+
 /** Built-in tables, by language. English only for now (design §10). */
 export const DEFAULTS: Record<string, LangDefaults> = {
-  en: { base: EN_BASE, byRegime: { 'opt-out-signal': EN_OPT_OUT_SIGNAL, 'opt-out': EN_OPT_OUT } },
+  en: { base: EN_BASE, byRegime: { 'opt-out-signal': EN_OPT_OUT_SIGNAL, 'opt-out': EN_OPT_OUT }, held: EN_HELD },
 };
 
 function pick<T>(tables: Record<string, T> | undefined): T | undefined {
@@ -117,9 +135,12 @@ function purposes(): string {
 
 /** The visible string for a key, under the current config, language and regime. */
 export function t(key: ConsentStringKey): string {
-  const r = regime();
-  const tb: ConsentStringTable | undefined = pick(host().getConfig()?.strings);
+  const st = host().getStore()?.state();
+  const cfg = host().getConfig();
+  const r = st?.regime;
+  const tb: ConsentStringTable | undefined = pick(cfg?.strings);
   const d = pick(DEFAULTS) ?? DEFAULTS.en;
-  const v = String((r && tb?.byRegime?.[r]?.[key]) || tb?.[key] || (r && d.byRegime[r]?.[key]) || d.base[key] || EN_BASE[key]);
+  const held = r && cfg && holdsBeforeChoice(cfg, r, st.location) ? d.held?.[key] : undefined;
+  const v = String((r && tb?.byRegime?.[r]?.[key]) || tb?.[key] || held || (r && d.byRegime[r]?.[key]) || d.base[key] || EN_BASE[key]);
   return v.includes('{purposes}') ? v.split('{purposes}').join(purposes()) : v;
 }

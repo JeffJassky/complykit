@@ -21,12 +21,14 @@
 //   5. unknown   → FALLBACK_REGIME ('opt-in', the strictest).
 //
 // Location → regime is `regimeFor()` from src/registry/regime.ts, the same
-// table the scanner uses. GPC (`navigator.globalPrivacyControl`) is read here
+// table the scanner uses, unless the site owner moved it: `overrides.regimes`
+// (schema 1.1) is checked first through the shared `overriddenRegime()`, and
+// the decision says so (`overridden`). A `fixed` source ignores overrides. GPC (`navigator.globalPrivacyControl`) is read here
 // and reported with the decision; the store applies it (every non-necessary
 // default denied, design §6) and puts `gpc` in the consent record.
 
 import { regimeFor, parseRegimeLocation, type ConsentRegime, type RegimeLocation } from '../../src/registry/regime.js';
-import { FALLBACK_REGIME, type ConsentToolConfig, type Regime } from './config.js';
+import { FALLBACK_REGIME, overriddenRegime, type ConsentToolConfig, type Regime } from './config.js';
 import { diagnostics } from './diagnostics.js';
 
 // The registry's regime union and the config contract's must stay one type.
@@ -47,8 +49,10 @@ export interface LocationDecision {
   location?: RegimeLocation;
   /** navigator.globalPrivacyControl === true. */
   gpc: boolean;
-  /** True while a header lookup is outstanding: `regime` is the strict placeholder. */
+  /** True while a header lookup is outstanding: `regime` is the strict placeholder (or the owner's '*' override). */
   pending: boolean;
+  /** `regime` came from the owner's `overrides.regimes`, not the built-in table. */
+  overridden: boolean;
 }
 
 /** Everything the resolver touches, injectable for tests. Defaults to the page's globals. */
@@ -119,20 +123,29 @@ export function resolveLocation(config: ConsentToolConfig, env: LocationEnv = {}
   const win = env.window ?? (typeof window !== 'undefined' ? (window as LocationEnv['window']) : undefined);
   const gpc = readGpc(env.navigator ?? (typeof navigator !== 'undefined' ? navigator : undefined));
   const src = config.regimeSource;
-  const decide = (source: LocationSource, location?: RegimeLocation): LocationDecision => ({
-    regime: location ? regimeFor(location, env.onDate) : FALLBACK_REGIME,
-    source: location ? source : 'unknown',
-    location,
-    gpc,
-    pending: false,
-  });
+  // An unknown location matches only the '*' override; otherwise it is the strictest regime.
+  const decide = (source: LocationSource, location?: RegimeLocation): LocationDecision => {
+    const o = overriddenRegime(config, location);
+    return {
+      regime: o ?? (location ? regimeFor(location, env.onDate) : FALLBACK_REGIME),
+      source: location ? source : 'unknown',
+      location,
+      gpc,
+      pending: false,
+      overridden: o !== undefined,
+    };
+  };
+  const note = (d: LocationDecision): LocationDecision => {
+    diagnostics.location = d;
+    return d;
+  };
   const done = (d: LocationDecision): LocationResolution => {
-    diagnostics.location = { source: d.source, regime: d.regime, pending: d.pending, gpc };
+    note(d);
     return { initial: d, ready: Promise.resolve(d) };
   };
 
   if (src.kind === 'fixed') {
-    return done({ regime: src.regime, source: 'fixed', gpc, pending: false });
+    return done({ regime: src.regime, source: 'fixed', gpc, pending: false, overridden: false });
   }
 
   const metaName = src.kind === 'meta' && src.name ? src.name : DEFAULT_REGION_META;
@@ -149,17 +162,15 @@ export function resolveLocation(config: ConsentToolConfig, env: LocationEnv = {}
       if (!url && typeof console !== 'undefined') console.warn(`[complykit] location endpoint ${src.endpoint} is not same-origin; using the strictest regime`);
       return done(decide('unknown'));
     }
-    const initial: LocationDecision = { regime: FALLBACK_REGIME, source: 'unknown', gpc, pending: true };
-    diagnostics.location = { source: 'header', regime: initial.regime, pending: true, gpc };
+    const o = overriddenRegime(config, undefined);
+    const initial: LocationDecision = { regime: o ?? FALLBACK_REGIME, source: 'unknown', gpc, pending: true, overridden: o !== undefined };
+    diagnostics.location = { ...initial, source: 'header' };
     const lookup = f(url, { credentials: 'same-origin', cache: 'no-store', redirect: 'error', headers: { accept: 'text/plain' } })
       .then((res) => (res.ok ? res.text() : ''))
       .then((body) => decide('header', parseRegimeLocation(body.split(/[\r\n,]/)[0])))
       .catch(() => decide('unknown'));
     const timeout = new Promise<LocationDecision>((r) => setTimeout(() => r(decide('unknown')), env.timeoutMs ?? HEADER_TIMEOUT_MS));
-    const ready = Promise.race([lookup, timeout]).then((d) => {
-      diagnostics.location = { source: d.source, regime: d.regime, pending: false, gpc };
-      return d;
-    });
+    const ready = Promise.race([lookup, timeout]).then(note);
     return { initial, ready };
   }
 

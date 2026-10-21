@@ -200,9 +200,10 @@ function build(): void {
     const s = getStore();
     if (!s) return;
     const need = s.needsChoice();
-    // The words depend on the regime (and GPC): re-render if either moved (F2).
+    // The words depend on the regime, whether GPC counts, and whether the visitor's location holds something back
+    // (it can change within one regime, say California to Texas): re-render if any moved (F2).
     const st = s.state();
-    const words = `${st.regime}|${st.gpc}`;
+    const words = `${st.regime}|${st.gpcHonored}|${st.location?.country}-${st.location?.region}`;
     if (words !== shownWords) {
       shownWords = words;
       choices.replaceChildren(...choicesContent());
