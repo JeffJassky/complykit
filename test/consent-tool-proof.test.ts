@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { TrackingEvaluation, Timeline, withConsentConfigHash, type ComplykitToolSnapshot, type ConsentToolConfig, type ConsentToolConfigInput, type PartyInventoryItem, type ScenarioSummary } from '../src/record/index.js';
 import { evaluateConsentToolProof, configBehaviorCells, expectedGrantedFor, behaviorCellsFrom } from '../src/rules/tracking/index.js';
+import { describeOverrides } from '../src/rules/tracking/consent-tool-proof.js';
 import { summarizeBehavior } from '../src/rules/tracking/summary.js';
 import { reconcileCompatibility, reconcileRecord } from '../src/consent-compatibility.js';
 import { generateConsentConfig } from '../src/consent-generator.js';
@@ -372,6 +373,8 @@ describe('D10 proof: location defaults and owner overrides (1.1)', () => {
       scenarios: [{ scenario: 'browse' }, { scenario: 'accept', choice: { kind: 'accept', ok: true, method: 'selector:complykit' } }],
       observations: [observation('de', 'browse', { 'fixture.stats': { 'before-choice': 1 } }, KNOWN), observation('de', 'accept', { 'fixture.stats': { 'after-accept': 1 } }, KNOWN)],
     });
+    // The fixture location is Germany; make the verified observation agree with the California jurisdiction codes.
+    ev.locations[0].verification.observed = { country: 'US', region: 'CA' };
     expect(vendor(ev, 'fixture.stats').observations[0]).toMatchObject({ regime: 'opt-out-signal', expectedGranted: false, observed: 'fired' });
   });
   it('a deployed config with overrides gets a policy-overridden finding naming them and the owner note; none without', () => {
@@ -384,6 +387,73 @@ describe('D10 proof: location defaults and owner overrides (1.1)', () => {
     expect(f!.details).toMatchObject({ overrides: { regimes: { CA: 'opt-out' }, honorGpc: false } });
     expect(codes(evaluation())).not.toContain('policy-overridden');
     expect(codes(evaluation({ cfg: config({ overrides: { note: 'nothing changed' } }) }))).not.toContain('policy-overridden');
+  });
+});
+
+describe('D10 proof: owner-set regimes and the visitor location (1.1)', () => {
+  const OPT_OUT_STATE = { status: 'unset' as const, regime: 'opt-out' as const, gpc: false, categories: { necessary: true, analytics: true, advertising: true } };
+  const germany = (cfg: unknown, observed?: { country?: string; region?: string }) => {
+    const ev = evaluation({
+      cfg,
+      snap: { state: OPT_OUT_STATE },
+      scenarios: [{ scenario: 'browse' }],
+      observations: [observation('de', 'browse', { 'fixture.stats': { 'no-banner': 1 } }, KNOWN)],
+    });
+    if (observed) ev.locations[0].verification.observed = observed;
+    return ev;
+  };
+
+  it('a regime the owner set keeps the regime-mismatch finding, says it is the override, and does not hold the vendor to the law', () => {
+    const owned = evaluateConsentToolProof(germany(config({ overrides: { regimes: { DE: 'opt-out' } } })));
+    const f = owned.findings.find((x) => x.code === 'regime-mismatch');
+    expect(f).toBeDefined();
+    expect(f!.message).toMatch(/site owner’s overrides set that regime/);
+    expect(f!.message).not.toMatch(/Check regimeSource/);
+    const stats = owned.vendors.find((v) => v.id === 'fixture.stats')!;
+    const obs = stats.observations.find((o) => o.scenario === 'browse')!;
+    expect(obs.lawRegime).toBeUndefined();
+    expect(obs.expectedGrantedByLaw).toBeUndefined();
+    expect(stats.result).not.toBe('not-controlled');
+  });
+  it('the same weaker regime without an owner override still blames the source and applies the law', () => {
+    const plain = evaluateConsentToolProof(germany(config()));
+    const f = plain.findings.find((x) => x.code === 'regime-mismatch');
+    expect(f!.message).toMatch(/Check regimeSource/);
+    const stats = plain.vendors.find((v) => v.id === 'fixture.stats')!;
+    expect(stats.observations.find((o) => o.scenario === 'browse')).toMatchObject({ lawRegime: 'opt-in', expectedGrantedByLaw: false });
+    expect(stats.result).toBe('not-controlled');
+  });
+  it('an override that sets a different regime than the tool decided is not "the owner’s"', () => {
+    const f = evaluateConsentToolProof(germany(config({ overrides: { regimes: { DE: 'opt-out-signal' } } }))).findings.find((x) => x.code === 'regime-mismatch');
+    expect(f!.message).toMatch(/Check regimeSource/);
+  });
+  it('a non-US subdivision from the observed location reaches location-keyed overrides (CA-QC)', () => {
+    const cfg = config({ overrides: { defaults: { 'CA-QC': { analytics: true } } } });
+    const quebec = (observed?: { country?: string; region?: string }) => {
+      const ev = evaluation({
+        cfg,
+        snap: { state: { status: 'unset', regime: 'opt-in', gpc: false, categories: { necessary: true, analytics: true, advertising: false } } },
+        scenarios: [{ scenario: 'browse' }],
+        observations: [observation('de', 'browse', { 'fixture.stats': { 'no-banner': 1 } }, KNOWN)],
+      });
+      if (observed) ev.locations[0].verification.observed = observed;
+      return evaluateConsentToolProof(ev).vendors.find((v) => v.id === 'fixture.stats')!.observations.find((o) => o.scenario === 'browse')!;
+    };
+    expect(quebec({ country: 'CA', region: 'QC' })).toMatchObject({ expectedGranted: true, observed: 'fired' });
+    // Without the subdivision (country only) the QC key does not match: analytics is expected off under opt-in.
+    expect(quebec({ country: 'CA' })).toMatchObject({ expectedGranted: false });
+  });
+});
+
+describe('describeOverrides wording', () => {
+  it("'*' is 'all visitors' alone and 'visitors anywhere else' beside other keys, always with 'are'", () => {
+    expect(describeOverrides({ regimes: { '*': 'opt-out' } })).toEqual(['all visitors are treated as opt-out instead of by the built-in location rules']);
+    expect(describeOverrides({ regimes: { 'CA-QC': 'opt-in', '*': 'opt-out' } })).toEqual([
+      'visitors in CA-QC are treated as opt-in instead of by the built-in location rules',
+      'visitors anywhere else are treated as opt-out instead of by the built-in location rules',
+    ]);
+    expect(describeOverrides({ defaults: { '*': { analytics: true } } })[0]).toMatch(/^for all visitors: analytics granted/);
+    expect(describeOverrides({ defaults: { '*': { analytics: true }, 'opt-in': { advertising: false } } })[0]).toMatch(/^for visitors anywhere else: /);
   });
 });
 

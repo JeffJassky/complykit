@@ -5,6 +5,7 @@ import {
   guardConsentToolConfig,
   hasOverrides,
   honorsGpc,
+  overriddenRegime,
   parseConsentToolConfig,
   readConsentConfigHeader,
   CONSENT_CONFIG_VERSION,
@@ -211,16 +212,33 @@ export function expectedGrantedFor(config: ConsentToolConfig, category: string, 
   }
 }
 
+/**
+ * Where the measured visitor was, for location-keyed overrides: the verified observed country (and subdivision when
+ * it is a code), else the jurisdiction codes. A non-US subdivision (CA-QC) is only visible through `observed`.
+ */
+function visitorLocationOf(v: { observed: { country?: string; region?: string }; jurisdictions: readonly string[] }): VisitorLocation | undefined {
+  const fromCodes = visitorLocationFromCodes(v.jurisdictions);
+  const oc = v.observed.country;
+  if (typeof oc !== 'string' || !/^[A-Za-z]{2}$/.test(oc)) return fromCodes;
+  const country = oc.toUpperCase();
+  const rr = v.observed.region;
+  const region = typeof rr === 'string' && /^[A-Za-z0-9]{1,3}$/.test(rr) ? rr.toUpperCase() : fromCodes?.country === country ? fromCodes.region : undefined;
+  return { country, ...(region ? { region } : {}) };
+}
+
 /** The owner's overrides in plain words, one phrase each (the proof finding and the generator's note use them). */
 export function describeOverrides(o: ConsentOverrides | undefined): string[] {
-  const who = (k: string): string => (k === '*' ? 'every other visitor' : /^[a-z]/.test(k) ? `visitors under ${k} rules` : `visitors in ${k}`);
+  // '*' reads "visitors anywhere else" beside other keys and "all visitors" when it is the only one (always plural: "are").
+  const who = (k: string, keys: string[]): string => (k === '*' ? (keys.length > 1 ? 'visitors anywhere else' : 'all visitors') : /^[a-z]/.test(k) ? `visitors under ${k} rules` : `visitors in ${k}`);
   const out: string[] = [];
-  for (const [k, r] of Object.entries(o?.regimes ?? {})) out.push(`${who(k)} are treated as ${r} instead of by the built-in location rules`);
+  const regimeKeys = Object.keys(o?.regimes ?? {});
+  for (const [k, r] of Object.entries(o?.regimes ?? {})) out.push(`${who(k, regimeKeys)} are treated as ${r} instead of by the built-in location rules`);
+  const defaultKeys = Object.keys(o?.defaults ?? {});
   for (const [k, row] of Object.entries(o?.defaults ?? {})) {
     const granted = Object.entries(row).filter(([, v]) => v).map(([id]) => id);
     const held = Object.entries(row).filter(([, v]) => !v).map(([id]) => id);
     const parts = [...(granted.length ? [`${granted.join(', ')} granted before a choice`] : []), ...(held.length ? [`${held.join(', ')} held until accepted`] : [])];
-    if (parts.length) out.push(`for ${who(k)}: ${parts.join('; ')}, whatever the policy defaults say`);
+    if (parts.length) out.push(`for ${who(k, defaultKeys)}: ${parts.join('; ')}, whatever the policy defaults say`);
   }
   if (o?.honorGpc === false) out.push('Global Privacy Control is ignored (not treated as an opt-out)');
   return out;
@@ -402,9 +420,13 @@ export function evaluateConsentToolProof(ev: TrackingEvaluation, input: ConsentT
     const decided = s?.snap.state?.regime;
     if (!decided || !(decided in STRICTNESS)) continue;
     if (STRICTNESS[decided] < STRICTNESS[law]) {
+      // The owner's overrides.regimes set this regime: the finding stays (the report judges by policy), but it says whose doing it is.
+      const byOverride = config !== undefined && overriddenRegime(config, visitorLocationOf(l.verification)) === decided;
       findings.push({
         code: 'regime-mismatch',
-        message: `from ${l.spec.label ?? l.spec.id} the tool decided “${decided}” (source: ${s?.snap.diagnostics?.location?.source ?? 'not reported'}) but the location’s rules are “${law}”: the defaults it applied are less strict than the law there. Check regimeSource (a header endpoint that does not answer falls back to opt-in; a fixed regime applies everywhere).`,
+        message: byOverride
+          ? `from ${l.spec.label ?? l.spec.id} the tool decided “${decided}” because the site owner’s overrides set that regime for this location, but the location’s rules are “${law}”: the defaults it applied are less strict than the law there. This is the owner’s override, not a location-source fault.`
+          : `from ${l.spec.label ?? l.spec.id} the tool decided “${decided}” (source: ${s?.snap.diagnostics?.location?.source ?? 'not reported'}) but the location’s rules are “${law}”: the defaults it applied are less strict than the law there. Check regimeSource (a header endpoint that does not answer falls back to opt-in; a fixed regime applies everywhere).`,
         refs: [`/locations/${s!.li}/scenarios/${s!.si}/complykit/state`],
         details: { location: l.spec.id, decided, law },
       });
@@ -475,7 +497,7 @@ export function evaluateConsentToolProof(ev: TrackingEvaluation, input: ConsentT
         continue;
       }
       const law = regimeOf(l.verification.jurisdictions, ev.startedAt?.slice(0, 10));
-      const location = visitorLocationFromCodes(l.verification.jurisdictions);
+      const location = visitorLocationOf(l.verification);
       for (const s of l.scenarios) {
         if (s.status !== 'tested') {
           skipped.add(`${l.spec.id}/${s.scenario}: ${s.reason ?? s.status}`);
@@ -532,7 +554,9 @@ export function evaluateConsentToolProof(ev: TrackingEvaluation, input: ConsentT
 
         // The tool decided a weaker regime than the law here: each visit is ALSO judged against the law (a vendor the
         // tool's setting grants but the law expects denied, that ran, is not controlled).
-        const lawWeaker = regime !== law && law !== 'unknown' && regime in STRICTNESS && STRICTNESS[regime] < STRICTNESS[law] ? (law as Regime) : undefined;
+        const byOwnerOverride = overriddenRegime(config, location) === regime;
+        // When the owner's override set the regime, the proof judges control against the tool's own config; the policy gap is the compatibility report's job.
+        const lawWeaker = !byOwnerOverride && regime !== law && law !== 'unknown' && regime in STRICTNESS && STRICTNESS[regime] < STRICTNESS[law] ? (law as Regime) : undefined;
         for (const v of config.vendors) {
           const party = inventory.get(v.id);
           for (const win of windows) {
