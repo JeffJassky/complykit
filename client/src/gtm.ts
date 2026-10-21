@@ -14,11 +14,12 @@
 // triggered by the event already sees the updated consent state.
 //
 // Fail closed: a signal no category maps to is denied; a category the config
-// doesn't list is denied (consentCategoryDefault). If the container was
+// doesn't list is denied. The defaults are the store's effective grants (location,
+// GPC and overrides already applied), never a regime-only guess. If the container was
 // already there when we ran, the defaults landed too late: we still set them
 // (late beats never), warn, and record it for the proof scanner.
 import { TRACKING_SIGNALS, consentDefault, consentUpdate, dataLayerOf, type ConsentModeSignals } from './adapters/google.js';
-import { CONSENT_MODE_SIGNALS, NECESSARY_CATEGORY, consentCategoryDefault, type ConsentToolConfig, type Regime } from './config.js';
+import { CONSENT_MODE_SIGNALS, NECESSARY_CATEGORY, type ConsentToolConfig, type Regime } from './config.js';
 import { diagnostics } from './diagnostics.js';
 
 export const GTM_CONSENT_EVENT = 'complykit_consent';
@@ -125,7 +126,7 @@ export function installGtmBridge(
   diagnostics.gtm = diag;
   for (const w of warnings) console.warn(`[complykit] ${w}`);
 
-  const defaults = consentModeSignals(gtm.consentMode, (id) => consentCategoryDefault(config, id, startRegime));
+  const defaults = consentModeSignals(gtm.consentMode, (id) => store.isGranted(id));
   consentDefault(defaults, { ...target, waitForUpdate: opts.waitForUpdate ?? DEFAULT_WAIT_FOR_UPDATE });
 
   const push = (force: boolean) => {
