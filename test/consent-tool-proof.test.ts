@@ -20,7 +20,7 @@ const SITE = 'example-shop.test';
 
 function configInput(over: Partial<ConsentToolConfigInput> = {}): Omit<ConsentToolConfigInput, 'hash'> {
   return {
-    version: '1.0',
+    version: '1.1',
     generatedFrom: { runId: 'run-a', at: '2026-10-06T10:00:00.000Z', site: SITE, complykit: '0.0.0-test' },
     regimeSource: { kind: 'fixed', regime: 'opt-in' },
     categories: [
@@ -162,7 +162,7 @@ describe('D10 proof: detection and the per-vendor decision', () => {
     const p = evaluateConsentToolProof(evaluation());
     expect(p.detected).toBe(true);
     expect(p.version).toBe('0.0.0-test');
-    expect(p.config).toMatchObject({ status: 'ok', hashMatches: true, version: '1.0', versionStatus: 'current', generatedFrom: { site: SITE } });
+    expect(p.config).toMatchObject({ status: 'ok', hashMatches: true, version: '1.1', versionStatus: 'current', generatedFrom: { site: SITE } });
     expect(vendor(evaluation(), 'fixture.ads')).toMatchObject({ result: 'controlled' });
     expect(vendor(evaluation(), 'fixture.stats')).toMatchObject({ result: 'not-controlled' });
     expect(p.totals).toEqual({ controlled: 1, notControlled: 1, notObserved: 0 });

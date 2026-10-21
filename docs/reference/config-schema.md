@@ -2,7 +2,7 @@
 
 # Consent tool config reference
 
-Every field of the consent tool config, generated from the JSON Schema (`complykit consent tool config v1.0`).
+Every field of the consent tool config, generated from the JSON Schema (`complykit consent tool config v1.1`).
 What the fields mean, how the generator fills them and the rules the tool applies are in
 [Consent tool config](/guide/config); the install steps are in
 [Installing the consent tool](/guide/consent-tool).
@@ -41,6 +41,12 @@ rules). Those are described in [Consent tool config](/guide/config).
 | `categories[].defaultByRegime.opt-in` | `boolean` | yes |  |  |
 | `categories[].defaultByRegime.opt-out-signal` | `boolean` | yes |  |  |
 | `categories[].defaultByRegime.opt-out` | `boolean` | yes |  |  |
+| `locationDefaults` | map |  |  | complykit policy by location (generated): category → false holds it until the visitor accepts there (wiretap-litigation states). Holds only; grants belong in overrides.defaults. Keys match `^(\*\|[A-Z]{2}(-[A-Z0-9]{1,3})?)$` |
+| `overrides` | `object` |  |  | Owner overrides of complykit policy. Kept across regeneration |
+| `overrides.regimes` | map |  |  | Location key → regime, before the built-in table: { 'CA-QC': 'opt-in', 'CA': 'opt-out' }. '*' = any location no other key matches, an unknown one included. Ignored when regimeSource is fixed. Keys match `^(\*\|[A-Z]{2}(-[A-Z0-9]{1,3})?)$` |
+| `overrides.defaults` | map |  |  | Granted before the visitor chooses, beating complykit policy: key (location key or regime) → category → granted. Lookup: subdivision, country, regime, '*' |
+| `overrides.honorGpc` | `boolean` |  |  | false: Global Privacy Control is not treated as an opt-out. Default true |
+| `overrides.note` | `string` |  |  | The owner's reason, shown with the proof finding. min length 1 |
 | `vendors` | object[] |  | `[]` |  |
 | `vendors[].id` | `string` | yes |  | Knowledge-base entry id, e.g. meta.pixel. min length 1 |
 | `vendors[].label` | `string` | yes |  | min length 1 |

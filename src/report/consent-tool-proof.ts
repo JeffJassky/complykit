@@ -31,6 +31,7 @@ export const PROOF_FINDING_TITLE: Record<ConsentToolProofFindingCode, string> = 
   'gpc-not-honored': 'Global Privacy Control not recorded by the tool',
   'vendor-not-in-config': 'Trackers the config does not list ran',
   'gated-document-write': 'Gated script calls document.write',
+  'policy-overridden': 'Owner overrides in the deployed config',
 };
 
 const RED = new Set<ConsentToolProofFindingCode>(['config-refused', 'config-missing', 'tool-not-running', 'vendor-not-controlled', 'gate-rule-unrewritten', 'config-other-site', 'tool-after-gtm', 'ui-not-loaded', 'necessary-tracker', 'regime-mismatch', 'gpc-not-honored', 'vendor-not-in-config']);

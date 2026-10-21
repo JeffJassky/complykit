@@ -33,6 +33,7 @@ export { jurisdictionsFor, requirementScopeFor, normalizeRegion, isEuEea, type M
 export {
   regimeFor,
   regimeForCodes,
+  visitorLocationFromCodes,
   parseRegimeLocation,
   isOptOutSignalState,
   isUsPrivacyActState,

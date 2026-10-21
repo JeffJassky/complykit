@@ -3,6 +3,8 @@ import {
   canonicalJson,
   consentCategoryDefault,
   guardConsentToolConfig,
+  hasOverrides,
+  honorsGpc,
   parseConsentToolConfig,
   readConsentConfigHeader,
   CONSENT_CONFIG_VERSION,
@@ -10,12 +12,15 @@ import {
   type ConsentToolConfig,
   type ConsentToolProof,
   type ConsentToolProofFinding,
+  type ConsentOverrides,
   type Regime,
+  type VisitorLocation,
   type TrackingEvaluation,
   type VendorControlObservation,
   type VendorControlProof,
 } from '../../record/index.js';
 import { regimeOf, purposeScopeOf, type BehaviorCell } from './compatibility.js';
+import { visitorLocationFromCodes } from '../../registry/regime.js';
 import { PHASE_LABEL, WITHDRAW_GRACE_MS, graceCount, type Phase } from './analyze.js';
 
 // The proof step (plans/client-consent-design.md §0 step 5, §7; ticket D10):
@@ -56,12 +61,15 @@ import { PHASE_LABEL, WITHDRAW_GRACE_MS, graceCount, type Phase } from './analyz
 //                    return-visit /
 //                    opt-out-all          no
 //                    gpc                  no — the tool denies every non-necessary
-//                                         category under GPC, in every regime; a
-//                                         running tool that did not record the
-//                                         signal ⇒ 'gpc-not-honored'
+//                                         category under GPC, in every regime (unless
+//                                         the config's overrides turn that off: then
+//                                         the defaults); a running tool that did not
+//                                         record the signal ⇒ 'gpc-not-honored'
 //                    opt-out-link         not compared (the site's link, not ours)
 //                    anything else        consentCategoryDefault(config, category,
-//                                         regime) — the config's own default
+//                                         regime, location) — the config's own default
+//                                         at the scanned location (schema 1.1: the
+//                                         wiretap holds and the owner's overrides)
 //                  A choice scenario whose choice did not succeed is skipped, and
 //                  so is one the tool was running in but that was NOT driven
 //                  through its own hooks (method without 'complykit'). In a
@@ -150,7 +158,11 @@ import { PHASE_LABEL, WITHDRAW_GRACE_MS, graceCount, type Phase } from './analyz
 //                  tool's weaker setting), gated-document-write (a held,
 //                  data-category inline <script> in the served HTML whose body
 //                  calls document.write: released late, the write is ignored or
-//                  wipes the page — not gateable asynchronously).
+//                  wipes the page — not gateable asynchronously),
+//                  policy-overridden (the deployed config carries owner
+//                  overrides: it is judged by its own settings, so the finding
+//                  names what they change; the report still judges by complykit
+//                  policy and shows any looser setting as a mismatch).
 
 export interface ConsentToolProofInput {
   /** The workspace's latest generated config (`config.value.config`, or the config itself). */
@@ -174,7 +186,7 @@ const STRICTNESS: Record<string, number> = { 'opt-in': 3, 'opt-out-signal': 2, '
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Whether the deployed config grants `category` in this scenario; undefined = not compared. */
-export function expectedGrantedFor(config: ConsentToolConfig, category: string, regime: Regime, scenario: string, gpcSeen: boolean): boolean | undefined {
+export function expectedGrantedFor(config: ConsentToolConfig, category: string, regime: Regime, scenario: string, gpcSeen: boolean, location?: VisitorLocation): boolean | undefined {
   if (category === NECESSARY_CATEGORY) return true;
   switch (scenario) {
     case 'accept':
@@ -188,14 +200,30 @@ export function expectedGrantedFor(config: ConsentToolConfig, category: string, 
       return false;
     case 'gpc':
       // The tool's contract: GPC denies every non-necessary category, whatever the regime
-      // (client/src/store.ts). Whether the tool saw the signal is a finding, not an excuse.
+      // (client/src/store.ts), unless the owner turned that off. Whether the tool saw the
+      // signal is a finding, not an excuse.
       void gpcSeen;
-      return false;
+      return honorsGpc(config) ? false : consentCategoryDefault(config, category, regime, location);
     case 'opt-out-link':
       return undefined;
     default:
-      return consentCategoryDefault(config, category, regime);
+      return consentCategoryDefault(config, category, regime, location);
   }
+}
+
+/** The owner's overrides in plain words, one phrase each (the proof finding and the generator's note use them). */
+export function describeOverrides(o: ConsentOverrides | undefined): string[] {
+  const who = (k: string): string => (k === '*' ? 'every other visitor' : /^[a-z]/.test(k) ? `visitors under ${k} rules` : `visitors in ${k}`);
+  const out: string[] = [];
+  for (const [k, r] of Object.entries(o?.regimes ?? {})) out.push(`${who(k)} are treated as ${r} instead of by the built-in location rules`);
+  for (const [k, row] of Object.entries(o?.defaults ?? {})) {
+    const granted = Object.entries(row).filter(([, v]) => v).map(([id]) => id);
+    const held = Object.entries(row).filter(([, v]) => !v).map(([id]) => id);
+    const parts = [...(granted.length ? [`${granted.join(', ')} granted before a choice`] : []), ...(held.length ? [`${held.join(', ')} held until accepted`] : [])];
+    if (parts.length) out.push(`for ${who(k)}: ${parts.join('; ')}, whatever the policy defaults say`);
+  }
+  if (o?.honorGpc === false) out.push('Global Privacy Control is ignored (not treated as an opt-out)');
+  return out;
 }
 
 interface SeenSnapshot {
@@ -353,6 +381,18 @@ export function evaluateConsentToolProof(ev: TrackingEvaluation, input: ConsentT
   }
   if (config?.gtm && running && !seen.some((s) => s.snap.diagnostics?.gtm)) notTested.push('the GTM bridge wrote no diagnostics although the config has a gtm section (load order vs GTM not checked)');
 
+  // --- owner overrides: the tool is judged by what its config says, so say what that is ---
+  if (config && hasOverrides(config)) {
+    const what = describeOverrides(config.overrides);
+    const note = config.overrides?.note?.trim();
+    findings.push({
+      code: 'policy-overridden',
+      message: `the deployed config carries the site owner’s overrides, so the tool is judged here by its own settings, not complykit policy: ${what.join('; ')}.${note ? ` Owner’s note: “${note}”` : ''} The report still judges the site by complykit policy, so anything the overrides loosen shows as a mismatch there.`,
+      refs: dep?.ref ? [dep.ref] : [],
+      details: { overrides: config.overrides },
+    });
+  }
+
   // --- regime the tool decided vs the location's rules ---
   for (const l of ev.locations) {
     if (l.verification.verdict !== 'verified') continue;
@@ -435,6 +475,7 @@ export function evaluateConsentToolProof(ev: TrackingEvaluation, input: ConsentT
         continue;
       }
       const law = regimeOf(l.verification.jurisdictions, ev.startedAt?.slice(0, 10));
+      const location = visitorLocationFromCodes(l.verification.jurisdictions);
       for (const s of l.scenarios) {
         if (s.status !== 'tested') {
           skipped.add(`${l.spec.id}/${s.scenario}: ${s.reason ?? s.status}`);
@@ -497,7 +538,7 @@ export function evaluateConsentToolProof(ev: TrackingEvaluation, input: ConsentT
           for (const win of windows) {
             // Add-on mode: the site's own banner decides and complykit follows it, so the config's regime defaults and
             // its GPC contract are not what the visit should show — the location's rules judge it (the grid), not the proof.
-            const expectedUnder = (r: Regime): boolean | undefined => config.mode === 'companion' ? undefined : (win.beforeChoice ? (v.category === NECESSARY_CATEGORY ? true : consentCategoryDefault(config, v.category, r)) : expectedGrantedFor(config, v.category, r, s.scenario, snap?.state?.gpc === true));
+            const expectedUnder = (r: Regime): boolean | undefined => config.mode === 'companion' ? undefined : (win.beforeChoice ? (v.category === NECESSARY_CATEGORY ? true : consentCategoryDefault(config, v.category, r, location)) : expectedGrantedFor(config, v.category, r, s.scenario, snap?.state?.gpc === true, location));
             const expected = expectedUnder(regime);
             if (expected === undefined) continue;
             const byLaw = lawWeaker && expected ? expectedUnder(lawWeaker) : undefined;
@@ -580,7 +621,8 @@ export function evaluateConsentToolProof(ev: TrackingEvaluation, input: ConsentT
   // GPC: the scenario sends the signal; a running tool must have recorded it.
   for (const l of ev.locations) {
     const s = l.scenarios.find((x) => x.scenario === 'gpc' && x.status === 'tested');
-    if (s?.complykit?.running && s.complykit.state && s.complykit.state.gpc !== true) {
+    // An owner who turned GPC off gets a state that does not record it (gpcHonored): not a fault.
+    if ((!config || honorsGpc(config)) && s?.complykit?.running && s.complykit.state && s.complykit.state.gpc !== true) {
       const li = ev.locations.indexOf(l);
       findings.push({ code: 'gpc-not-honored', message: `from ${l.spec.label ?? l.spec.id} the visit sent Global Privacy Control, but the running tool’s state did not record it (gpc: false): every non-necessary category should have defaulted to denied.`, refs: [`/locations/${li}/scenarios/${l.scenarios.indexOf(s)}/complykit/state`], details: { location: l.spec.id } });
     }
