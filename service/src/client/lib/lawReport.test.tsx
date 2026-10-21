@@ -23,12 +23,13 @@ function twoLocations(stage: 'live' | 'final'): OwnerReport {
         { id: 'us-ca:gpc', location: 'us-ca', scenario: 'gpc', label: 'Privacy signal (GPC)', locationLabel: 'California, US', state: 'done' },
       ],
       tools: [
-        { id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', cells: [bad, ok, ok, bad], cookies: [{ id: 'c1', name: '_fbp', kind: 'cookie', purpose: 'Advertising', classified: true, cells: [bad, ok, wait, ok] }] },
-        { id: 'tool:ca-only', partyId: 'w', label: 'widgets.test', domain: 'widgets.test', purpose: 'Unclassified', categories: [], classified: false, recognized: false, classKey: 'class:w', cells: [wait, wait, ask, ask], cookies: [] },
+        { id: 'tool:meta', partyId: 'meta', label: 'Meta Pixel', domain: 'facebook.com', purpose: 'Advertising', categories: ['advertising'], classified: true, recognized: true, classKey: 'class:meta', judge: { base: ['advertising'] }, cells: [bad, ok, ok, bad], cookies: [{ id: 'c1', name: '_fbp', kind: 'cookie', purpose: 'Advertising', classified: true, judge: { name: [], site: [] }, cells: [bad, ok, wait, ok] }] },
+        { id: 'tool:ca-only', partyId: 'w', label: 'widgets.test', domain: 'widgets.test', purpose: 'Unclassified', categories: [], classified: false, recognized: false, classKey: 'class:w', judge: { base: [] }, cells: [wait, wait, ask, ask], cookies: [] },
       ],
       counts: { ok: 4, mismatch: 3, needsDecision: 2, pending: 3, notChecked: 0, notApplicable: 0, blocked: 0 },
     },
     decisions: [{ partyId: 'w', label: 'widgets.test', domain: 'widgets.test', classKey: 'class:w' }],
+    answers: {},
     locations: [
       { id: 'de', label: 'Germany', verified: true, observed: 'DE', visitsDone: 2, visitsTotal: 2, banner: { state: 'detected', provider: 'OneTrust', visitsWithBanner: 2, visitsChecked: 2 } },
       { id: 'us-ca', label: 'California, US', verified: true, observed: 'US-CA', visitsDone: 2, visitsTotal: 2, banner: { state: 'none', visitsWithBanner: 0, visitsChecked: 2 } },

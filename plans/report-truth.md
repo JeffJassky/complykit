@@ -175,3 +175,125 @@ Service:
   `!data.updating`; a `refresh()` failure after a successful PATCH is not shown as a
   classification error.
 - `app.stop()` / idle awaits `classRerendersSettled()`.
+
+---
+
+# Part 2 — The responsive report (2026-10-19, after walrusaudio.com)
+
+User verdict: "the entire report needs to be RESPONSIVE … as we progress through the
+task list the grid/matrix updates, the summary updates". Today nothing recomputes in
+the browser; every answer waits 30 s–2 min for the CLI to re-render the run. And the
+8-option picker (Part 1 C4) doesn't map to the law. Both are reversed here.
+
+## D. Judgement is a pure function the browser runs — tier: Sonnet (core), Sonnet (client)
+
+Principle: a cell's verdict = f(what the scan observed in that cell — fixed) × (the
+tool's category). `compareCookieBehavior` already is that function and already runs
+inside the saved technical HTML. The owner report now ships the facts, and ONE
+function, `judgeOwnerReport`, turns facts + answers into cells; the server and the
+browser both call it, so they cannot disagree.
+
+### D1. Core — `src/report/owner-judge.ts`
+Browser-safe: imports ONLY `./cookie-purpose.js` and `import type`. (`categoryLabel`
+moves from consent-matrix.ts to cookie-purpose.ts; consent-matrix re-exports it.)
+
+Owner report additions (both `src/report/owner-report.ts` and
+`service/src/shared/api.ts`, identical text):
+- `OwnerCell.facts?: ComparisonFacts` — the matrix cell's `comparisonFacts`; absent on
+  cells of a column that is not `done` (pending/not-checked/not-applicable/blocked).
+- `OwnerCell.skip?: 'not-applicable' | 'blocked'` — the matrix cell's `skip`.
+- `OwnerToolRow.judge: { base: string[]; trackerReason?: string }` — `base` = the
+  tool's categories BEFORE any site answer: the base knowledge base's entry categories
+  for its partyId (`unknown` filtered; `[]` for an unknown party); `trackerReason` =
+  `knownTrackerReason(p, baseKb)` (the KB without the site's override — never the site
+  KB).
+- `OwnerCookieRow.judge: { name: string[]; site: string[] }` — categories from the
+  cookie-name KB match, and from a site classification of that cookie (`[]` when none).
+- `OwnerReport.answers: Record<classKey, string>` — the answers (category) the server
+  applied, from `siteWorkspace.classifications` of kind tool (first category).
+
+`judgeOwnerReport(report, answers): OwnerReport` — pure (never mutates its input);
+`answers` is `classKey → category` (the stored `value.category`). For every tool whose
+classKey is in `answers`:
+- Scope of the answer: NOT_REQUIRED = {necessary, cdn, captcha, payments, consent}
+  (inline; report/ may not import rules/).
+- **Refused** when the answer is NOT_REQUIRED and `judge.trackerReason` is set:
+  `categories = base.length ? base : ['advertising']`; `purpose = base.length ?
+  categoryLabel(base) : 'Needs consent (behaves like a tracker)'`; `classified: true`;
+  `answer = { categories:[a], applied:false, reason: trackerReason }`.
+- Else **applied**: `categories = [a]`, `purpose = categoryLabel([a])`, `classified:
+  true`, `answer = { categories:[a], applied:true }`.
+- Tools NOT in `answers`: categories = `judge.base`, purpose/classified from that,
+  `answer` absent (this is the base judgement; a report with `answers` already applied
+  must come out identical when judged again with the same answers — idempotent).
+- Every cell with `facts`: `compareCookieBehavior(facts, {categories})` → state by the
+  existing `cellOf` rule (skip → not-applicable/blocked; match|allowed → ok; mismatch →
+  mismatch; review → needs-decision; else not-checked), `expected`/`reason` replaced,
+  `observed`/`runs` kept. Cells without `facts` untouched.
+- Cookies (rule A as amended): tool unclassified → `[]`, purpose "Depends on what
+  <tool> is for", classified false; else union(tool ∪ judge.site ∪ judge.name), purpose
+  = categoryLabel(union) — the tool's own label when the union adds nothing.
+- `decisions` = tools still unclassified after judging. `counts` recomputed.
+
+`buildOwnerReport` builds the BASE report (every tool on `judge.base`, no `answer`),
+then returns `judgeOwnerReport(base, answers)`. That is the whole server path: the
+matrix's own categories are no longer what the owner report shows (they still drive
+the technical report and the change list, which already agree by Part 1).
+
+### D2. Client — instant
+- `ReportUiState.answers?: Record<classKey, string>` replaces `saved`. Clicking a
+  category sets `answers[k]` synchronously, then PATCHes and refreshes.
+- Everything renders from `shown = judgeOwnerReport(data.report, {...data.report.answers,
+  ...ui.answers})`: grid, row purpose, cookie rows, score and severity (`scoreReport`,
+  `reportSeverity`), the decisions list, and each `DecisionTodo`'s decided / refused
+  text (from `shown`'s tool `answer`, not from the task).
+- `ui.answers[k]` is dropped when a report arrives whose `answers[k]` equals it and
+  `!updating`.
+- The to-do list (change tasks) is still the server's; "Updating the report with your
+  answers…" moves to the to-do section only; the grid never shows an updating state.
+- Import path: the client imports `judgeOwnerReport`/`categoryLabel` from core by
+  relative path (`../../../../src/report/owner-judge.ts`); tsconfig.client includes it.
+  The Vite bundle must not pull in `src/registry` (owner-judge's import rule above).
+
+### D3. Four categories — the law's
+`PURPOSES` =
+| id | label | help |
+|---|---|---|
+| necessary | Necessary | The site breaks without it: login, cart, security, payments |
+| functional | Functional | A feature or preference: chat, video, reviews, saved choices |
+| analytics | Analytics | Measures visits and what people do |
+| advertising | Advertising | Ads, retargeting, marketing, conversion tracking |
+
+Stored legacy ids (payments, chat, embed, reviews, cdn, captcha, …) keep working:
+judged by `categoryLabel`/`compareCookieBehavior` as before, labelled by
+`categoryLabel`. The DecisionTodo's "Answered: <label>" uses `categoryLabel`.
+
+Tests: `test/owner-judge.test.ts` (core contract, written first) and service
+`ReportPage.test.tsx` (4 options with those ids; a report rendered with
+`ui.answers` shows the judged purpose, cells and score before any server round trip;
+refused text from the judged row).
+
+Non-goals: the change list / to-do tasks stay server-derived; the technical HTML
+report unchanged.
+
+## Review round 3 (Fable, 2026-10-20) — amendments to D
+
+1. **Answers are category SETS.** `OwnerReport.answers: Record<classKey, string[]>` (core,
+   service mirror, `ui.answers`); `buildOwnerReport` stores the site classification's full
+   `categories` (the technical report's workbench adds "also used for" categories, and the
+   matrix judges on all of them — the first-only owner view was a false green: functional +
+   advertising read "may run" in California). Judge: `categories = a`; refused only when
+   `a.every(c => NOT_REQUIRED.has(c))` (as `purposeScopeOf`); `answer.categories = a`;
+   purpose = `categoryLabel(a)`. Client sets `[purpose]`; `answersAfter` compares sets
+   (same members, any order).
+2. `NOT_REQUIRED` in the judge drops `consent`, matching `refuseNecessaryTrackers`.
+3. `cmdReport` (src/cli/commands/report.ts) builds the base KB the same way `cmdConsent`
+   does (config `knowledgeBase.entries` + `overrides` + store), so a re-render's
+   `judge.base` equals the scan's.
+4. Legacy reports (no `judge` fields): while `ui.answers[k]` is pending and the report is
+   not judgeable, the tool row shows "Saved — the report updates shortly".
+5. `DecisionTodo` for a tool classified without an answer (`tool.answer` absent, tool
+   classified by the knowledge base): "complykit knows it: <purpose>", never "Your answer".
+6. `shown.ts` comment: the registry-free bundle is enforced by `test/owner-judge.test.ts`
+   "browser-safe", not by a ReportPage test; add the same import-line check for
+   `cookie-purpose.ts` (it must have no value imports).

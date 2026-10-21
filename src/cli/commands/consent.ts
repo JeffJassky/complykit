@@ -315,7 +315,7 @@ export async function cmdConsent(argv: string[], loadConfig: LoadConfig): Promis
   })();
   const writeOwner = (input: Omit<OwnerReportInput, 'runId' | 'site' | 'startedAt'>): void => {
     fs.mkdirSync(path.dirname(ownerFile), { recursive: true });
-    const report = buildOwnerReport({ ...input, runId: String(runId), site: liveSite, startedAt: scanStartedAt });
+    const report = buildOwnerReport({ ...input, runId: String(runId), site: liveSite, startedAt: scanStartedAt, kb: knowledgeBase });
     const tmp = `${ownerFile}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(report, null, 2));
     fs.renameSync(tmp, ownerFile);

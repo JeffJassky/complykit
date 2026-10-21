@@ -122,3 +122,21 @@ export function compareCookieBehavior(facts: ComparisonFacts, decision: PurposeD
   if (facts.captureGap) return result('unknown','Capture limits could hide activity; absence is not a pass.');
   return result('match','No activity was recorded, as expected. This covers the captured behavior and duration only.');
 }
+
+// Plain names for the library's categories, shown next to each cookie and tool.
+// Closure-free on purpose: consent-matrix stringifies it into saved HTML (MATRIX_JS), and owner-judge runs it in the browser.
+export function categoryLabel(categories: string[]): string {
+  var NAMES: Record<string, string> = {necessary:'Necessary',cdn:'Necessary (content delivery)',captcha:'Necessary (security)',consent:'Necessary (consent tool)',payments:'Payments',functional:'Functional',chat:'Chat',embed:'Embedded content',fonts:'Fonts',reviews:'Reviews','tag-manager':'Tag manager',analytics:'Analytics',performance:'Performance','error-monitoring':'Error monitoring','session-recording':'Session recording',advertising:'Advertising','identity-resolution':'Identity matching',fingerprinting:'Device fingerprinting','marketing-email':'Email/SMS marketing',other:'Other'};
+  var known = categories.filter(function(c){return c && c !== 'unknown';});
+  return known.length ? known.map(function(c){return NAMES[c] || c;}).join(' · ') : 'Unclassified';
+}
+
+/**
+ * A cookie is never judged better than its tool (plans/report-truth.md A, amended): under an unclassified tool it is
+ * unclassified too, whatever its name or the site's answer for it; under a classified tool the tool's, the site's
+ * answer's and the known name's categories together drive (the strictest wins).
+ */
+export function cookieCategories(tool: string[], judge: { name: string[]; site: string[] }): string[] {
+  const known = tool.length > 0 && !tool.includes('unknown');
+  return known ? [...new Set([...tool, ...judge.site, ...judge.name])] : [];
+}

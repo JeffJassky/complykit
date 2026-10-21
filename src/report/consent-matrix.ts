@@ -3,7 +3,7 @@ import { DEFAULT_KB, lookupStore, regimeForCodes, describeLocationRules, isWiret
 import { escapeHtml as esc } from './human.js';
 import { skipKindOf, SKIP_LEAD, type SkipKind } from './skip-kind.js';
 import { workspaceId } from './workspace.js';
-import { compareCookieBehavior, cookiePurposes, type ComparisonFacts, type PrivacyRegime } from './cookie-purpose.js';
+import { compareCookieBehavior, cookiePurposes, categoryLabel, type ComparisonFacts, type PrivacyRegime } from './cookie-purpose.js';
 import { ScenarioId as ScenarioIds, SAID_NO_SCENARIOS } from '../record/index.js';
 import { hidesActivity } from './capture-gap.js';
 
@@ -120,12 +120,7 @@ export interface MatrixWorkspace {
   tasksHtml: string;
 }
 
-// Plain names for the library's categories, shown next to each cookie and tool.
-export function categoryLabel(categories: string[]): string {
-  var NAMES: Record<string, string> = {necessary:'Necessary',cdn:'Necessary (content delivery)',captcha:'Necessary (security)',consent:'Necessary (consent tool)',payments:'Payments',functional:'Functional',chat:'Chat',embed:'Embedded content',fonts:'Fonts',reviews:'Reviews','tag-manager':'Tag manager',analytics:'Analytics',performance:'Performance','error-monitoring':'Error monitoring','session-recording':'Session recording',advertising:'Advertising','identity-resolution':'Identity matching',fingerprinting:'Device fingerprinting','marketing-email':'Email/SMS marketing',other:'Other'};
-  var known = categories.filter(function(c){return c && c !== 'unknown';});
-  return known.length ? known.map(function(c){return NAMES[c] || c;}).join(' · ') : 'Unclassified';
-}
+export { categoryLabel };
 
 export function renderBehaviorMatrix(matrix: BehaviorMatrix, workspace: MatrixWorkspace): string {
   const labels={match:'Working as expected',mismatch:'Behavior mismatch',review:'Review needed',unknown:'Evidence missing','not-tested':'Not checked — this visitor choice was not completed',allowed:'Working as expected'};
