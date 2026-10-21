@@ -165,7 +165,8 @@ describe('region API in the browser', () => {
 
   it('a stored choice is never changed by setRegion', async () => {
     const { page } = await open({ config: cfg(META), region: 'US-TX' });
-    await page.evaluate(() => (window as any).ComplyKit.withdraw()); // a recorded choice: everything denied
+    // A recorded choice: everything denied. A withdrawal that revoked something reloads the page (withdraw.ts).
+    await Promise.all([page.waitForEvent('load'), page.evaluate(() => (window as any).ComplyKit.withdraw())]);
     const before = await state(page);
     expect(before.status).toBe('chosen');
     expect(await setRegion(page, 'US-CA')).toBe(true);
