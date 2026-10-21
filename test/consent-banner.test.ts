@@ -1,11 +1,37 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import type { Browser, Page } from 'playwright';
-import { findBanner, readoutConfirms, consentModeMismatch, findConfirmation, detectBlock, walkOptOutLink } from '../src/collect/browser/evaluation/banner.js';
+import { optOutTook, optOutNote } from '../src/collect/browser/evaluation/scenarios.js';
+import { findBanner, readoutConfirms, consentModeMismatch, findConfirmation, detectBlock, walkOptOutLink, readoutConfirmsOptOut } from '../src/collect/browser/evaluation/banner.js';
 
 // Regressions from the 2026-10-03 field run: a storefront with no banner was
 // read as "banner showing" because a stray OK button matched, and a Shopify
 // accept was failed because Google Consent Mode (wired separately) disagreed.
+
+describe('opt-out readout confirmation (sale/sharing)', () => {
+  const shop = (c: Record<string, string>, saleOfDataAllowed?: boolean) => ({ shopify: { currentVisitorConsent: c, ...(saleOfDataAllowed === undefined ? {} : { saleOfDataAllowed }) } });
+  it('Shopify: the sale-of-data opt-out confirms, an untouched state does not', () => {
+    expect(readoutConfirmsOptOut(shop({ marketing: '', analytics: '', preferences: '', sale_of_data: 'no' }))).toBe(true);
+    expect(readoutConfirmsOptOut(shop({ marketing: '', analytics: '', preferences: '', sale_of_data: '' }, true))).toBe(false);
+    expect(readoutConfirmsOptOut(shop({ marketing: 'no', analytics: '', preferences: '', sale_of_data: '' }))).toBe(true);
+    expect(readoutConfirmsOptOut({ shopify: { saleOfDataAllowed: false } })).toBe(true);
+  });
+  it('no readable tool is undefined; other tools are judged as a rejection', () => {
+    expect(readoutConfirmsOptOut({})).toBeUndefined();
+    expect(readoutConfirmsOptOut({ oneTrustActiveGroups: ',C0001,', oneTrustClosed: true })).toBe(true);
+    expect(readoutConfirmsOptOut({ oneTrustActiveGroups: ',C0001,C0004,', oneTrustClosed: true })).toBe(false);
+  });
+  it('the scenario treats a landed click with an unconfirmed store as an opt-out that did not take', () => {
+    const base = { found: true, requiredFields: [] as string[], performed: true };
+    expect(optOutTook({ ...base, stored: true })).toBe(true);
+    expect(optOutTook({ ...base })).toBe(true); // nothing readable: the click stands
+    expect(optOutTook({ ...base, stored: false })).toBe(false);
+    expect(optOutTook({ ...base, performed: false })).toBe(false);
+    expect(optOutNote({ ...base, stored: false })).toBe('opt-out control clicked but the stored consent state does not show the opt-out');
+    expect(optOutNote({ ...base, requiredFields: ['email'], performed: true, stored: false })).toBe('requires email — not submitted; opt-out control clicked but the stored consent state does not show the opt-out');
+    expect(optOutNote({ ...base })).toBeUndefined();
+  });
+});
 
 describe('consent readout confirmation', () => {
   const shopify = (marketing: string) => ({ shopify: { currentVisitorConsent: { marketing } } });
@@ -127,6 +153,13 @@ walkSuite('opt-out link walk: required fields belong to the opt-out control', ()
     '/pages/late-opt-out': `<!doctype html><title>Your Privacy Choices</title><main><h1>Your Privacy Choices</h1><div id="slot"></div></main>
       <section class="newsletter"><form id="NewsletterForm" action="/contact" method="post"><input type="email" name="contact[email]" required><button type="submit">Subscribe</button></form></section>
       <script>setTimeout(function(){document.getElementById('slot').innerHTML='<form action="/dns_opt_out" method="post" onsubmit="event.preventDefault();document.getElementById(\\'slot\\').insertAdjacentHTML(\\'beforeend\\',\\'<p>You have opted out.</p>\\')"><button type="submit" name="pc--commit">Opt out</button></form>';},2500)</script>`,
+    // Shopify's built-in privacy page behind a bot check: the button click lands and stores nothing.
+    '/dead': `<!doctype html><title>Shop</title><main><h1>Shop</h1></main><footer><a href="/pages/dead-opt-out">Your Privacy Choices</a></footer>`,
+    '/pages/dead-opt-out': `<!doctype html><title>Your Privacy Choices</title><main><section><h1>Your Privacy Choices</h1><button type="button">Opt out</button></section></main>
+      <script>window.Shopify={customerPrivacy:{currentVisitorConsent:function(){return {marketing:'',analytics:'',preferences:'',sale_of_data:''};},saleOfDataAllowed:function(){return true;}}}</script>`,
+    '/pages/live-opt-out': `<!doctype html><title>Your Privacy Choices</title><main><section><h1>Your Privacy Choices</h1><button type="button" onclick="window.__sod='no'">Opt out</button></section></main>
+      <script>window.__sod='';window.Shopify={customerPrivacy:{currentVisitorConsent:function(){return {marketing:'',analytics:'',preferences:'',sale_of_data:window.__sod};},saleOfDataAllowed:function(){return window.__sod!=='no';}}}</script>`,
+    '/live': `<!doctype html><title>Shop</title><main><h1>Shop</h1></main><footer><a href="/pages/live-opt-out">Your Privacy Choices</a></footer>`,
     '/nocontrol': `<!doctype html><title>Shop</title><main><h1>Shop</h1></main><footer><a href="/pages/info-only">Your Privacy Choices</a></footer>`,
     '/pages/info-only': `<!doctype html><title>Privacy</title><main><h1>Privacy</h1><p>Email us to opt out.</p></main>
       <section><form action="/contact" method="post"><input type="email" name="contact[email]" required><button type="submit">Join</button></form></section>`,
@@ -168,6 +201,24 @@ walkSuite('opt-out link walk: required fields belong to the opt-out control', ()
     expect(walk.requiredFields).toEqual([]);
     expect(walk.performed).toBe(true);
     expect(walk.confirmation).toMatch(/opted out/);
+    await context.close();
+  });
+
+  it('a click that lands but stores nothing is performed with stored false', async () => {
+    const { context, page } = await open();
+    await page.goto('http://shop.test/dead');
+    const walk = await walkOptOutLink(page, true);
+    expect(walk.performed).toBe(true);
+    expect(walk.stored).toBe(false);
+    await context.close();
+  }, 20000);
+
+  it('a click whose opt-out is stored is confirmed (stored true)', async () => {
+    const { context, page } = await open();
+    await page.goto('http://shop.test/live');
+    const walk = await walkOptOutLink(page, true);
+    expect(walk.performed).toBe(true);
+    expect(walk.stored).toBe(true);
     await context.close();
   });
 

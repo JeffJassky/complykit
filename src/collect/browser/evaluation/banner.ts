@@ -200,6 +200,20 @@ export function readoutConfirms(choice: 'accept' | 'reject', readout: Record<str
   return undefined;
 }
 
+/**
+ * Does the stored state CONFIRM a US-style opt-out of sale/sharing? true = confirmed, false =
+ * readable and not showing it, undefined = nothing readable. Shopify's opt-out page stores the
+ * sale-of-data choice (its `marketing` can stay as it was), so that is read first; any other
+ * tool is judged as a rejection.
+ */
+export function readoutConfirmsOptOut(readout: Record<string, unknown>): boolean | undefined {
+  const shop = readout.shopify as { currentVisitorConsent?: { marketing?: string; sale_of_data?: string }; saleOfDataAllowed?: unknown } | undefined;
+  const cur = shop?.currentVisitorConsent;
+  const readable = (typeof cur?.sale_of_data === 'string' || typeof cur?.marketing === 'string') || typeof shop?.saleOfDataAllowed === 'boolean';
+  if (shop && readable) return cur?.sale_of_data === 'no' || shop.saleOfDataAllowed === false || cur?.marketing === 'no';
+  return readoutConfirms('reject', readout);
+}
+
 /** The consent tool recorded the choice but Google Consent Mode says otherwise. */
 export function consentModeMismatch(choice: 'accept' | 'reject', readout: Record<string, unknown>): string | undefined {
   const g = readout.googleConsent as Record<string, { update?: string; default?: string }> | undefined;
@@ -621,6 +635,8 @@ export interface OptOutWalk {
   performed?: boolean;
   /** When the opt-out control was clicked, on the caller's clock: the opt-out exists from here. */
   performedAt?: number;
+  /** After a landed click, does the readable consent state show the opt-out? false = no (a bot check, a dead button); absent = nothing readable. */
+  stored?: boolean;
 }
 
 /** Text on the page that confirms an opt-out / GPC was honored, if any. */
@@ -792,6 +808,7 @@ export async function walkOptOutLink(page: Page, perform: boolean, clock: () => 
 
   let performed = false;
   let performedAt: number | undefined;
+  let stored: boolean | undefined;
   if (perform && inspect.hasAction && inspect.required.length === 0) {
     // A save-type control keeps whatever the toggles say, and they start on under implied consent:
     // switch the optional ones off first (locked / disabled ones stay), as a visitor opting out would.
@@ -805,6 +822,15 @@ export async function walkOptOutLink(page: Page, perform: boolean, clock: () => 
     if (performed) performedAt = at;
     steps++;
     await page.waitForTimeout(1500);
+    // A click that lands is not an opt-out stored: a bot check or a dead button changes nothing.
+    // Give the store a few seconds, stopping early once it shows the opt-out or nothing is readable.
+    if (performed) {
+      for (let waited = 0; ; waited += 500) {
+        stored = readoutConfirmsOptOut(await readConsentState(page));
+        if (stored !== false || waited >= 4000) break;
+        await page.waitForTimeout(500);
+      }
+    }
   } else if (inspect.hasAction) {
     steps++; // the step a visitor would still have to take
   }
@@ -821,6 +847,7 @@ export async function walkOptOutLink(page: Page, perform: boolean, clock: () => 
     landedUrl,
     performed,
     performedAt,
+    stored,
   };
 }
 

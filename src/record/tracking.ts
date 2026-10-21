@@ -247,6 +247,7 @@ export const OptOutWalkEvent = z.object({
   confirmation: z.string().optional(), // text that confirms an opt-out, if shown
   landedUrl: z.string().optional(),
   performed: z.boolean().optional(), // the scan used the opt-out control (never a form asking for personal data)
+  stored: z.boolean().optional(), // after the click, the readable consent state shows the opt-out (false = it does not; absent = nothing readable)
   performedAt: z.number().optional(), // when that control was clicked (timeline ms): the opt-out exists from here
   pageIndex: z.number().int(),
 });
@@ -518,7 +519,7 @@ export const ScenarioSummary = z.object({
   choice: z.object({ kind: z.string(), ok: z.boolean(), method: z.string() }).optional(),
   // The opt-out link walk on this scenario's visit, when one ran: why an opt-out was or was not completed.
   optOutWalk: z
-    .object({ found: z.boolean(), linkText: z.string().optional(), requiredFields: z.array(z.string()).default([]), performed: z.boolean().optional() })
+    .object({ found: z.boolean(), linkText: z.string().optional(), requiredFields: z.array(z.string()).default([]), performed: z.boolean().optional(), stored: z.boolean().optional() })
     .optional(),
   // Visits that completed for this scenario (1 = a single run; 2 = plus the throttled pass).
   runs: z.number().int().optional(),

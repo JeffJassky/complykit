@@ -35,6 +35,7 @@ const NOT_A_CAPTURE_GAP: readonly RegExp[] = [
   /^site search:/,
   // Whether a choice took is the grid's `choice`/`choiceGap`, not capture.
   /clicked but the stored consent state did not change/,
+  /clicked but the stored consent state does not show the opt-out/,
   /^clicked; no readable consent state/,
   /^the stored consent state does not reflect/,
   /^autoconsent self-test:/,
