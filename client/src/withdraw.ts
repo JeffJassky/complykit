@@ -210,8 +210,10 @@ export async function clearStores(config: ConsentToolConfig, categories: string[
  */
 export function installWithdrawal(config: ConsentToolConfig, store: ConsentStore, adapters?: () => { sync(): void } | undefined): void {
   const attr = ownScript?.getAttribute(RELOAD_ATTR);
-  // Add-on mode (T6) never reloads unless the attribute asks: the site's banner owns the page.
-  const policy = attr === 'revoke' || attr === 'none' || attr === 'withdraw' ? attr : config.mode === 'companion' ? 'none' : 'withdraw';
+  // Add-on mode (T6) reloads only when the site's banner later takes back a grant (companionRevoked, below):
+  // a script already running cannot be unloaded, and it keeps writing until the page goes. Never on the first
+  // answer a page learns, so a stored refusal never loops. data-complykit-reload="none" turns it off.
+  const policy = attr === 'revoke' || attr === 'none' || attr === 'withdraw' ? attr : 'withdraw';
   // Cleanup in flight (bounded, never rejects): a reload waits for it so it cannot race the cookieStore deletions.
   let cleanup: Promise<unknown> = Promise.resolve();
   const reload = () => void cleanup.then(() => setTimeout(() => location.reload()));
@@ -248,4 +250,14 @@ export function installWithdrawal(config: ConsentToolConfig, store: ConsentStore
   store.on('withdraw', () => {
     if (policy === 'withdraw' && revoked.length) reload();
   });
+  onCompanionRevoke = () => {
+    if (policy !== 'none' && revoked.length) reload();
+  };
+}
+
+let onCompanionRevoke: (() => void) | undefined;
+
+/** Add-on mode: the site's banner took back a grant on this page (not the first answer it learned). */
+export function companionRevoked(): void {
+  onCompanionRevoke?.();
 }

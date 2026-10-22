@@ -8,7 +8,8 @@
 // consent tool: what it controls" says controlled / not controlled / not
 // observed per vendor, for the pages and locations it visited.
 
-import type { CheckKind, JobDetail, RescanRequest, RescanResponse } from '../shared/api.js';
+import type { CheckKind, ConsentConfigRequest, JobDetail, RescanRequest, RescanResponse } from '../shared/api.js';
+import { storedOptions } from './rerender.js';
 import { siteDomain } from './domains.js';
 import { parseLaws } from './law-input.js';
 import { newId, toSummary, type JobStore } from './store.js';
@@ -29,7 +30,32 @@ export function siteConsentJobs(store: Pick<JobStore, 'list'>, domain: string): 
   return store.list().filter((j) => j.checks.includes('consent') && domainOf(j.url) === domain);
 }
 
-export async function rescanSite(rawDomain: unknown, deps: { store: JobStore; workspaces: WorkspaceStore; enqueue: (id: string) => void }, body: RescanRequest = {}): Promise<RescanResponse> {
+/**
+ * Before the scan: rebuild the site's stored consent-tool config from the run it was made from, with the
+ * service's current code and knowledge base. The scan's visitors load the hosted config, so without this a
+ * fix in complykit (a cookie name, a category) only shows on the rescan after next. No stored config, or
+ * its run's job is gone: nothing to do.
+ */
+export async function refreshSiteConfig(
+  domain: string,
+  deps: { store: Pick<JobStore, 'list'>; workspaces: Pick<WorkspaceStore, 'get'>; generate: (job: JobDetail, body: ConsentConfigRequest) => Promise<unknown> },
+): Promise<boolean> {
+  const ws = await deps.workspaces.get(domain);
+  const stored = ws.config;
+  if (!stored?.runId || !isObj(stored.value)) return false;
+  const source = deps.store.list().find((j) => j.status === 'done' && j.result?.consent?.runId === stored.runId);
+  if (!source) return false;
+  await deps.generate(source, storedOptions(stored.value, stored.by));
+  return true;
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+export async function rescanSite(
+  rawDomain: unknown,
+  deps: { store: JobStore; workspaces: WorkspaceStore; enqueue: (id: string) => void; refreshConfig?: (domain: string) => Promise<unknown> },
+  body: RescanRequest = {},
+): Promise<RescanResponse> {
   const domain = deps.workspaces.domain(rawDomain);
   if (body.quick !== undefined && typeof body.quick !== 'boolean') throw new WorkspaceError(400, '`quick` must be a boolean');
   if (body.slowRepeat !== undefined && typeof body.slowRepeat !== 'boolean') throw new WorkspaceError(400, '`slowRepeat` must be a boolean');
@@ -54,6 +80,8 @@ export async function rescanSite(rawDomain: unknown, deps: { store: JobStore; wo
   // Laws: as the latest job unless the body chooses; a result with laws needs the owner's confirmation again.
   const lawsIn = parseLaws(body.laws ?? from.laws, body.authorized, from.checks.includes('consent'));
   if (!lawsIn.ok) throw new WorkspaceError(400, lawsIn.error);
+  // A failed refresh never blocks the rescan: it then tests the config as it was.
+  if (deps.refreshConfig) await deps.refreshConfig(domain).catch((err: Error) => console.warn(`[rescan] config refresh for ${domain}: ${err.message}`));
   const job = deps.store.create({ batchId: newId(), url: from.url, checks: from.checks, quick, slowRepeat, laws: lawsIn.laws, authorizedAt: lawsIn.authorizedAt });
   deps.enqueue(job.id);
   return { domain, job: toSummary(job), from };

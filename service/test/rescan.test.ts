@@ -2,6 +2,7 @@ import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CreateBatchResponse, RemediationResponse, RerenderResponse, RescanResponse, SitesResponse } from '../src/shared/api.js';
 import { startService, stopAll, waitForStatus } from './helpers.js';
+import { refreshSiteConfig } from '../src/server/rescan.js';
 
 afterEach(stopAll);
 
@@ -129,5 +130,27 @@ describe('the report’s Generate, the sites list, and status across a regenerat
       ['rewrite-tag:0123456789ab', 'done-unverified'],
     ]);
     expect(rem.tasks[0]).toMatchObject({ note: 'pasted', lastVerify: { result: 'pass' } });
+  });
+});
+
+describe('refreshSiteConfig (before a rescan)', () => {
+  const job = (id: string, runId: string, status = 'done') => ({ id, status, result: { consent: { runId } } }) as never;
+  it('regenerates the stored config from the run it was made from, with its stored options', async () => {
+    const calls: Array<{ id: string; body: unknown }> = [];
+    const ws = { config: { runId: 'run-2', by: 'jeff', value: { config: { privacyPolicyUrl: 'https://x.test/privacy' } } } };
+    const done = await refreshSiteConfig('x.test', {
+      store: { list: () => [job('j3', 'run-3', 'running'), job('j2', 'run-2'), job('j1', 'run-1')] },
+      workspaces: { get: async () => ws as never },
+      generate: async (j, body) => void calls.push({ id: (j as { id: string }).id, body }),
+    });
+    expect(done).toBe(true);
+    expect(calls).toEqual([{ id: 'j2', body: { by: 'jeff', privacyPolicyUrl: 'https://x.test/privacy' } }]);
+  });
+  it('does nothing without a stored config, or when its run’s job is gone', async () => {
+    let called = 0;
+    const deps = (ws: unknown) => ({ store: { list: () => [job('j1', 'run-1')] }, workspaces: { get: async () => ws as never }, generate: async () => void called++ });
+    expect(await refreshSiteConfig('x.test', deps({}))).toBe(false);
+    expect(await refreshSiteConfig('x.test', deps({ config: { runId: 'run-9', value: {} } }))).toBe(false);
+    expect(called).toBe(0);
   });
 });

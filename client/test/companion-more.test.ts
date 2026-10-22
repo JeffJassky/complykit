@@ -56,7 +56,7 @@ async function open(config: unknown, banner: { before?: string; after?: string }
 ${SEED_COOKIES}
 ${banner.before ?? ''}
 <script>window.ComplyKitConfig=${JSON.stringify(config)};</script>
-<script src="/complykit-consent.js"></script>
+<script src="/complykit-consent.js" data-complykit-reload="none"></script>
 ${banner.after ?? ''}
 </head><body><h1>Shop</h1></body></html>`,
     }),

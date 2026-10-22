@@ -6,7 +6,9 @@ import { DIST, launchBrowser, startFixtureServer, type FixtureServer } from './h
 
 // T6 contract (plans/hosted-script.md "Add-on mode"): the site keeps its own
 // banner; complykit follows that banner's choice and deletes the cookies of
-// what the visitor revokes. No UI, no records, no reload. Fake banners below
+// what the visitor revokes. No UI, no records. It reloads only when the banner takes a grant back after the
+// page's first answer (a running script cannot be unloaded); the follow-and-clean tests pin
+// data-complykit-reload="none" to look at the page before that reload. Fake banners below
 // mimic each vendor's documented surface; the implementer checks those surfaces
 // against the vendors' current docs (and may extend these fakes, never weaken
 // the assertions).
@@ -50,7 +52,7 @@ interface Opened {
 }
 
 /** `before` runs before complykit (the banner already there); `after` after it (the banner loads late). */
-async function open(config: unknown, banner: { before?: string; after?: string } = {}): Promise<Opened> {
+async function open(config: unknown, banner: { before?: string; after?: string; reload?: string } = {}): Promise<Opened> {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   const posts: string[] = [];
@@ -62,7 +64,7 @@ async function open(config: unknown, banner: { before?: string; after?: string }
 ${SEED_COOKIES}
 ${banner.before ?? ''}
 <script>window.ComplyKitConfig=${JSON.stringify(config)};</script>
-<script src="/complykit-consent.js"></script>
+<script src="/complykit-consent.js"${banner.reload === 'default' ? '' : ` data-complykit-reload="${banner.reload ?? 'none'}"`}></script>
 ${banner.after ?? ''}
 </head><body><h1>Shop</h1></body></html>`,
     }),
@@ -92,7 +94,7 @@ async function expectFollowsAndCleans(o: Opened, revoke: string): Promise<void> 
   expect(await state(o.page)).toMatchObject({ analytics: false, advertising: true });
   // The analytics cookie is gone; the still-granted advertising cookie and the site's own cookie stay.
   expect(await cookies(o.page)).toEqual(['_fbp', 'site_pref']);
-  // No reload (default in companion mode), no UI, no consent record.
+  // No reload (pinned off here), no UI, no consent record.
   expect(await o.page.evaluate(() => (window as any).__marker)).toBe(1);
   expect(await o.page.$('#complykit-ui')).toBeNull();
   expect(server.requests).not.toContain('/complykit-consent-ui.js');
@@ -121,6 +123,36 @@ const SHOPIFY_SALE_OPT_OUT = `window.__shop=Object.assign({},window.__shop,{sale
 
 // Shopify's banner on its own: customerPrivacy exists only after Shopify.loadFeatures (async), never on the page before.
 const SHOPIFY_LAZY = `<script>window.__loads=0;window.__shop={analytics:'yes',marketing:'yes',preferences:'yes',sale_of_data:'yes'};window.Shopify={loadFeatures:function(f,cb){window.__loads++;setTimeout(function(){window.Shopify.customerPrivacy={currentVisitorConsent:function(){return window.__shop}};cb();},50);}};</script>`;
+
+describe('add-on mode: reload when the banner takes a grant back', () => {
+  const countLoads = (p: Page) => {
+    const n = { loads: 0 };
+    p.on('load', () => void n.loads++);
+    return n;
+  };
+  it('cleans up, then reloads once; the reloaded page (the banner answering again) does not reload again', async () => {
+    const o = await open(companionConfig('shopify'), { before: SHOPIFY, reload: 'default' });
+    await settle(o.page);
+    expect(await state(o.page)).toMatchObject({ analytics: true, advertising: true });
+    const n = countLoads(o.page);
+    const loaded = o.page.waitForEvent('load');
+    await o.page.evaluate(SHOPIFY_REVOKE);
+    await loaded;
+    await settle(o.page, 800);
+    expect(n.loads).toBe(1);
+    await o.ctx.close();
+  });
+  it('a page whose banner already denies (a stored refusal) does not reload', async () => {
+    const DENIED = `<script>window.__shop={analytics:'no',marketing:'no',preferences:'no',sale_of_data:'no'};window.Shopify={customerPrivacy:{currentVisitorConsent:function(){return window.__shop}}};</script>`;
+    const o = await open(companionConfig('shopify'), { before: DENIED, reload: 'default' });
+    const n = countLoads(o.page);
+    await settle(o.page, 800);
+    expect(await state(o.page)).toMatchObject({ analytics: false, advertising: false });
+    expect(n.loads).toBe(0);
+    expect(await cookies(o.page)).toEqual(['site_pref']);
+    await o.ctx.close();
+  });
+});
 
 describe('add-on mode: Shopify API loaded on demand', () => {
   it('asks Shopify.loadFeatures for the consent API once and follows it', async () => {

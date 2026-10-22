@@ -28,6 +28,7 @@ import { regimeFor, parseRegimeLocation } from '../../src/registry/regime.js';
 import { overriddenRegime } from './config.js';
 import { diagnostics } from './diagnostics.js';
 import { report } from './events.js';
+import { companionRevoked } from './withdraw.js';
 
 let store: ConsentStore | undefined;
 let config: ConsentToolConfig | undefined;
@@ -167,5 +168,7 @@ export function sync(choice: Record<string, boolean>, initial?: boolean): Consen
   const before = store.state().categories;
   const s = store.set({ ...before, ...choice });
   if (!initial && Object.keys(before).some((k) => before[k] !== s.categories[k])) report({ t: 'decide', action: 'save', via: 'cmp', categories: s.categories });
+  // A grant taken back after the page's first answer: clean up (done by the store change) and reload.
+  if (!initial && Object.keys(before).some((k) => before[k] && !s.categories[k])) companionRevoked();
   return s;
 }

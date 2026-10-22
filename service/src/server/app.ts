@@ -40,7 +40,7 @@ import { serveReports } from './report-config.js';
 import { assertCanGenerate } from './history.js';
 import { generateConsentConfigForJob } from './consent-config.js';
 import { checklistProgress, RemediationVerifier, rehomeHostedUrl, rehomeTasks, remediationView } from './remediation.js';
-import { rescanSite } from './rescan.js';
+import { refreshSiteConfig, rescanSite } from './rescan.js';
 import { parseLaws } from './law-input.js';
 import { rerenderJob } from './rerender.js';
 import { ChecklistMaker, afterClassWrite, classRerendersPending, classRerendersSettled, jobReport } from './job-report.js';
@@ -653,7 +653,8 @@ export async function createApp(config: ServiceConfig, runnerOptions: RunnerOpti
   app.post(
     '/api/sites/:domain/rescan',
     siteRoute(async (req, res) => {
-      res.status(201).json(await rescanSite(req.params.domain, { store, workspaces, enqueue: (id) => runner.enqueue(id) }, (req.body ?? {}) as RescanRequest));
+      const refreshConfig = (domain: string) => refreshSiteConfig(domain, { store, workspaces, generate: (job, body) => generateConsentConfigForJob(job, body, { config, workspaces, files: store.files }) });
+      res.status(201).json(await rescanSite(req.params.domain, { store, workspaces, enqueue: (id) => runner.enqueue(id), refreshConfig }, (req.body ?? {}) as RescanRequest));
     }),
   );
 

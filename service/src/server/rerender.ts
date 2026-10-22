@@ -161,7 +161,7 @@ async function renderReport(job: JobDetail, runId: string, ws: SiteWorkspace, de
 }
 
 /** The options the stored config was generated with, read back from it (the privacy policy link). */
-function storedOptions(value: Record<string, unknown>, by: string | undefined): ConsentConfigRequest {
+export function storedOptions(value: Record<string, unknown>, by: string | undefined): ConsentConfigRequest {
   const cfg = isObj(value.config) ? value.config : {};
   // The script URL and record endpoint are the service's own (config.publicOrigin), never carried over.
   return {
