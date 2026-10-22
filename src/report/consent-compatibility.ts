@@ -107,6 +107,10 @@ export function purposeNeed(categories: readonly string[], scope?: PartyCompatib
 /** The data-category for a rewritten tag: the strictest purpose the tool has (a category id of the consent tool config). */
 export function gateCategory(categories: readonly string[]): { id: string; note?: string } {
   if (purposeNeed(categories) === 'unclassified') return { id: 'advertising', note: 'not classified yet: held under the strictest category until your team classifies it' };
+  // Session recording replays a visit (clicks, scrolls, typing): accepting analytics does not cover it, and the
+  // matrix expects it off after analytics-only consent. Held with advertising, the strictest category (on
+  // Shopify's banner, which has only analytics / marketing / preferences, that is marketing).
+  if (categories.includes('session-recording')) return { id: 'advertising' };
   const purposes = cookiePurposes([...categories]);
   for (const id of ['advertising', 'analytics', 'performance', 'functional']) if (purposes.includes(id)) return { id };
   return { id: 'advertising', note: 'no consent category matches its purpose: held under the strictest category' };

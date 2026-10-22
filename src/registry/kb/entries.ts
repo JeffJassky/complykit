@@ -152,7 +152,8 @@ const BASE_ENTRIES: KnowledgeEntryInput[] = [
     },
     categories: ['advertising'],
     sends: ['page-address', 'browser-id', 'hashed-email', 'event-name', 'click-id'],
-    stores: [{ name: '^_fb[pc]$', kind: 'cookie', lifetimeDays: 90 }],
+    // fbevents.js also keeps the last outside referrer in localStorage (walrusaudio.com 2026-10-21: left behind after withdrawal).
+    stores: [{ name: '^_fb[pc]$', kind: 'cookie', lifetimeDays: 90 }, { name: '^lastExternalReferrer(Time)?$', kind: 'local' }],
     consentApi: "fbq('consent', 'revoke' | 'grant'); limited data use via fbq('dataProcessingOptions', ['LDU'], 0, 0)",
     decoder: 'meta',
     restrictedMode: 'Limited Data Use (dpo=LDU)',

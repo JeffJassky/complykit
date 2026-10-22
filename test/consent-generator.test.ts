@@ -19,6 +19,7 @@ import { cmdConsentConfig } from '../src/cli/commands/consent-config.js';
 import { compatibilityEvaluation, PAGE } from './fixtures/compatibility-report.js';
 import { dataLayerConfigEvaluation } from './fixtures/gtm-datalayer-config.js';
 import { reconcileCompatibility } from '../src/consent-compatibility.js';
+import { gateCategory } from '../src/report/consent-compatibility.js';
 
 // D8: scan (+ site workspace) → config + snippet + change list. Fixture only
 // (test/fixtures/compatibility-report.ts: one tool per verdict, generic hosts).
@@ -247,6 +248,15 @@ describe("control 'gate' names something that holds it (#49)", () => {
     const r = gen(e);
     expect(r.config.vendors.find((x) => x.id === 'hotjar')).toMatchObject({ control: 'gate' });
     expect(r.config.gtm!.tags.some((t) => t.vendor === 'hotjar')).toBe(true);
+  });
+
+  it('session recording is held with advertising, not analytics (analytics-only consent does not cover it)', () => {
+    const e = compatibilityEvaluation();
+    e.inventory.push(party('hotjar', 'Hotjar', ['session-recording', 'analytics'], { implementation: viaGtm }));
+    e.containers![0].tags.push({ ...structuredClone(e.containers![0].tags[0]), tagId: 8, index: 1, partyId: 'hotjar' });
+    expect(gen(e).config.vendors.find((x) => x.id === 'hotjar')).toMatchObject({ category: 'advertising' });
+    expect(gateCategory(['session-recording', 'analytics'])).toEqual({ id: 'advertising' });
+    expect(gateCategory(['analytics'])).toEqual({ id: 'analytics' });
   });
 
   it('a GTM-loaded vendor no container tag maps to is none (nothing in the config holds it)', () => {
