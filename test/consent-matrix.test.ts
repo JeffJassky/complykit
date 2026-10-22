@@ -7,6 +7,7 @@ import { TrackingEvaluation, Timeline } from '../src/record/index.js';
 import { summarizeBehavior } from '../src/rules/tracking/summary.js';
 import { isCookieDeletion, analyzeTimeline } from '../src/rules/tracking/analyze.js';
 import { purposeNeedsReview } from '../src/report/consent-view.js';
+import { DEFAULT_KB, isOptOutStore } from '../src/registry/index.js';
 
 const inventory={partyId:'meta.pixel',label:'Meta Pixel',domain:'facebook.com',hosts:['facebook.com'],recognized:true,kbStatus:'proposed',categories:['advertising'],behavesLikeTracker:true,trackerSignals:[],sends:[],stores:[{name:'_fbp',kind:'cookie',lifetimeDays:90},{name:'unknown_cookie',kind:'cookie',lifetimeDays:1}],sources:['injected'],loadedBy:[],seenIn:[]};
 const evaluation=TrackingEvaluation.parse({runId:'r',property:'shop',site:{url:'https://shop.example/',host:'shop.example',registrableDomain:'shop.example'},startedAt:'now',finishedAt:'later',versions:{kb:'0',registry:'0',package:'0'},locations:[{spec:{id:'de',label:'Germany',country:'DE',proxied:false},verification:{verdict:'verified',expected:{country:'DE'},observed:{country:'DE'},sources:[],jurisdictions:['eu'],checkedAt:'now'},scenarios:[{scenario:'do-nothing',status:'tested'},{scenario:'reject',status:'tested',choice:{kind:'reject',ok:true,method:'test'}}]}],inventory:[inventory],notTested:[],researchQueue:[],redacted:true,behaviorObservations:[{location:'de',scenario:'do-nothing',durationMs:10000,knownPartyIds:['meta.pixel'],parties:[{partyId:'meta.pixel',dataRequests:1,requestPhases:['before-choice'],dataRequestPhases:{'before-choice':1},limitedRequestsByPhase:{},stores:[{name:'_fbp',kind:'cookie',writePhase:'before-choice',writePhases:['before-choice'],presentAtEnd:true,attribution:'observed'}]}]},{location:'de',scenario:'reject',durationMs:10000,knownPartyIds:['meta.pixel'],parties:[{partyId:'meta.pixel',dataRequests:1,requestPhases:['before-choice'],dataRequestPhases:{'before-choice':1},limitedRequestsByPhase:{},stores:[{name:'_fbp',kind:'cookie',writePhase:'before-choice',writePhases:['before-choice'],presentAtEnd:false,attribution:'observed'}]}]}]});
@@ -73,6 +74,15 @@ describe('consent behavior matrix',()=>{
   const observations=summarizeBehavior([timeline]);
   expect(observations[0].parties[0].stores[0].writePhases).toEqual(['before-choice','after-reject']);
   expect(status({...model,behaviorObservations:observations},'storage','_fbp','reject').status).toBe('mismatch');
+ });
+ it('an opt-out record (a stored refusal, KB optOut) is never the vendor\'s activity; its ID cookies still are',()=>{
+  const w=(t:number,name:string)=>({type:'cookie-write',t,name,value:'redacted',chain:['https://js-na2.hs-analytics.net/analytics/1/2261046.js'],frameUrl:evaluation.site.url,pageIndex:0});
+  const timeline=Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'reject',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies:[],storage:[],frames:[]},events:[{type:'banner',t:0,state:'shown',pageIndex:0},w(100,'__hs_do_not_track'),w(120,'__hstc'),{type:'choice',t:200,choice:'reject',ok:true,method:'test',pageIndex:0},w(300,'__hs_do_not_track')]});
+  const hubspot=summarizeBehavior([timeline])[0].parties.find(p=>p.partyId==='hubspot')!;
+  expect(hubspot.stores.map(s=>s.name)).toEqual(['__hstc']);
+  expect(isOptOutStore(DEFAULT_KB,'cookie','__hs_do_not_track')).toBe(true);
+  expect(isOptOutStore(DEFAULT_KB,'cookie','__hstc')).toBe(false);
+  expect(isOptOutStore(DEFAULT_KB,'local','__hs_do_not_track')).toBe(false);
  });
  it('a write within 1 s of a withdrawal, on its page, is the choice taking effect (grace) — not a write after withdrawal; later writes count',()=>{
   const w=(t:number)=>({type:'cookie-write',t,name:'_fbp',value:'redacted',chain:['https://connect.facebook.net/pixel.js'],frameUrl:evaluation.site.url,pageIndex:0});

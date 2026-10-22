@@ -12,7 +12,7 @@ import type {
   PlatformSignals,
   ContainerCapture,
 } from '../../record/index.js';
-import { DEFAULT_KB, classifyPlatform, entryStatus, registrableDomain, type KnowledgeBase, type KnowledgeEntry } from '../../registry/index.js';
+import { DEFAULT_KB, classifyPlatform, entryStatus, isOptOutStore, registrableDomain, type KnowledgeBase, type KnowledgeEntry } from '../../registry/index.js';
 import { analyzeTimeline, phaseAt, REJECT_GRACE_PHASE, WITHDRAW_GRACE_MS, WITHDRAW_GRACE_PHASE, type PartyRequest, type TimelineAnalysis } from './analyze.js';
 import { buildMarkupSection } from './markup.js';
 import { parseContainers } from './gtm.js';
@@ -397,7 +397,8 @@ export function summarizeBehavior(timelines: Timeline[], kb: KnowledgeBase = DEF
         limitedRequestsByPhase: count(p, (r) => r.dataBearing && (allDenied(r.decoded) || adsRestricted(r.decoded))),
         dataRequestPhases: count(p, (r) => r.dataBearing),
         loadRequestsByPhase: count(p, (r) => !r.dataBearing),
-        stores: p.stores.map((s) => ({
+        // An opt-out record (a stored refusal) is not activity: leaving it out keeps it from ever counting as the vendor running.
+        stores: p.stores.filter((s) => !isOptOutStore(kb, s.kind, s.name)).map((s) => ({
           name: s.name,
           kind: s.kind,
           writePhase: s.phase,

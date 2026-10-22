@@ -259,6 +259,14 @@ describe("control 'gate' names something that holds it (#49)", () => {
     expect(gateCategory(['analytics'])).toEqual({ id: 'analytics' });
   });
 
+  it('a vendor\'s opt-out record is never in its withdrawal list (deleting a stored refusal re-enables tracking)', () => {
+    const e = compatibilityEvaluation();
+    e.inventory.push(party('hubspot', 'HubSpot', ['analytics', 'marketing-email'], { implementation: viaGtm }));
+    e.containers![0].tags.push({ ...structuredClone(e.containers![0].tags[0]), tagId: 9, index: 1, partyId: 'hubspot' });
+    const v = gen(e).config.vendors.find((x) => x.id === 'hubspot')!;
+    expect(v.stores.map((s) => s.name)).toEqual(['^(__hstc|hubspotutk|__hssc|__hssrc)$']);
+  });
+
   it('a GTM-loaded vendor no container tag maps to is none (nothing in the config holds it)', () => {
     const e = compatibilityEvaluation();
     e.inventory.push(party('hotjar', 'Hotjar', ['session-recording'], { implementation: viaGtm }));

@@ -116,6 +116,9 @@ export const KnowledgeEntry = z.object({
         name: z.string(), // regex source over the cookie/storage key
         kind: z.enum(['cookie', 'local', 'session']).default('cookie'),
         lifetimeDays: z.number().optional(),
+        // Records only the visitor's refusal (an opt-out flag such as HubSpot's __hs_do_not_track), no identifier:
+        // never counted as the vendor's activity, and never deleted on withdrawal (deleting it re-enables tracking).
+        optOut: z.boolean().optional(),
       }),
     )
     .default([]),

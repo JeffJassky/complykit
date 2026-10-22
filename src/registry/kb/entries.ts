@@ -480,7 +480,12 @@ const BASE_ENTRIES: KnowledgeEntryInput[] = [
     match: { hosts: ['klaviyo.com', 'klaviyo.net'], inline: ['\\b_learnq\\b', 'static\\.klaviyo\\.com/onsite/js/', '\\bklaviyo\\.init\\s*\\('] },
     categories: ['marketing-email', 'analytics'],
     sends: ['page-address', 'browser-id', 'hashed-email', 'form-input'],
-    stores: [{ name: '^__kla_id$', kind: 'cookie', lifetimeDays: 730 }],
+    // klaviyo.js's own local/session storage (walrusaudio.com 2026-10-22: left behind after withdrawal).
+    stores: [
+      { name: '^__kla_id$', kind: 'cookie', lifetimeDays: 730 },
+      { name: '^(__kl_key|\\$referrer|\\$last_referrer|klaviyoOnsite|onsite_client_id|kl-post-identification-sync)$', kind: 'local' },
+      { name: '^klaviyoPagesVisitCountV2$', kind: 'session' },
+    ],
     consentApi: 'none documented for onsite tracking — hold back until consent',
     notes: 'Onsite tracking ties browsing to an email profile once identified; signup forms can send typed email before submit.',
     sources: ['https://help.klaviyo.com/hc/en-us/articles/115005076767'],
@@ -501,7 +506,11 @@ const BASE_ENTRIES: KnowledgeEntryInput[] = [
     match: { hosts: ['hubspot.com', 'hs-analytics.net', 'hs-scripts.com', 'hsforms.com', 'hs-banner.com', 'usemessages.com', 'hscollectedforms.net'], inline: ['js(-[a-z0-9]+)?\\.hs-scripts\\.com/', 'js\\.hs-analytics\\.net/', '\\b_hsq\\b'] },
     categories: ['analytics', 'marketing-email'],
     sends: ['page-address', 'browser-id', 'form-input'],
-    stores: [{ name: '^(__hstc|hubspotutk|__hssc|__hssrc)$', kind: 'cookie', lifetimeDays: 180 }],
+    stores: [
+      { name: '^(__hstc|hubspotutk|__hssc|__hssrc)$', kind: 'cookie', lifetimeDays: 180 },
+      // Set by _hsq.push(['doNotTrack']): HubSpot's opt-out flag, value "yes" (no identifier).
+      { name: '^__hs_do_not_track$', kind: 'cookie', optOut: true },
+    ],
     consentApi: "_hsp.push(['addPrivacyConsentListener', …]); doNotTrack",
     sources: ['https://knowledge.hubspot.com/privacy-and-consent/what-cookies-does-hubspot-set-in-a-visitor-s-browser'],
   }),

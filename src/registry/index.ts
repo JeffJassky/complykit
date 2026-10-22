@@ -60,6 +60,7 @@ export {
   kbEntryOf,
   lookupGateway,
   lookupStore,
+  isOptOutStore,
   entryStatus,
   matchVendorSignatures,
   hostsInText,

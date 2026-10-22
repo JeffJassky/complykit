@@ -378,7 +378,8 @@ function storesOf(
   protectedNames: ReadonlyArray<{ kind: string; name: string }> = [],
   otherNames: ReadonlyArray<{ partyId: string; kind: string; name: string }> = [],
 ): ConsentVendor['stores'] {
-  if (e?.stores.length) return e.stores.map((s) => ({ name: s.name, kind: s.kind }));
+  // Opt-out records stay out: withdrawal deletes these names, and deleting a stored refusal re-enables tracking.
+  if (e?.stores.length) return e.stores.filter((s) => !s.optOut).map((s) => ({ name: s.name, kind: s.kind }));
   // No KB patterns: the names this scan saw. Never a name a necessary tool (or
   // the team) claims — withdrawal deletes these. A name ending in an ID-like
   // token is generalized: a suffix varies per visitor/account, so the exact
@@ -445,6 +446,17 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
     for (const s of p.stores) {
       necessaryNames.add(`${s.kind}|${s.name}`);
       necessaryList.push({ kind: s.kind, name: s.name });
+    }
+  }
+  // Every vendor's opt-out record: a generalized pattern must never reach a stored refusal either.
+  for (const e of kb.entries) {
+    for (const s of e.stores) {
+      if (!s.optOut) continue;
+      try {
+        necessaryPatterns.push({ kind: s.kind, re: new RegExp(s.name) });
+      } catch {
+        /* a bad KB pattern protects nothing */
+      }
     }
   }
   for (const c of ev.siteWorkspace?.classifications ?? []) {

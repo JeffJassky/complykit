@@ -118,6 +118,12 @@ export function lookupStore(kb: KnowledgeBase, key: string): KnowledgeEntry | un
   return undefined;
 }
 
+/** Is this cookie/storage key a vendor's opt-out record (a stored refusal, no identifier)? */
+export function isOptOutStore(kb: KnowledgeBase, kind: string, key: string): boolean {
+  const k = kind === 'local' || kind === 'session' ? kind : 'cookie';
+  return kb.entries.some((e) => e.stores.some((s) => s.optOut === true && s.kind === k && pathRe(s.name).test(key)));
+}
+
 /** 'confirmed' when a human confirmed it; 'seed' for an unconfirmed proposal. */
 export function entryStatus(e: KnowledgeEntry): 'confirmed' | 'proposed' {
   return e.provenance.confirmedBy ? 'confirmed' : 'proposed';
