@@ -1118,10 +1118,15 @@ export function compatibilityFor(party: PartyInventoryItem, input: Compatibility
 
 export type CompatibilityEvaluationInput = Pick<TrackingEvaluation, 'inventory' | 'locations'> & Partial<Pick<TrackingEvaluation, 'markup' | 'containers' | 'consentApi' | 'platform' | 'behaviorObservations' | 'startedAt'>> & { kb?: KnowledgeBase };
 
+/** The rules each scanned location ran under: its regime when the location was verified, else 'unknown'. Every caller of compatibilityFor passes this. */
+export function locationRegimes(locations: TrackingEvaluation['locations'], startedAt?: string): Record<string, Regime | 'unknown'> {
+  return Object.fromEntries(locations.map((l) => [l.spec.id, l.verification.verdict === 'verified' ? regimeOf(l.verification.jurisdictions, startedAt?.slice(0, 10)) : ('unknown' as const)]));
+}
+
 export function evaluateCompatibility(ev: CompatibilityEvaluationInput): CompatibilitySection {
   const behavior = ev.behaviorObservations ? behaviorCellsFrom({ locations: ev.locations, inventory: ev.inventory, behaviorObservations: ev.behaviorObservations, startedAt: ev.startedAt }) : [];
   const consentTool = consentToolDefaultFinding(ev.locations);
-  const regimes = Object.fromEntries(ev.locations.map((l) => [l.spec.id, l.verification.verdict === 'verified' ? regimeOf(l.verification.jurisdictions, ev.startedAt?.slice(0, 10)) : ('unknown' as const)]));
+  const regimes = locationRegimes(ev.locations, ev.startedAt);
   const parties = ev.inventory.map((p, i) =>
     compatibilityFor(p, { markup: ev.markup, containers: ev.containers, consentApi: ev.consentApi, platform: ev.platform, behavior, kb: ev.kb, partyIndex: i, regimes }),
   );

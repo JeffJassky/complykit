@@ -1,7 +1,7 @@
 import type { CompatibilitySection, TrackingEvaluation } from './record/index.js';
 import type { KnowledgeBase } from './registry/index.js';
 import type { WorkspaceSnapshot } from './site-workspace.js';
-import { compatibilityFor, consentToolDefaultFinding, type BehaviorCell } from './rules/tracking/compatibility.js';
+import { compatibilityFor, consentToolDefaultFinding, locationRegimes, type BehaviorCell } from './rules/tracking/compatibility.js';
 import { configBehaviorCells, evaluateConsentToolProof } from './rules/tracking/consent-tool-proof.js';
 import { buildConsentReportModel } from './report/consent-model.js';
 
@@ -53,6 +53,8 @@ export function matrixBehaviorCells(evaluation: TrackingEvaluation): BehaviorCel
  */
 export function reconcileCompatibility(evaluation: TrackingEvaluation, opts: { kb?: KnowledgeBase; extraBehavior?: BehaviorCell[] } = {}): CompatibilitySection {
   const behavior = [...matrixBehaviorCells(evaluation), ...(opts.extraBehavior ?? [])];
+  // The same per-location rules evaluateCompatibility uses: without them every location reads as opt-in.
+  const regimes = locationRegimes(evaluation.locations, evaluation.startedAt);
   const parties = evaluation.inventory.map((p, i) =>
     compatibilityFor(p, {
       markup: evaluation.markup,
@@ -62,6 +64,7 @@ export function reconcileCompatibility(evaluation: TrackingEvaluation, opts: { k
       behavior,
       kb: opts.kb,
       partyIndex: i,
+      regimes,
     }),
   );
   return {

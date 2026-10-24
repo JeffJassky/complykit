@@ -1146,3 +1146,24 @@ describe('behavior observation schema: httpOnly is optional', () => {
     expect(parse({ ...store, httpOnly: true }).httpOnly).toBe(true);
   });
 });
+
+describe('the report path judges each location by its own rules', () => {
+  it('reconcileCompatibility passes the location regimes: a grant on load seen only under US opt-out rules is no change there', async () => {
+    const { reconcileCompatibility } = await import('../src/consent-compatibility.js');
+    const { compatibilityEvaluation } = await import('./fixtures/compatibility-report.js');
+    const e = compatibilityEvaluation();
+    const de = e.locations[0];
+    e.locations.push({ ...de, spec: { ...de.spec, id: 'us-tx', label: 'Texas, US', country: 'US' }, verification: { ...de.verification, jurisdictions: ['us', 'us-tx'] } });
+    const ALL = ['analytics_storage', 'ad_storage', 'ad_user_data', 'ad_personalization'];
+    e.consentApi = [
+      observation({ location: 'us-tx', scenario: 'do-nothing', apis: ['google'], states: [{ state: 'grant-on-load', api: 'google', t: 10, phase: 'no-banner', reason: 'granted all', granted: ALL }] }),
+      observation({ location: 'de', scenario: 'do-nothing', apis: ['google'] }),
+    ];
+    const ga = reconcileCompatibility(e).parties.find((p) => p.partyId === 'google.analytics')!;
+    expect(ga.changes.filter((c) => /grant/.test(c.note))).toEqual([]);
+    // Germany granting on load is still a change, through the same path.
+    e.consentApi.push(observation({ location: 'de', scenario: 'browse', apis: ['google'], states: [{ state: 'grant-on-load', api: 'google', t: 10, phase: 'before-banner', reason: 'de granted', granted: ALL }] }));
+    const ga2 = reconcileCompatibility(e).parties.find((p) => p.partyId === 'google.analytics')!;
+    expect(ga2.changes.find((c) => /grant/.test(c.note))?.note).toBe('stop granting on load: de granted (1 visit(s): de:browse)');
+  });
+});
