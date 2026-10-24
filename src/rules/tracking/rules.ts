@@ -31,6 +31,7 @@ import {
   type Phase,
 } from './analyze.js';
 import { allDenied, adsRestricted } from './decoders.js';
+import { choiceGrace } from './grace.js';
 import { FIELD_LABEL, type FieldKind } from './fields.js';
 
 // The location rules (plans/consent-design.md §2.6 step 5). One rule per legal
@@ -314,13 +315,16 @@ export const priorConsent: Rule<readonly ['consent-timeline']> = {
       if (!scope) continue;
       const requirementId = eu ? 'eprivacy.art5.3' : 'pecr.reg6';
       const consented = !neverConsented(a);
+      const grace = choiceGrace(a.timeline, a);
       for (const f of a.parties.values()) {
         const kind = isTrackingParty(f);
         if (kind === 'none') continue;
         const cats = partyCategories(f);
         const analyticsOnly = cats.length > 0 && cats.every((c) => c === 'analytics');
         const counts = (p: Phase): boolean => UNCONSENTED.has(p) || (p === 'after-partial' && !cats.includes('analytics') && f.recognized);
-        const reqs = f.requests.filter((r) => counts(r.phase) && r.dataBearing);
+        // Queued data flushed as a revoking choice takes effect is the choice's grace, as in the behavior grid.
+        const inGrace = grace(f);
+        const reqs = f.requests.filter((r) => counts(r.phase) && r.dataBearing && !inGrace(r));
         const storedUnconsented = f.stores.filter((s) => (s.phase ? counts(s.phase) : !consented));
         if (!reqs.length && !storedUnconsented.length) continue;
         const notes: string[] = [];
@@ -392,10 +396,13 @@ export const withdrawal: Rule<readonly ['consent-timeline']> = {
       }
       if (!a.withdrawal.ok) continue;
       const tw = a.withdrawal.t;
+      const grace = choiceGrace(a.timeline, a);
       for (const f of a.parties.values()) {
         const kind = isTrackingParty(f);
         if (kind === 'none' || kind === 'context') continue;
-        const after = f.requests.filter((r) => r.phase === 'after-withdraw' && r.dataBearing);
+        // Queued data flushed as the withdrawal takes effect is its grace, as in the behavior grid.
+        const inGrace = grace(f);
+        const after = f.requests.filter((r) => r.phase === 'after-withdraw' && r.dataBearing && !inGrace(r));
         if (!after.length) continue;
         const before = new Set(f.requests.filter((r) => r.t < tw).flatMap((r) => r.ids.map((i) => i.value)));
         const carried = new Set(after.flatMap((r) => r.ids.map((i) => i.value)).filter((v) => before.has(v)));

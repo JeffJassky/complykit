@@ -266,3 +266,39 @@ describe('add-on mode: follow the banner, clean up what it revokes', () => {
     await o.ctx.close();
   });
 });
+
+describe('add-on mode: Shopify decline guard', () => {
+  it('a click on the banner refusal removes the custom-pixel frames and revokes Meta before any bubble listener sees it', async () => {
+    const o = await open(companionConfig('shopify'), { before: SHOPIFY });
+    await settle(o.page);
+    await o.page.evaluate(() => {
+      const w = window as any;
+      w.__fbq = [];
+      w.fbq = (...a: unknown[]) => w.__fbq.push(a.join(':'));
+      // Meta's automatic events listen in the bubble phase: record what Meta had been told when it saw the click.
+      document.addEventListener('click', () => w.__fbq.push('meta-saw-click'));
+      for (const id of ['web-pixel-sandbox-CUSTOM-1-LAX-x', 'web-pixel-sandbox-CUSTOM-2-LAX-x']) {
+        const f = document.createElement('iframe');
+        f.id = id;
+        f.setAttribute('sandbox', 'allow-scripts');
+        document.body.appendChild(f);
+      }
+      const other = document.createElement('iframe');
+      other.id = 'video';
+      document.body.appendChild(other);
+      const b = document.createElement('button');
+      b.id = 'shopify-pc__prefs__header-decline';
+      b.innerHTML = '<span>Decline all</span>';
+      document.body.appendChild(b);
+    });
+    await o.page.click('#shopify-pc__prefs__header-decline span');
+    expect(await o.page.evaluate(() => [...document.querySelectorAll('iframe')].map((f) => f.id))).toEqual(['video']);
+    expect(await o.page.evaluate(() => (window as any).__fbq)).toEqual(['consent:revoke', 'meta-saw-click']);
+    expect(await o.page.evaluate(() => (window as any).__complykitDeclineGuard)).toEqual({ fired: 1, framesRemoved: 2 });
+    // Any other click leaves the frames alone.
+    await o.page.evaluate(() => document.body.appendChild(Object.assign(document.createElement('iframe'), { id: 'web-pixel-sandbox-CUSTOM-3-LAX-x' })));
+    await o.page.click('body');
+    expect(await o.page.evaluate(() => document.querySelectorAll('iframe').length)).toBe(2);
+    await o.ctx.close();
+  });
+});

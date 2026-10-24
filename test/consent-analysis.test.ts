@@ -264,3 +264,40 @@ describe('the complykit host is the site’s own consent tool (plans/hosted-scri
     expect(out.every((f) => !f.text.includes(host))).toBe(true);
   });
 });
+
+describe('withdrawal grace in the violation rules (same window as the behavior grid)', () => {
+  const PAGE = 'https://example-shop.test/';
+  const req = (t: number, pageIndex: number, ev: string) => ({
+    type: 'request', t, id: `r${t}`, url: `https://www.facebook.com/tr/?id=1&ev=${ev}`, method: 'GET', resourceType: 'image', origin: 'page', pageUrl: PAGE, pageIndex,
+    initiator: { type: 'other', chain: [] }, status: 200, setCookies: [],
+  });
+  const artifact = (events: unknown[]) =>
+    ({
+      kind: 'consent-timeline',
+      subject: { property: 'shop', routePattern: '*', instanceUrl: PAGE },
+      capturedAt: '2026-10-24T00:00:00.000Z',
+      scenario: 'withdraw',
+      location: { id: 'de', label: 'de', country: 'DE' },
+      verification: { verdict: 'verified', expected: { country: 'DE' }, observed: { country: 'DE' }, sources: [], siteReported: [], jurisdictions: ['eu', 'eu-de'], checkedAt: '2026-10-24T00:00:00.000Z' },
+      events: [
+        { type: 'banner', t: 0, state: 'shown', pageIndex: 0 },
+        { type: 'choice', t: 100, choice: 'accept', ok: true, method: 'test', pageIndex: 0 },
+        req(500, 0, 'PageView'),
+        { type: 'choice', t: 1000, choice: 'withdraw', ok: true, method: 'test', pageIndex: 0 },
+        ...events,
+      ],
+      snapshot: {
+        site: { url: PAGE, host: 'example-shop.test', registrableDomain: 'example-shop.test' },
+        scenario: 'withdraw', locationId: 'de', startedAt: '2026-10-24T00:00:00.000Z', durationMs: 5000, gpc: false,
+        browser: { name: 'chromium' }, pages: [{ url: PAGE }], cookies: [], storage: [], frames: [], dns: [], notTested: [], evidence: {},
+      },
+    }) as never;
+  const after = (art: unknown) =>
+    [tracking.withdrawal, tracking.priorConsent].flatMap((rule) => rule.evaluate({ 'consent-timeline': [art] } as never, { property: 'shop' })).filter((f) => f.confidence === 'violation' || (f as { kind?: string }).kind === 'violation');
+
+  it('a queued hit flushed ≤ 1 s after the click on the same page is not a violation; one 1.5 s later, or after the reload, is', () => {
+    expect(after(artifact([req(1100, 0, 'PageView'), { type: 'action', t: 1600, action: 'reload', url: PAGE, pageIndex: 0 }]))).toEqual([]);
+    expect(after(artifact([req(2500, 0, 'Timer'), { type: 'action', t: 3000, action: 'reload', url: PAGE, pageIndex: 0 }])).length).toBeGreaterThan(0);
+    expect(after(artifact([{ type: 'action', t: 1200, action: 'reload', url: PAGE, pageIndex: 0 }, req(1400, 1, 'PageView')])).length).toBeGreaterThan(0);
+  });
+});

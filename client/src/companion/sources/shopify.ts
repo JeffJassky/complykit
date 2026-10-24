@@ -14,7 +14,50 @@
 //     does not expose it on its own, so the add-on asks for it once (as bridges/shopify.ts does) and reads in the callback.
 import { listen, win, type Source } from './types.js';
 
+// The decline guard. A refusal on Shopify's banner reaches the store's pixels only once Shopify has recorded it
+// (an async round trip) and told each pixel: whatever a pixel had queued (Google's page_view / scroll hits) is sent
+// in that gap, and Meta's automatic events report the decline click itself. In the capture phase of a click on the
+// banner's refusal controls — before Shopify's own handler — the add-on
+//   - removes the custom-pixel sandbox frames (Shopify's lax sandbox: an iframe per custom pixel, id
+//     "web-pixel-sandbox-CUSTOM-…"): a removed frame's code stops at once, nothing it queued is sent. The reload
+//     that follows a revoked grant brings back only what the new answer allows;
+//   - tells Meta's on-page pixel fbq('consent', 'revoke') before its click listener reports the click.
+// App pixels run in Shopify's strict sandbox, out of the page's reach; they stop when Shopify tells them.
+// Only Shopify's own refusal controls: a refusal made another way (an app calling setTrackingConsent) has no click.
+export const SHOPIFY_DECLINE_CONTROLS = '#shopify-pc__banner__btn-decline, #shopify-pc__prefs__header-decline';
+export const SHOPIFY_PIXEL_FRAMES = 'iframe[id^="web-pixel-sandbox-CUSTOM-"], iframe[name^="web-pixel-sandbox-CUSTOM-"]';
+
+export function installShopifyDeclineGuard(): void {
+  const w = win();
+  if (w.__complykitDeclineGuard) return;
+  w.__complykitDeclineGuard = { fired: 0, framesRemoved: 0 };
+  w.addEventListener(
+    'click',
+    (e: Event) => {
+      const t = e.target as Element | null;
+      if (!t || typeof t.closest !== 'function' || !t.closest(SHOPIFY_DECLINE_CONTROLS)) return;
+      const g = w.__complykitDeclineGuard;
+      g.fired++;
+      try {
+        document.querySelectorAll(SHOPIFY_PIXEL_FRAMES).forEach((f) => {
+          f.remove();
+          g.framesRemoved++;
+        });
+      } catch {
+        /* never block the visitor's click */
+      }
+      try {
+        if (typeof w.fbq === 'function') w.fbq('consent', 'revoke');
+      } catch {
+        /* a broken fbq stub must not block the click */
+      }
+    },
+    true,
+  );
+}
+
 export const shopify: Source = (push) => {
+  installShopifyDeclineGuard();
   let requested = false;
   const read = (): string[] | undefined => {
     const s = win().Shopify;
