@@ -1000,15 +1000,16 @@ export function compatibilityFor(party: PartyInventoryItem, input: Compatibility
   const api = consentApiOf(party.partyId, entry);
   if (api && input.consentApi) {
     // One reason per observation (evidence refs); one change per state kind, naming every observation.
-    const byState = new Map<string, { reason: string; where: string[] }>();
+    const byState = new Map<string, { reason: string; where: string[]; visits: Array<{ where: string; reason: string; granted?: string[] }> }>();
     input.consentApi.forEach((o, oi) => {
       o.states.forEach((s, si) => {
         if (s.api !== api) return;
         const ref = `/consentApi/${oi}/states/${si}`;
         const where = `${o.location}:${o.scenario}${o.run && o.run > 1 ? `#${o.run}` : ''}`;
         reasons.push({ source: 'consent-api', note: `${where}: ${s.reason}`, ref });
-        const g = byState.get(s.state) ?? { reason: s.reason, where: [] };
+        const g = byState.get(s.state) ?? { reason: s.reason, where: [], visits: [] };
         g.where.push(where);
+        g.visits.push({ where, reason: s.reason, ...(s.granted ? { granted: s.granted } : {}) });
         byState.set(s.state, g);
       });
     });
@@ -1019,26 +1020,41 @@ export function compatibilityFor(party: PartyInventoryItem, input: Compatibility
       } else if (state === 'not-called-after-refusal') {
         changes.push({ kind: 'call-consent-api', note: `${control?.api?.revoke ?? 'the revoke call'} was never made after the visitor refused (${seen})`, api: control?.api?.name });
       } else {
-        // Granting before a choice is the violation under opt-in rules; where none of
-        // the visits ran under them, say so instead of implying it is wrong everywhere.
-        // Strict wherever opt-in rules (or no known rules) applied, and for a visit
-        // that carried the Global Privacy Control signal in a state that must honor
-        // it: the signal is present at load, so granting on load ignores it. An
-        // opt-out through the site's link or settings comes AFTER the load: granting
-        // on load is the regime's expected default there, and whether the opt-out
-        // was honored is the behavior grid's question (after-opt-out-link cells).
-        const optInSeen = g.where.some((w) => {
-          const [loc, sc] = w.split('#')[0].split(':');
+        // Granting before a choice is the violation under opt-in rules (or no known
+        // rules). Under US opt-out rules it is the expected default, except for a
+        // visit carrying the Global Privacy Control signal in a state that must honor
+        // it — and the signal opts out of sale / sharing, so only an ADVERTISING type
+        // granted on load ignores it (analytics granted under GPC is the regime's
+        // default). A record without the granted types counts as strict. An opt-out
+        // through the site's link or settings comes AFTER the load: whether it was
+        // honored is the behavior grid's question (after-opt-out-link cells).
+        const strict = g.visits.filter((v) => {
+          const [loc, sc] = v.where.split('#')[0].split(':');
           const r = input.regimes?.[loc];
-          return r === 'opt-in' || r === undefined || r === 'unknown' || (r === 'opt-out-signal' && sc === 'gpc');
+          if (r === 'opt-in' || r === undefined || r === 'unknown') return true;
+          return r === 'opt-out-signal' && sc === 'gpc' && (!v.granted || v.granted.some((k) => /^ad_/i.test(k)));
         });
-        changes.push({
-          kind: 'call-consent-api',
-          note: optInSeen
-            ? `stop granting on load: ${g.reason} (${seen})`
-            : `granted before any choice (${seen}) — observed under US opt-out rules only, where that can be the expected default; under opt-in rules (EU/UK) it must not grant before a choice: make the default location-aware. ${g.reason}`,
-          api: control?.api?.name,
-        });
+        if (strict.length) {
+          changes.push({
+            kind: 'call-consent-api',
+            note: `stop granting on load: ${strict[0].reason} (${strict.length} visit(s): ${strict.map((v) => v.where).join(', ')})`,
+            api: control?.api?.name,
+          });
+        } else {
+          // Only under US opt-out rules. When a location under opt-in rules was
+          // observed with this API and it did not grant there, the default is
+          // already location-aware: nothing to change, say so.
+          const optInClean = input.consentApi.some((o) => input.regimes?.[o.location] === 'opt-in' && (o.apis as string[]).includes(api));
+          if (optInClean) {
+            reasons.push({ source: 'consent-api', note: `granted before any choice only under US opt-out rules (${seen}), where that is the expected default; under opt-in rules it did not grant before a choice — no change` });
+          } else {
+            changes.push({
+              kind: 'call-consent-api',
+              note: `granted before any choice (${seen}) — observed under US opt-out rules only, where that can be the expected default; under opt-in rules (EU/UK) it must not grant before a choice: make the default location-aware. ${g.reason}`,
+              api: control?.api?.name,
+            });
+          }
+        }
       }
     }
   }

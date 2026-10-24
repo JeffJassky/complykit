@@ -794,6 +794,8 @@ export const ConsentApiObservation = z.object({
       t: z.number(),
       phase: z.string(),
       reason: z.string(),
+      /** grant-on-load: the consent types set to 'granted' (absent on older records). */
+      granted: z.array(z.string()).optional(),
     }),
   ),
   unknowns: z.array(z.string()),

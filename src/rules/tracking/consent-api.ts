@@ -66,6 +66,8 @@ export interface ConsentApiState {
   reason: string;
   /** The calls (and, for ordering, the earlier event) that show it. */
   calls: ConsentApiCall[];
+  /** grant-on-load: every consent type the offending calls set to 'granted' (necessary types excluded). */
+  granted?: string[];
 }
 
 export interface ConsentApiAnalysis {
@@ -325,6 +327,7 @@ export function analyzeConsentApi(timeline: Timeline): ConsentApiAnalysis {
     if (!bad.length) continue;
     const first = bad[0];
     const how = first.action === 'default' ? 'a default of' : first.action === 'update' ? 'an update to' : 'a grant:';
+    const granted = [...new Set(bad.flatMap((c) => Object.entries(c.consent ?? {}).filter(([k, v]) => v === 'granted' && !isNecessaryType(k)).map(([k]) => k)))];
     states.push({
       state: 'grant-on-load',
       api,
@@ -332,6 +335,7 @@ export function analyzeConsentApi(timeline: Timeline): ConsentApiAnalysis {
       phase: first.phase,
       reason: `${CONSENT_API_LABEL[api]}: ${how} 'granted'${describeValues(first, 'granted')} at ${Math.round(first.t)} ms (${first.call}), ${PHASE_LABEL[first.phase]}.`,
       calls: bad,
+      ...(granted.length ? { granted } : {}),
     });
   }
 
@@ -370,7 +374,7 @@ export function summarizeConsentApi(timeline: Timeline): ConsentApiObservation {
         regional: c.regional,
         pageIndex: c.pageIndex,
       })),
-    states: a.states.map((s) => ({ state: s.state, api: s.api, t: s.t, phase: s.phase, reason: s.reason })),
+    states: a.states.map((s) => ({ state: s.state, api: s.api, t: s.t, phase: s.phase, reason: s.reason, ...(s.granted ? { granted: s.granted } : {}) })),
     unknowns: a.unknowns,
   };
 }

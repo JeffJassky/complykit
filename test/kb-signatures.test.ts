@@ -64,3 +64,18 @@ describe('KB inline signatures', () => {
     expect(entriesForText(DEFAULT_KB, `gtag('config','G-ABC123');${SNIPPETS['meta.pixel']}`)[0].id).toBe('meta.pixel');
   });
 });
+
+describe('Meta: consent calls alone are not an install', () => {
+  // A site's own consent guard (revoke Meta's consent on the banner's decline click) calls fbq but loads nothing:
+  // flagging it as a Meta tag to gate would tell the owner to switch the guard off.
+  it('a script whose only fbq calls are consent / LDU calls matches no Meta signature', () => {
+    for (const t of [
+      "if (typeof window.fbq === 'function') window.fbq('consent', 'revoke');",
+      'fbq( "consent" , "grant")',
+      "fbq('dataProcessingOptions', ['LDU'], 0, 0);",
+    ]) expect(a1(t), t).not.toContain('meta.pixel');
+  });
+  it('any other fbq call still does', () => {
+    for (const t of ["fbq('init','1');", "fbq('track', 'PageView');", "fbq('consent','revoke'); fbq('init','1');"]) expect(a1(t), t).toContain('meta.pixel');
+  });
+});

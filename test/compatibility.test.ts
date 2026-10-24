@@ -446,6 +446,28 @@ describe('actionability and wording', () => {
     expect(ca.changes.find((c) => /grant/.test(c.note))?.note).toMatch(/^stop granting on load/);
   });
 
+  it('A3 grant-on-load under GPC: only an advertising type ignores the signal; the change names only the offending visits', () => {
+    const grant = (location: string, scenario: string, granted: string[]) =>
+      observation({ location, scenario: scenario as ConsentApiObservation['scenario'], apis: ['google'], states: [{ state: 'grant-on-load', api: 'google', t: 10, phase: 'no-banner', reason: `${scenario}: granted ${granted.join(', ')}`, granted }] });
+    const ALL = ['analytics_storage', 'ad_storage', 'ad_user_data', 'ad_personalization'];
+    const p = () => party('google.analytics', 'direct-script');
+    const m = () => markup([finding('google.analytics', 'gateable')]);
+    // Texas: all granted with no signal (the regime's default); analytics only under GPC (ads denied). EU observed clean.
+    const tx = [grant('us-tx', 'do-nothing', ALL), grant('us-tx', 'gpc', ['analytics_storage']), grant('us-tx', 'opt-out-all', ['analytics_storage'])];
+    const eu = observation({ location: 'de', scenario: 'do-nothing', apis: ['google'] });
+    const regimes = { 'us-tx': 'opt-out-signal' as const, de: 'opt-in' as const };
+    const clean = compatibilityFor(p(), { markup: m(), consentApi: [...tx, eu], regimes });
+    expect(clean.changes.filter((c) => /grant/.test(c.note))).toEqual([]);
+    expect(clean.reasons.some((x) => /only under US opt-out rules .*no change/.test(x.note))).toBe(true);
+    // No opt-in location observed with the API: the location-aware advice stays.
+    const unseen = compatibilityFor(p(), { markup: m(), consentApi: tx, regimes });
+    expect(unseen.changes.find((c) => /grant/.test(c.note))?.note).toMatch(/US opt-out rules only.*location-aware/);
+    // An ad type granted under GPC is strict — and only that visit is named, with its own reason.
+    const ads = compatibilityFor(p(), { markup: m(), consentApi: [grant('us-tx', 'do-nothing', ALL), grant('us-tx', 'gpc', ['analytics_storage', 'ad_storage']), eu], regimes });
+    const note = ads.changes.find((c) => /grant/.test(c.note))?.note ?? '';
+    expect(note).toMatch(/^stop granting on load: gpc: granted analytics_storage, ad_storage \(1 visit\(s\): us-tx:gpc\)$/);
+  });
+
   it('platform: no vendor-API change the owner cannot make; the server-side gap is stated', () => {
     const r = compatibilityFor(party('meta.pixel', 'platform'), { platform: { name: 'shopify' }, markup: markup([]) });
     expect(kinds(r)).toEqual(['use-platform-api']);
@@ -473,6 +495,8 @@ describe('summarizeConsentApi: necessary Consent Mode types are not a grant', ()
     const o = summarizeConsentApi(tl({ security_storage: 'granted', analytics_storage: 'granted' }));
     expect(o.states.map((s) => s.state)).toEqual(['grant-on-load']);
     expect(o.states[0].reason).toMatch(/\(analytics_storage\)/);
+    // The granted types are recorded (necessary types excluded), so a GPC visit can be judged by them.
+    expect(o.states[0].granted).toEqual(['analytics_storage']);
   });
 });
 

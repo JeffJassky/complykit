@@ -145,7 +145,8 @@ const BASE_ENTRIES: KnowledgeEntryInput[] = [
     id: 'meta.pixel',
     vendor: 'Meta Pixel',
     owner: 'Meta Platforms, Inc.',
-    match: { hosts: ['facebook.com', 'facebook.net', 'fbcdn.net'], inline: ['\\bfbq\\s*\\(', 'connect\\.facebook\\.net/[^"\'\\s]*fbevents\\.js', 'facebook\\.com/tr[/?]'],
+    // A script whose only fbq calls are consent / LDU calls (a site's own consent guard) does not install the pixel.
+    match: { hosts: ['facebook.com', 'facebook.net', 'fbcdn.net'], inline: ['\\bfbq\\s*\\((?!\\s*[\'"](?:consent|dataProcessingOptions)[\'"])', 'connect\\.facebook\\.net/[^"\'\\s]*fbevents\\.js', 'facebook\\.com/tr[/?]'],
       // Conversions API Gateway: runs in the advertiser's own cloud account (AWS ECS/EKS, GCP), so on a host no
       // KB entry knows (on.aws, a site subdomain); the pixel sends each event to Meta and to the gateway.
       gateways: [{ loaders: ['connect\\.facebook\\.net/[^"\'\\s]*fbevents\\.js'], paths: ['^/events(?:/|$)'], note: 'Meta Conversions API Gateway (the /events path is observed in the field, allen-heath.com 2026-10-21; the docs do not name it)' }],
