@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { regimeFor } from '../../src/registry/regime';
 import { type Browser, type Page } from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resolveLocation, readGpc, sameOriginEndpoint, type LocationEnv } from '../src/location';
@@ -117,16 +118,51 @@ describe('resolveLocation (unit)', () => {
     expect(await slow.ready).toMatchObject({ regime: 'opt-in', source: 'unknown' });
   });
 
-  it('platform: Shopify customerPrivacy region, read only when already loaded', () => {
+  it('platform: Shopify customerPrivacy region, decided at once when the API is already loaded', () => {
     const cfg = baseConfig({ kind: 'platform' });
     const shop = (region: unknown): LocationEnv['window'] => ({ Shopify: { customerPrivacy: { getRegion: () => region } } });
-    expect(resolveLocation(cfg, { document: noDoc, window: shop('USCA'), onDate: ON }).initial).toMatchObject({ regime: 'opt-out-signal', source: 'platform' });
+    expect(resolveLocation(cfg, { document: noDoc, window: shop('USCA'), onDate: ON }).initial).toMatchObject({ regime: 'opt-out-signal', source: 'platform', pending: false });
     expect(resolveLocation(cfg, { document: noDoc, window: shop('FR'), onDate: ON }).initial).toMatchObject({ regime: 'opt-in', source: 'platform' });
     expect(resolveLocation(cfg, { document: noDoc, window: shop('USTX'), onDate: ON }).initial.regime).toBe('opt-out-signal');
-    // Not loaded / throws / junk → unknown → strictest.
-    expect(resolveLocation(cfg, { document: noDoc, window: {}, onDate: ON }).initial).toMatchObject({ regime: 'opt-in', source: 'unknown' });
-    const throwing: LocationEnv['window'] = { Shopify: { customerPrivacy: { getRegion: () => { throw new Error('x'); } } } };
-    expect(resolveLocation(cfg, { document: noDoc, window: throwing, onDate: ON }).initial.source).toBe('unknown');
+  });
+
+  // Shopify creates customerPrivacy only when something calls Shopify.loadFeatures (its own banner does not
+  // expose it), and window.Shopify itself may appear after the tool's script. Like the header lookup: strict
+  // while pending, then the platform's region; HEADER_TIMEOUT_MS (env.timeoutMs) then unknown.
+  it('platform: not loaded yet: pending, asks Shopify.loadFeatures once, then the region', async () => {
+    const cfg = baseConfig({ kind: 'platform' });
+    const calls: unknown[] = [];
+    const win: any = { Shopify: { loadFeatures: (f: unknown, cb: (e?: unknown) => void) => { calls.push(f); setTimeout(() => { win.Shopify.customerPrivacy = { getRegion: () => 'USFL' }; cb(); }, 30); } } };
+    const r = resolveLocation(cfg, { document: noDoc, window: win, onDate: ON, timeoutMs: 1000 });
+    expect(r.initial).toMatchObject({ regime: 'opt-in', pending: true });
+    const d = await r.ready;
+    expect(d).toMatchObject({ source: 'platform', location: { country: 'US', region: 'FL' }, pending: false });
+    expect(d.regime).toBe(regimeFor({ country: 'US', region: 'FL' }, ON));
+    expect(calls).toEqual([[{ name: 'consent-tracking-api', version: '0.1' }]]);
+  });
+
+  it('platform: window.Shopify appears after the tool: it waits for it', async () => {
+    const cfg = baseConfig({ kind: 'platform' });
+    const win: any = {};
+    setTimeout(() => (win.Shopify = { customerPrivacy: { getRegion: () => 'DE' } }), 150);
+    const r = resolveLocation(cfg, { document: noDoc, window: win, onDate: ON, timeoutMs: 1000 });
+    expect(r.initial.pending).toBe(true);
+    expect(await r.ready).toMatchObject({ source: 'platform', location: { country: 'DE' }, regime: 'opt-in' });
+  });
+
+  it('platform: never loads / throws / junk region: unknown, strictest, after the timeout', async () => {
+    const cfg = baseConfig({ kind: 'platform' });
+    const cases: any[] = [
+      {},
+      { Shopify: { customerPrivacy: { getRegion: () => { throw new Error('x'); } } } },
+      { Shopify: { customerPrivacy: { getRegion: () => '' } } },
+      { Shopify: { loadFeatures: () => { throw new Error('x'); } } },
+    ];
+    for (const win of cases) {
+      const r = resolveLocation(cfg, { document: noDoc, window: win, onDate: ON, timeoutMs: 60 });
+      expect(r.initial).toMatchObject({ regime: 'opt-in', pending: true });
+      expect(await r.ready).toMatchObject({ regime: 'opt-in', source: 'unknown', pending: false });
+    }
   });
 
   it('GPC is read from navigator and reported with every decision', () => {
@@ -235,8 +271,9 @@ describe('location in the browser', () => {
     await page.context().close();
   });
 
-  it('unknown: no meta, no platform → strictest', async () => {
+  it('unknown: no meta, no platform → strictest (once the platform wait times out)', async () => {
     const { page } = await open({ config: baseConfig({ kind: 'platform' }) });
+    await page.waitForTimeout(3300);
     const s = await state(page);
     expect(s.regime).toBe('opt-in');
     expect(s.categories).toEqual({ necessary: true, analytics: false, advertising: false });

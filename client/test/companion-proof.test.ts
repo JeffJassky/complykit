@@ -498,6 +498,24 @@ describe('add-on proof: re-review fixes', () => {
   });
 });
 
+describe('add-on proof: Shopify platform location', () => {
+  // Walrus-like: location from Shopify's customerPrivacy.getRegion(), which exists only after Shopify.loadFeatures.
+  const SHOPIFY_LAZY_REGION = `<script>window.__loads=0;window.Shopify={loadFeatures:function(f,cb){window.__loads++;setTimeout(function(){var s={analytics:'yes',marketing:'yes',preferences:'yes',sale_of_data:'yes'};window.Shopify.customerPrivacy={currentVisitorConsent:function(){return s},getRegion:function(){return 'USFL'}};cb();},80);}};</script>`;
+
+  it('the record carries the region Shopify reports, and the regime for it', async () => {
+    const o = await open(companionConfig('shopify', { regimeSource: { kind: 'platform' } }), SHOPIFY_LAZY_REGION);
+    await settle(o.page, 800);
+    const s = await get(o.page);
+    expect(s).toMatchObject({ status: 'chosen', location: { country: 'US', region: 'FL' } });
+    expect(await o.page.evaluate(() => (window as any).ComplyKit.diagnostics.location)).toMatchObject({ source: 'platform', pending: false });
+    const c = await snapshot(o);
+    expect(c).toMatchObject({ region: 'US-FL', regime: s.regime, source: 'shopify' });
+    expect(o.posts).toHaveLength(1);
+    expect(o.posts[0]).toMatchObject({ region: 'US-FL', regime: s.regime });
+    await o.ctx.close();
+  });
+});
+
 describe('add-on proof: full mode', () => {
   it('a full-mode record carries no source', async () => {
     const o = await open({ ...companionConfig('onetrust'), mode: undefined, companion: undefined }, '');
