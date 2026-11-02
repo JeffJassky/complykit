@@ -451,6 +451,53 @@ window.__cm=function(u){localStorage.setItem('__fakeCm',JSON.stringify(u));gtag(
   });
 });
 
+describe('add-on proof: re-review fixes', () => {
+  it('a location that settles before the banner speaks moves the pre-answer defaults (and stays if the banner never comes)', async () => {
+    const base = companionConfig('shopify', { regimeSource: { kind: 'header', header: 'cf-ipcountry', endpoint: '/geo-fast' } });
+    const ctx = await browser.newContext();
+    await ctx.route('**/geo-fast', (route) => route.fulfill({ contentType: 'text/plain', body: 'US-TX', headers: { 'access-control-allow-origin': '*' } }));
+    // No Shopify API at all: the banner is never found.
+    const o = await open(base, '', 'none', ctx);
+    await settle(o.page, 800);
+    const s = await get(o.page);
+    expect(s).toMatchObject({ status: 'unset', location: { country: 'US', region: 'TX' } });
+    const want = await o.page.evaluate(() => {
+      const st = (window as any).ComplyKit.get();
+      return st.regime;
+    });
+    expect(want).not.toBe('opt-in');
+    // The settled regime's defaults (example.json: analytics is on by default outside opt-in), not the strict fallback's.
+    const cfg = base.categories.find((c: any) => c.id === 'analytics');
+    expect(s.categories.analytics).toBe(cfg.defaultByRegime[s.regime]);
+    await expectNothingWritten(o);
+    await o.ctx.close();
+  });
+
+  it('manual: a partial ComplyKit.sync keeps the earlier answer in the proof (no false withdrawal)', async () => {
+    const o = await open(companionConfig('manual'), '');
+    await o.page.evaluate(() => (window as any).ComplyKit.sync({ analytics: true }));
+    await settle(o.page);
+    await o.page.evaluate(() => (window as any).ComplyKit.sync({ advertising: true }));
+    await settle(o.page);
+    expect(await get(o.page)).toMatchObject({ categories: { analytics: true, advertising: true } });
+    const c = await snapshot(o);
+    expect(c).toMatchObject({ kind: 'choice', categories: { analytics: true, advertising: true } });
+    expect(o.posts.map((p) => p.kind)).toEqual(['choice', 'choice']);
+    await o.ctx.close();
+  });
+
+  it('a live answer after the location settled is written at once: sync returns the chosen state', async () => {
+    const cfg = companionConfig('manual', { regimeSource: { kind: 'header', header: 'cf-ipcountry', endpoint: '/geo-fast' } });
+    const ctx = await browser.newContext();
+    await ctx.route('**/geo-fast', (route) => route.fulfill({ contentType: 'text/plain', body: 'US-TX', headers: { 'access-control-allow-origin': '*' } }));
+    const o = await open(cfg, '', 'none', ctx);
+    await settle(o.page, 600);
+    const r = await o.page.evaluate(() => (window as any).ComplyKit.sync({ analytics: true, advertising: true }));
+    expect(r).toMatchObject({ status: 'chosen', region: 'US-TX' });
+    await o.ctx.close();
+  });
+});
+
 describe('add-on proof: full mode', () => {
   it('a full-mode record carries no source', async () => {
     const o = await open({ ...companionConfig('onetrust'), mode: undefined, companion: undefined }, '');
