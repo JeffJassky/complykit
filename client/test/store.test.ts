@@ -453,7 +453,7 @@ describe('consent state store', () => {
     await h.ctx.close();
   });
 
-  it('add-on (companion) mode keeps no outbox', async () => {
+  it("add-on (companion) mode: the store's own acceptAll writes nothing (only the site banner's answer is proof, companion-proof.test.ts)", async () => {
     const cfg = baseConfig();
     cfg.mode = 'companion';
     cfg.companion = { cmp: 'onetrust' };

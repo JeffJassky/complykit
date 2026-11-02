@@ -2,11 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { type Browser, type BrowserContext, type Page } from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { normalizeRecord } from '../../service/src/server/consent-records';
 import { DIST, launchBrowser, startFixtureServer, type FixtureServer } from './harness';
 
 // T6 contract (plans/hosted-script.md "Add-on mode"): the site keeps its own
 // banner; complykit follows that banner's choice and deletes the cookies of
-// what the visitor revokes. No UI, no records. It reloads only when the banner takes a grant back after the
+// what the visitor revokes. No UI. Proof of the banner's answer (snapshot + record) is
+// companion-proof.test.ts's contract; here a record, when one is sent, is only checked to be valid. It reloads only when the banner takes a grant back after the
 // page's first answer (a running script cannot be unloaded); the follow-and-clean tests pin
 // data-complykit-reload="none" to look at the page before that reload. Fake banners below
 // mimic each vendor's documented surface; the implementer checks those surfaces
@@ -94,14 +96,15 @@ async function expectFollowsAndCleans(o: Opened, revoke: string): Promise<void> 
   expect(await state(o.page)).toMatchObject({ analytics: false, advertising: true });
   // The analytics cookie is gone; the still-granted advertising cookie and the site's own cookie stay.
   expect(await cookies(o.page)).toEqual(['_fbp', 'site_pref']);
-  // No reload (pinned off here), no UI, no consent record.
+  // No reload (pinned off here), no UI. Any record sent is valid and the last one is the revoke.
   expect(await o.page.evaluate(() => (window as any).__marker)).toBe(1);
   expect(await o.page.$('#complykit-ui')).toBeNull();
   expect(server.requests).not.toContain('/complykit-consent-ui.js');
-  expect(o.posts).toEqual([]);
+  for (const p of o.posts) normalizeRecord(JSON.parse(p), 'example-shop.test');
+  if (o.posts.length) expect(JSON.parse(o.posts[o.posts.length - 1]).categories).toMatchObject({ analytics: false, advertising: true });
 }
 
-const ONETRUST = `<script>window.OnetrustActiveGroups=',C0001,C0002,C0004,';window.OneTrust={GetDomainData:function(){return{}}};</script>`;
+const ONETRUST = `<script>window.OnetrustActiveGroups=',C0001,C0002,C0004,';window.OneTrust={GetDomainData:function(){return{}},IsAlertBoxClosed:function(){return true}};</script>`;
 const ONETRUST_REVOKE = `window.OnetrustActiveGroups=',C0001,C0004,';window.dispatchEvent(new CustomEvent('OneTrustGroupsUpdated',{detail:['C0001','C0004']}));`;
 
 const COOKIEBOT = `<script>window.Cookiebot={consented:true,declined:false,hasResponse:true,consent:{necessary:true,preferences:true,statistics:true,marketing:true}};</script>`;

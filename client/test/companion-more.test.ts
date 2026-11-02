@@ -3,6 +3,7 @@ import path from 'node:path';
 import { type Browser, type BrowserContext, type Page } from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DEFAULT_MAPS } from '../src/companion/maps';
+import { normalizeRecord } from '../../service/src/server/consent-records';
 import { DIST, launchBrowser, startFixtureServer, type FixtureServer } from './harness';
 
 // T6 add-on mode, the sources companion.test.ts does not cover: usercentrics, didomi, trustarc, wordpress,
@@ -84,7 +85,8 @@ async function expectFollowsAndCleans(o: Opened, revoke: string): Promise<void> 
   expect(await o.page.evaluate(() => (window as any).__marker)).toBe(1);
   expect(await o.page.$('#complykit-ui')).toBeNull();
   expect(server.requests).not.toContain('/complykit-consent-ui.js');
-  expect(o.posts).toEqual([]);
+  for (const p of o.posts) normalizeRecord(JSON.parse(p), 'example-shop.test');
+  if (o.posts.length) expect(JSON.parse(o.posts[o.posts.length - 1]).categories).toMatchObject({ analytics: false, advertising: true });
 }
 
 // Usercentrics CMP v2: UC_UI.getServicesBaseInfo() with consent.status per service and a categorySlug;
@@ -153,7 +155,8 @@ describe('add-on mode: the remaining sources', () => {
     await settle(o.page);
     expect(await state(o.page)).toMatchObject({ analytics: false, advertising: false });
     expect(await cookies(o.page)).toEqual(['site_pref']);
-    expect(o.posts).toEqual([]);
+    // TrustArc cannot say whether the visitor answered: the page's first state is not recorded, the live revoke is.
+    expect(o.posts.map((p) => JSON.parse(p))).toMatchObject([{ source: 'trustarc', categories: { analytics: false, advertising: false } }]);
     expect(await o.page.$('#complykit-ui')).toBeNull();
     await o.ctx.close();
   });

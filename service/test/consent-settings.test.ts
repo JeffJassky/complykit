@@ -82,10 +82,10 @@ describe('hostedConfig with settings', () => {
     expect(out.hash).toBe(configHash(out));
   });
 
-  it('companion: mode + cmp, no consent record endpoint, analytics kept', () => {
+  it('companion: mode + cmp, the consent record endpoint and analytics kept (add-on mode keeps proof too)', () => {
     const out = hostedConfig(example(), ORIGIN, { mode: 'companion', cmp: 'onetrust' });
     expect(out).toMatchObject({ mode: 'companion', companion: { cmp: 'onetrust' }, analytics: { endpoint: `${ORIGIN}/e` } });
-    expect(out.record).toBeUndefined();
+    expect(out.record).toEqual({ endpoint: `${ORIGIN}/api/consent-records` });
     expect(out.hash).toBe(configHash(out));
   });
 
