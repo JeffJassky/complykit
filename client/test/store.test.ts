@@ -39,6 +39,8 @@ interface Harness {
   records: Array<{ body: string; contentType: string | undefined }>;
   /** Serve this config on the next load. */
   setConfig(c: unknown): void;
+  /** What the record endpoint answers from now on: an HTTP status, or 'abort' (network failure). Default 204. */
+  setRecordAnswer(a: number | 'abort'): void;
   load(): Promise<void>;
 }
 
@@ -47,6 +49,7 @@ async function harness(config: unknown): Promise<Harness> {
   const page = await ctx.newPage();
   const records: Harness['records'] = [];
   let current = config;
+  let answer: number | 'abort' = 204;
   await page.route('**/store-page', (route) =>
     route.fulfill({
       contentType: 'text/html; charset=utf-8',
@@ -58,7 +61,8 @@ async function harness(config: unknown): Promise<Harness> {
   await page.route('**/consent-record', async (route) => {
     const req = route.request();
     records.push({ body: req.postData() ?? '', contentType: req.headers()['content-type'] });
-    await route.fulfill({ status: 204 });
+    if (answer === 'abort') await route.abort('failed');
+    else await route.fulfill({ status: answer, headers: { 'access-control-allow-origin': '*' } });
   });
   return {
     ctx,
@@ -66,6 +70,9 @@ async function harness(config: unknown): Promise<Harness> {
     records,
     setConfig: (c) => {
       current = c;
+    },
+    setRecordAnswer: (a) => {
+      answer = a;
     },
     load: async () => {
       await page.goto(`${server.origin}/store-page`);
@@ -189,8 +196,11 @@ describe('consent state store', () => {
     expect(h.records).toHaveLength(1);
     expect(h.records[0].contentType).toMatch(/^text\/plain/);
     const body = JSON.parse(h.records[0].body);
-    expect(Object.keys(body).sort()).toEqual(['at', 'categories', 'configHash', 'gpc', 'id', 'regime', 'toolVersion']);
-    expect(body).toEqual({ id: s.id, at: s.at, categories: { necessary: true, analytics: true, advertising: false }, configHash: baseConfig().hash, toolVersion: '0.0.0', regime: 'opt-in', gpc: false });
+    // A first decision: no `supersedes`, no `region` (no location reported on this fixture).
+    expect(Object.keys(body).sort()).toEqual(['at', 'categories', 'configHash', 'gpc', 'gpcHonored', 'id', 'kind', 'regime', 'toolVersion']);
+    expect(body).toEqual({ id: s.id, at: s.at, kind: 'choice', categories: { necessary: true, analytics: true, advertising: false }, configHash: baseConfig().hash, toolVersion: '0.0.0', regime: 'opt-in', gpc: false, gpcHonored: false });
+    expect(s).toMatchObject({ kind: 'choice' });
+    expect(s.supersedes).toBeUndefined();
     // Exactly what the F4 endpoint accepts.
     expect(() => normalizeRecord(body, 'example.test')).not.toThrow();
 
@@ -210,7 +220,11 @@ describe('consent state store', () => {
     const wb = JSON.parse(h.records[1].body);
     expect(wb.id).not.toBe(body.id); // one id per decision: the service de-dups on it
     expect(wb.categories).toEqual({ necessary: true, analytics: false, advertising: false });
+    // It took back a grant: a withdrawal, chained to the decision it replaces.
+    expect(wb).toMatchObject({ kind: 'withdrawal', supersedes: body.id });
+    expect(w.state).toMatchObject({ kind: 'withdrawal', supersedes: body.id });
     expect(() => normalizeRecord(wb, 'example.test')).not.toThrow();
+    expect(normalizeRecord(wb, 'example.test')).toMatchObject({ kind: 'withdrawal', supersedes: body.id });
     await h.ctx.close();
   });
 
@@ -228,7 +242,21 @@ describe('consent state store', () => {
       ck.init(JSON.parse(document.getElementById('complykit-config')!.textContent!)).set({ analytics: true });
     });
     await waitFor(() => h.records.length >= 1);
-    expect(JSON.parse(h.records[0].body)).toMatchObject({ regime: 'opt-out', gpc: true, categories: { analytics: true, advertising: false } });
+    expect(JSON.parse(h.records[0].body)).toMatchObject({ regime: 'opt-out', gpc: true, gpcHonored: true, categories: { analytics: true, advertising: false } });
+    await h.ctx.close();
+  });
+
+  it('records gpcHonored false when the owner turned GPC honoring off', async () => {
+    const cfg = baseConfig();
+    cfg.regimeSource = { kind: 'fixed', regime: 'opt-out' };
+    cfg.overrides = { honorGpc: false };
+    const h = await harness(cfg);
+    await h.ctx.addInitScript(() => Object.defineProperty(Navigator.prototype, 'globalPrivacyControl', { get: () => true }));
+    await h.load();
+    await h.page.evaluate(() => (window as any).ComplyKit.init(JSON.parse(document.getElementById('complykit-config')!.textContent!)).rejectAll());
+    await waitFor(() => h.records.length >= 1);
+    expect(JSON.parse(h.records[0].body)).toMatchObject({ gpc: true, gpcHonored: false });
+    expect(JSON.parse(decodeURIComponent((await cookie(h.ctx))!.value))).toMatchObject({ gpc: true, gpcHonored: false });
     await h.ctx.close();
   });
 
@@ -238,6 +266,152 @@ describe('consent state store', () => {
     const h = await harness(cfg);
     await h.load();
     expect(await get(h.page)).toBeNull();
+    await h.ctx.close();
+  });
+
+  it('the cookie is a complete snapshot of the current decision: kind, supersedes, gpcHonored, region', async () => {
+    const h = await harness(baseConfig());
+    await h.load();
+    const first = await h.page.evaluate(() => {
+      const ck = (window as any).ComplyKit;
+      const store = ck.init(JSON.parse(document.getElementById('complykit-config')!.textContent!));
+      ck.setRegion('US-CA');
+      store.rejectAll();
+      return ck.get();
+    });
+    // Rejecting with nothing granted before is a choice, not a withdrawal.
+    expect(first).toMatchObject({ status: 'chosen', kind: 'choice', region: 'US-CA' });
+    expect(first.supersedes).toBeUndefined();
+    const c1 = JSON.parse(decodeURIComponent((await cookie(h.ctx))!.value));
+    expect(c1).toMatchObject({ v: 1, id: first.id, kind: 'choice', gpcHonored: false, region: 'US-CA' });
+    expect('supersedes' in c1).toBe(false);
+
+    // A later grant replaces it: a choice, chained to the first.
+    const second = await h.page.evaluate(() => {
+      const ck = (window as any).ComplyKit;
+      ck.init(JSON.parse(document.getElementById('complykit-config')!.textContent!)).set({ analytics: true });
+      return ck.get();
+    });
+    expect(second).toMatchObject({ kind: 'choice', supersedes: first.id, region: 'US-CA' });
+    const c2 = JSON.parse(decodeURIComponent((await cookie(h.ctx))!.value));
+    expect(c2).toMatchObject({ id: second.id, kind: 'choice', supersedes: first.id, region: 'US-CA' });
+    // The mirror holds the same JSON.
+    expect(JSON.parse((await h.page.evaluate(() => localStorage.getItem('complykit_consent')))!)).toEqual(c2);
+
+    // After a reload the state still reports them.
+    await h.load();
+    expect(await get(h.page)).toMatchObject({ status: 'chosen', id: second.id, kind: 'choice', supersedes: first.id, region: 'US-CA' });
+
+    // Taking back analytics in the settings layer (not withdraw()) is also a withdrawal.
+    const third = await h.page.evaluate(() => {
+      const ck = (window as any).ComplyKit;
+      ck.init(JSON.parse(document.getElementById('complykit-config')!.textContent!)).set({ advertising: true });
+      return ck.get();
+    });
+    expect(third).toMatchObject({ kind: 'withdrawal', supersedes: second.id });
+    await h.ctx.close();
+  });
+
+  it('keeps a stored value written before these fields existed (no re-prompt)', async () => {
+    const h = await harness(baseConfig());
+    await h.load();
+    const old = { v: 1, id: 'a'.repeat(32), at: new Date().toISOString(), configHash: baseConfig().hash, regime: 'opt-in', gpc: false, categories: { necessary: true, analytics: true, advertising: false } };
+    await h.page.evaluate((j) => localStorage.setItem('complykit_consent', j), JSON.stringify(old));
+    await h.load();
+    const s = await get(h.page);
+    expect(s).toMatchObject({ status: 'chosen', id: old.id, categories: { analytics: true } });
+    expect(s.kind).toBeUndefined();
+    expect(s.supersedes).toBeUndefined();
+    await h.ctx.close();
+  });
+
+  it('a record the endpoint did not confirm is kept and resent on the next page, then dropped', async () => {
+    const h = await harness(baseConfig());
+    h.setRecordAnswer('abort');
+    await h.load();
+    const s = await h.page.evaluate(() => {
+      const ck = (window as any).ComplyKit;
+      ck.init(JSON.parse(document.getElementById('complykit-config')!.textContent!)).set({ analytics: true });
+      return ck.get();
+    });
+    await waitFor(() => h.records.length >= 1);
+    const outbox = async () => JSON.parse((await h.page.evaluate(() => localStorage.getItem('complykit_consent_outbox'))) ?? '[]');
+    await waitFor(() => false, 300);
+    expect((await outbox()).map((r: any) => r.id)).toEqual([s.id]);
+
+    // A server error is not a confirmation either.
+    h.setRecordAnswer(503);
+    await h.load();
+    await waitFor(() => h.records.length >= 2);
+    await waitFor(() => false, 300);
+    expect((await outbox()).map((r: any) => r.id)).toEqual([s.id]);
+
+    // Delivered: the same record (same id: the service de-duplicates), then the outbox is empty.
+    h.setRecordAnswer(204);
+    await h.load();
+    await waitFor(() => h.records.length >= 3);
+    expect(JSON.parse(h.records[2].body)).toEqual(JSON.parse(h.records[0].body));
+    await waitFor(() => false, 300);
+    expect(await outbox()).toEqual([]);
+
+    // Nothing left: the next page sends nothing.
+    await h.load();
+    await waitFor(() => false, 300);
+    expect(h.records).toHaveLength(3);
+    await h.ctx.close();
+  });
+
+  it('a confirmed record leaves nothing behind; a 4xx refusal (other than 429) is dropped, not retried', async () => {
+    const h = await harness(baseConfig());
+    await h.load();
+    await h.page.evaluate(() => (window as any).ComplyKit.init(JSON.parse(document.getElementById('complykit-config')!.textContent!)).acceptAll());
+    await waitFor(() => h.records.length >= 1);
+    await waitFor(() => false, 300);
+    expect(await h.page.evaluate(() => localStorage.getItem('complykit_consent_outbox') ?? '[]')).toBe('[]');
+
+    h.setRecordAnswer(400);
+    await h.page.evaluate(() => (window as any).ComplyKit.init(JSON.parse(document.getElementById('complykit-config')!.textContent!)).rejectAll());
+    await waitFor(() => h.records.length >= 2);
+    await waitFor(() => false, 300);
+    expect(await h.page.evaluate(() => localStorage.getItem('complykit_consent_outbox') ?? '[]')).toBe('[]');
+    await h.load();
+    await waitFor(() => false, 300);
+    expect(h.records).toHaveLength(2);
+    await h.ctx.close();
+  });
+
+  it('drops an undelivered record older than 30 days, and keeps at most 5', async () => {
+    const h = await harness(baseConfig());
+    await h.load();
+    const body = (id: string, at: string) => ({ id, at, kind: 'choice', categories: { necessary: true, analytics: false, advertising: false }, configHash: baseConfig().hash, toolVersion: '0.0.0', regime: 'opt-in', gpc: false, gpcHonored: false });
+    const stale = body('b'.repeat(32), new Date(Date.now() - 31 * 86_400_000).toISOString());
+    const fresh = body('c'.repeat(32), new Date().toISOString());
+    await h.page.evaluate((j) => localStorage.setItem('complykit_consent_outbox', j), JSON.stringify([stale, fresh]));
+    await h.load();
+    await waitFor(() => h.records.length >= 1);
+    await waitFor(() => false, 300);
+    expect(h.records.map((r) => JSON.parse(r.body).id)).toEqual([fresh.id]);
+
+    h.setRecordAnswer('abort');
+    for (let i = 0; i < 7; i++) {
+      await h.page.evaluate(() => (window as any).ComplyKit.init(JSON.parse(document.getElementById('complykit-config')!.textContent!)).rejectAll());
+    }
+    await waitFor(() => false, 500);
+    const ob = JSON.parse((await h.page.evaluate(() => localStorage.getItem('complykit_consent_outbox')))!);
+    expect(ob).toHaveLength(5);
+    await h.ctx.close();
+  });
+
+  it('add-on (companion) mode keeps no outbox', async () => {
+    const cfg = baseConfig();
+    cfg.mode = 'companion';
+    cfg.companion = { cmp: 'onetrust' };
+    const h = await harness(cfg);
+    await h.load();
+    await h.page.evaluate(() => (window as any).ComplyKit.init(JSON.parse(document.getElementById('complykit-config')!.textContent!)).acceptAll());
+    await waitFor(() => false, 300);
+    expect(h.records).toHaveLength(0);
+    expect(await h.page.evaluate(() => localStorage.getItem('complykit_consent_outbox'))).toBeNull();
     await h.ctx.close();
   });
 });

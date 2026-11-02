@@ -37,6 +37,14 @@ describe('normalizeRecord', () => {
     expect(r).toMatchObject({ id: 'k3j9x0aa81QmZp72fD', gpc: true, receivedAt: '2026-10-06T00:00:00.000Z', regime: 'opt-in' });
   });
 
+  it('keeps kind, supersedes, gpcHonored and region; each is optional (an older client sends none)', () => {
+    const r = normalizeRecord(record({ kind: 'withdrawal', supersedes: 'prev00000000000000id', gpc: true, gpcHonored: false, region: 'US-CA' }), 'example-shop.test');
+    expect(r).toMatchObject({ kind: 'withdrawal', supersedes: 'prev00000000000000id', gpc: true, gpcHonored: false, region: 'US-CA' });
+    expect(normalizeRecord(record({ kind: 'choice', region: 'DE' }), 'example-shop.test')).toMatchObject({ kind: 'choice', region: 'DE' });
+    const bare = normalizeRecord(record(), 'example-shop.test');
+    for (const k of ['kind', 'supersedes', 'gpcHonored', 'region']) expect(k in bare, k).toBe(false);
+  });
+
   it('rejects unknown and identifying fields', () => {
     for (const f of ['ip', 'userAgent', 'email', 'cookie', 'url', 'referrer', 'extra']) {
       expect(() => normalizeRecord(record({ [f]: 'x' }), 'example-shop.test')).toThrow(/unknown field/);
@@ -57,6 +65,15 @@ describe('normalizeRecord', () => {
       { toolVersion: 7 },
       { regime: 'Opt In' },
       { gpc: 'true' },
+      { kind: 'grant' },
+      { kind: 1 },
+      { supersedes: 'short' },
+      { supersedes: '=cmd|calc-aaaaaaaaaa' },
+      { gpcHonored: 'false' },
+      { region: 'California' },
+      { region: 'us-ca' },
+      { region: 'US-CA-LA' },
+      { region: 'US-' },
     ];
     for (const b of bad) expect(() => normalizeRecord(record(b), 'example-shop.test'), JSON.stringify(b)).toThrow();
     expect(() => normalizeRecord('x', 'example-shop.test')).toThrow();
@@ -141,7 +158,7 @@ describe('GET /api/sites/:domain/consent-records', () => {
     const s = await startService({ password: 'pw' });
     const post = (b: object) => request(s.app).post('/api/consent-records').set('Origin', ORIGIN).send(b).expect(204);
     await post(record());
-    await post(record({ id: 'second0000000000id', gpc: true, categories: { analytics: false, marketing: false, functional: true } }));
+    await post(record({ id: 'second0000000000id', kind: 'withdrawal', supersedes: 'k3j9x0aa81QmZp72fD', gpc: true, gpcHonored: true, region: 'US-CA', categories: { analytics: false, marketing: false, functional: true } }));
     await post(record()); // a retried POST: same id
     return s;
   }
@@ -160,10 +177,12 @@ describe('GET /api/sites/:domain/consent-records', () => {
     const res = await auth(request(s.app).get('/api/sites/example-shop.test/consent-records?format=csv')).expect(200);
     expect(res.headers['content-type']).toMatch(/text\/csv/);
     const rows = res.text.trim().split('\r\n');
-    expect(rows[0]).toBe('id,at,receivedAt,regime,gpc,configHash,toolVersion,category:analytics,category:functional,category:marketing');
+    expect(rows[0]).toBe('id,at,receivedAt,kind,supersedes,regime,region,gpc,gpcHonored,configHash,toolVersion,category:analytics,category:functional,category:marketing');
     expect(rows).toHaveLength(3);
     expect(rows[1].endsWith(',true,,false')).toBe(true);
-    expect(rows[2].split(',')[4]).toBe('true');
+    // A record without the optional fields leaves their cells empty.
+    expect(rows[1].split(',').slice(3, 9)).toEqual(['', '', 'opt-in', '', '', '']);
+    expect(rows[2].split(',').slice(3, 9)).toEqual(['withdrawal', 'k3j9x0aa81QmZp72fD', 'opt-in', 'US-CA', 'true', 'true']);
   });
 
   it('is behind the password, validates format and domain, and 404s an unknown site', async () => {
