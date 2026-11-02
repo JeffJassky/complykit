@@ -175,9 +175,9 @@ export function sync(choice: Record<string, boolean>, initial?: boolean, answere
   const wait = locationPending();
   const mine = ++proofSeq;
   const s = store.follow(choice, answered, initial, !!wait);
-  if (wait) void wait.then(() => store && mine === proofSeq && store.follow(choice, answered, initial));
+  const proof = wait?.then(() => void (store && mine === proofSeq && store.follow(choice, answered, initial)));
   if (!initial && Object.keys(before).some((k) => before[k] !== s.categories[k])) report({ t: 'decide', action: 'save', via: 'cmp', categories: s.categories });
-  // A grant taken back after the page's first answer: clean up (done by the store change) and reload.
-  if (!initial && Object.keys(before).some((k) => before[k] && !s.categories[k])) companionRevoked();
+  // A grant taken back after the page's first answer: clean up (done by the store change) and reload, after a held proof is queued.
+  if (!initial && Object.keys(before).some((k) => before[k] && !s.categories[k])) proof ? void proof.then(companionRevoked) : companionRevoked();
   return s;
 }
