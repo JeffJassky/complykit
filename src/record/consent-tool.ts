@@ -257,6 +257,8 @@ function decodeShopify(raw: string): Decoded | undefined {
 // complykit's own consent cookie (client/src/store.ts, format 1), urlencoded JSON:
 //   {"v":1,"id":"<random>","at":"<ISO>","configHash":"…","regime":"opt-in","gpc":false,
 //    "categories":{"necessary":true,"analytics":false,…}}
+// plus, since the snapshot fields: "kind":"choice"|"withdrawal", "supersedes":"<previous id>",
+// "gpcHonored":bool, "region":"US-CA" (all optional here: an older value has none).
 // The client writes it ONLY on a visitor's choice (never for defaults), so a
 // decodable value always means a recorded choice. Another `v` is not guessed at.
 /**
@@ -275,7 +277,7 @@ function decodeComplykit(raw: string): Decoded | undefined {
   if (!Object.keys(grants).length) return undefined;
   const regime = typeof j.regime === 'string' ? j.regime : undefined;
   const at = typeof j.at === 'string' ? j.at : undefined;
-  const note = regime || at ? `choice recorded${at ? ` ${at}` : ''}${regime ? ` under ${regime}` : ''}${j.gpc === true ? ' with GPC' : ''}` : undefined;
+  const note = regime || at ? `choice recorded${at ? ` ${at}` : ''}${regime ? ` under ${regime}` : ''}${j.gpc === true ? ' with GPC' : ''}${j.kind === 'withdrawal' ? ' (withdrawal)' : ''}` : undefined;
   return { grants, choiceRecorded: true, note };
 }
 

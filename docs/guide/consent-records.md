@@ -17,11 +17,15 @@ enforced. You just have no record on your side.
 {
   "id": "k3j9x0aa81QmZp72fD",
   "at": "2026-10-06T14:03:00.000Z",
-  "categories": { "analytics": true, "marketing": false },
+  "kind": "withdrawal",
+  "supersedes": "q8w2m5tt40AbZx19cE",
+  "categories": { "analytics": false, "marketing": false },
   "configHash": "sha256:ab12cd34",
   "toolVersion": "0.1.0",
   "regime": "opt-in",
-  "gpc": true
+  "region": "US-CA",
+  "gpc": true,
+  "gpcHonored": true
 }
 ```
 
@@ -29,6 +33,23 @@ enforced. You just have no record on your side.
 not tied to an account, a cookie you already have, or an IP address. `gpc` is present
 when the browser sent a Global Privacy Control signal. `configHash` and `toolVersion`
 say which banner configuration and tool version showed the choice.
+
+Each record is a full snapshot of one decision:
+
+- `kind` is `withdrawal` when the visitor had made a choice before and this one takes
+  back a category they had granted (Reject all after a grant, `ComplyKit.withdraw()`,
+  or a settings change that turns something off). Otherwise it is `choice`. Defaults
+  that applied before any choice never count as a grant.
+- `supersedes` is the `id` of the decision this one replaced. A first decision has
+  none. Following `supersedes` gives the visitor's history, with no identifier that
+  links it to a person.
+- `gpcHonored` says whether the GPC signal counted as an opt-out under your settings
+  (`gpc` is only that the browser sent it).
+- `region` is where the visitor was at that moment, as a country (`DE`) or a country
+  and state (`US-CA`). Never anything finer. Left out when no location was known.
+
+`kind`, `supersedes`, `gpcHonored` and `region` are optional on the endpoint: a
+client that predates them sends none, and the stored record then leaves them out.
 
 The service stores exactly this, plus `receivedAt` (the server's clock; retention
 runs on it, because `at` is the visitor's clock). It **does not store** an IP address,
@@ -40,13 +61,15 @@ minute and is never written.
 
 | | |
 |---|---|
-| Route | `POST /api/consent-records`, JSON body (`text/plain` also works, for `sendBeacon`) |
+| Route | `POST /api/consent-records`, JSON body (the client sends it as `text/plain`, which needs no CORS preflight) |
 | Site | Taken from the `Origin` header, reduced to its registrable domain (`www.example-shop.test` → `example-shop.test`). A request without a usable Origin is refused. A `domain` field is accepted only if it matches the Origin. |
 | Success | `204`, no body |
 | Errors | `400` invalid or unknown field, `403` domain mismatch or site not allowed, `413` body over 4 KB, `429` rate limited (`Retry-After` set), `507` the site's file is full |
 | CORS | The preflight and the response echo the requesting origin, on this route only. No credentials. |
 | Auth | This route is open even when the service has `SERVICE_PASSWORD`, because a visitor's browser has no password. Everything else, including the export, stays behind it. |
 | Limits | 4 KB per record, 60 per minute per client address, 1200 per minute per site, 256 MB per site. |
+
+The service answers `204` to a retried post of an id it already has, without storing it twice.
 
 Records are appended, one JSON object per line, to
 `DATA_DIR/sites/<domain>/consent-records.jsonl` on the service's volume.
@@ -56,6 +79,27 @@ domains). Unset, the endpoint accepts any site, which means anyone can write rec
 under any domain name; the limits above bound the damage, but an allow-list is the
 real fix. Records are claims made by a browser, not signed proof, so treat the file as
 supporting evidence.
+
+## Delivery and retries
+
+A send can fail: the visitor goes offline, the endpoint is down, or the page closes
+mid-request. So the tool keeps each record in the browser (`localStorage`, key
+`complykit_consent_outbox`) until the endpoint confirms it. At most five records are
+kept (the oldest goes when a sixth arrives). On the next page load it drops records
+older than 30 days and sends the rest again.
+
+- A `2xx` answer confirms the record. So does a `4xx` other than `408` and `429`: the
+  endpoint refused it, and sending it again would get the same answer.
+- A network or CORS failure, a `5xx`, a `408` or a `429` leaves it in the outbox to be
+  retried.
+
+A resend carries the same `id`, so the export shows each record once. If the browser
+blocks storage, the record is sent once and not retried.
+
+A self-hosted endpoint must answer CORS for your site's origin (`Access-Control-Allow-Origin`).
+The browser hides the answer from the page otherwise, the tool cannot tell the record
+arrived, and every record is retried until it ages out. The complykit service does this
+already.
 
 ## Retention
 
@@ -76,6 +120,6 @@ curl -u :$SERVICE_PASSWORD "https://<service>/api/sites/example-shop.test/consen
 ```
 
 `format` is `csv` or `jsonl` (the default). Both list one row per consent id; a retried
-post that arrived twice appears once. The CSV has one `category:<id>` column per
+post that arrived twice appears once. The CSV starts with `id,at,receivedAt,kind,supersedes,regime,region,gpc,gpcHonored,configHash,toolVersion`, then one `category:<id>` column per
 category seen, with `true`/`false`, and an empty cell where a record did not include
-that category. An unknown site is a `404`.
+that category or field. An unknown site is a `404`.

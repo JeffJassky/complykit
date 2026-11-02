@@ -4,15 +4,18 @@
 //
 // The body matches the service's allow-list exactly
 // (service/src/server/consent-records.ts — an unknown field is a 400):
-//   { id, at, categories, configHash, toolVersion, regime, gpc }
+//   { id, at, kind, categories, configHash, toolVersion, regime, gpc, gpcHonored, supersedes?, region? }
+// (`supersedes` and `region` are left out when there is none; JSON drops undefined.)
 // `id` is a fresh random id PER DECISION (the service de-duplicates on it, so a
 // per-visitor id would swallow a changed choice). Nothing else that could
 // identify a visitor: no user agent, no URL, no referrer, no cookie values.
 //
-// Transport: navigator.sendBeacon with a text/plain body (a CORS-simple
-// request that survives page unload), falling back to fetch keepalive with the
-// same body. Credentials are omitted on the fetch path. Fire and forget: a lost
-// record never blocks or undoes the visitor's choice.
+// Transport: fetch with a text/plain body (a CORS-simple request), keepalive so
+// it survives page unload, credentials omitted. Delivery is confirmable: a
+// record stays in a small localStorage outbox (5 records, 30 days) until the
+// endpoint answers 2xx (or refuses it for good with a 4xx), and is resent on
+// the next page. The server de-duplicates by id. A lost send never blocks or
+// undoes the visitor's choice.
 
 import type { StoredConsent } from './store.js';
 
@@ -24,6 +27,10 @@ export interface ConsentRecordBody {
   toolVersion: string;
   regime: string;
   gpc?: boolean;
+  gpcHonored?: boolean;
+  kind?: 'choice' | 'withdrawal';
+  supersedes?: string;
+  region?: string;
 }
 
 /** 32 hex chars (128 bits) from the platform CSPRNG; matches the service's id pattern. */
@@ -36,29 +43,57 @@ export function randomId(): string {
 }
 
 export function buildRecord(stored: StoredConsent, toolVersion: string): ConsentRecordBody {
-  return {
-    id: stored.id,
-    at: stored.at,
-    categories: { ...stored.categories },
-    configHash: stored.configHash,
-    toolVersion,
-    regime: stored.regime,
-    gpc: stored.gpc,
-  };
+  // The stored value minus its format number (JSON drops the undefined optionals).
+  const { v, ...rest } = stored;
+  return { ...rest, toolVersion };
 }
 
-export function sendRecord(endpoint: string, body: ConsentRecordBody): void {
-  const text = JSON.stringify(body);
+// --- delivery: the outbox ---------------------------------------------------------
+
+const BOX = 'complykit_consent_outbox';
+const MAX_BOX = 5;
+const MAX_AGE_MS = 30 * 86_400_000;
+
+function readBox(): ConsentRecordBody[] {
   try {
-    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
-      // A string body goes out as text/plain;charset=UTF-8 (CORS-simple). Not a
-      // Blob: WebKit sends a Blob beacon fine, but request interception
-      // (Playwright, our own scanner) cannot read its body there (F5).
-      if (navigator.sendBeacon(endpoint, text)) return;
-    }
+    const a = JSON.parse(localStorage.getItem(BOX) || '[]');
+    return Array.isArray(a) ? a : [];
   } catch {
-    /* fall through to fetch */
+    return [];
   }
-  if (typeof fetch !== 'function') return;
-  fetch(endpoint, { method: 'POST', body: text, headers: { 'content-type': 'text/plain' }, keepalive: true, credentials: 'omit', mode: 'cors' }).catch(() => {});
+}
+function writeBox(a: ConsentRecordBody[]): void {
+  try {
+    localStorage.setItem(BOX, JSON.stringify(a));
+  } catch {
+    /* blocked storage: the send still happens, just without a retry */
+  }
+}
+
+function post(endpoint: string, b: ConsentRecordBody): void {
+  try {
+    fetch(endpoint, { method: 'POST', body: JSON.stringify(b), headers: { 'content-type': 'text/plain' }, keepalive: true, credentials: 'omit', mode: 'cors' }).then(
+      (r) => {
+        // Confirmed (2xx) or refused for good (4xx other than 408/429): done. Anything else stays for the next page.
+        if (r.status < 500 && r.status !== 408 && r.status !== 429) writeBox(readBox().filter((x) => x.id !== b.id));
+      },
+      () => {},
+    );
+  } catch {
+    /* no fetch: stays in the outbox */
+  }
+}
+
+/** Keep the record in the outbox until the endpoint confirms it, and send it. */
+export function queueRecord(endpoint: string, body: ConsentRecordBody): void {
+  writeBox([...readBox(), body].slice(-MAX_BOX));
+  post(endpoint, body);
+}
+
+/** On start: forget records older than 30 days, resend the rest. */
+export function flushOutbox(endpoint: string, now: number): void {
+  const all = readBox();
+  const keep = all.filter((x) => now - Date.parse(x.at) < MAX_AGE_MS);
+  if (keep.length !== all.length) writeBox(keep);
+  for (const b of keep) post(endpoint, b);
 }

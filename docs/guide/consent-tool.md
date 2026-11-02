@@ -341,6 +341,43 @@ Also available from script: `ComplyKit.open()`, `ComplyKit.withdraw()`,
 `ComplyKit.on('change' | 'open' | 'withdraw', fn)` and `ComplyKit.diagnostics`
 (what the rescan reads).
 
+### Listening for consent changes (telemetry)
+
+`ComplyKit.on('change', fn)` runs after every decision (and when another tab decides).
+The listener gets the consent state: `status`, `categories`, `regime`, `location`,
+`gpc`, `gpcHonored`, and, once the visitor has chosen, `id`, `at`, `kind`
+(`choice` or `withdrawal`), `supersedes` (the previous decision's id), `region`
+(country or country-state) and `configHash`.
+
+```js
+ComplyKit.on('change', (s) => {
+  if (s.status !== 'chosen') return;
+  // s.categories, s.kind, s.id, s.supersedes …
+});
+```
+
+The rule: recording the visitor's decision for compliance does not need consent. The
+decision cookie and the consent record are strictly necessary, because they are how you
+prove consent, and complykit already sends that record. What does need consent is
+anything else. Sending the decision to an analytics, marketing or other third-party
+tool is itself tracking.
+
+- Fine: send the decision to your own first-party compliance store (same purpose, no
+  extra identifiers).
+- Fine: start or configure analytics after a grant, for the categories granted.
+- Not fine: send a decline or withdrawal to any third-party tool, for example an
+  analytics `consent_declined` event. That is a third-party request made after the
+  visitor said no, the pattern wiretap claims target.
+- Not fine: join the consent record to an account, email, IP address or other
+  identifier, or use it for marketing. California's record-keeping rule limits these
+  records to compliance use.
+
+The `complykit_consent` cookie travels with every request to your site, so any network
+capture (a HAR file) shows the consent state at each request. Keeping trackers held
+until the cookie says granted is what makes that capture work for you.
+
+This is not legal advice; check with counsel.
+
 ## 5. Look and words
 
 Theming is a handful of tokens, not an engine: `theme` sets `--ck-bg`, `--ck-fg`,

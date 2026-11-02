@@ -30,7 +30,16 @@
 // under the same key, both holding the same JSON (cookie urlencoded):
 //
 //   {"v":1,"id":"<random>","at":"<ISO>","configHash":"<hash>","regime":"opt-in",
-//    "gpc":false,"categories":{"necessary":true,"analytics":false,…}}
+//    "gpc":false,"categories":{"necessary":true,"analytics":false,…},
+//    "kind":"choice","supersedes":"<previous id>","gpcHonored":false,"region":"US-CA"}
+//
+// Each decision is a complete snapshot. `kind` is "withdrawal" when the previous
+// state was a choice and this one denies a non-necessary category it granted
+// (withdraw() or a settings change), else "choice"; `supersedes` is the previous
+// choice's id (absent for a first decision); `gpcHonored` is whether GPC counted
+// as an opt-out; `region` is the visitor's country / state when known (never
+// finer). The last four are optional on read: a value written before they
+// existed still loads as a choice (the format stays v:1; nobody is re-asked).
 //
 // Written ONLY when the visitor chooses — never for defaults — so a stored
 // value always means "a choice was recorded" (the scanner's decoder in
@@ -55,7 +64,7 @@
 // over GPC.
 
 import { REGIMES, consentCategoryDefault, honorsGpc, isNecessaryCategory, type ConsentToolConfig, type Regime, type VisitorLocation } from './config.js';
-import { buildRecord, sendRecord, randomId, type ConsentRecordBody } from './record.js';
+import { buildRecord, flushOutbox, queueRecord, randomId } from './record.js';
 
 export const COOKIE_NAME = 'complykit_consent';
 export const STORAGE_KEY = 'complykit_consent';
@@ -89,6 +98,12 @@ export interface ConsentState {
   at?: string;
   /** Hash of the config the choice was made under. */
   configHash?: string;
+  /** 'withdrawal' when this decision took back a grant the previous one made; absent on a value written before this field. */
+  kind?: 'choice' | 'withdrawal';
+  /** The id of the decision this one replaced. */
+  supersedes?: string;
+  /** Visitor location at decision time: `CC` or `CC-RR` (country / state only). */
+  region?: string;
   /** Present when status is 'unset'. */
   reason?: AskReason;
 }
@@ -102,6 +117,10 @@ export interface StoredConsent {
   regime: Regime;
   gpc: boolean;
   categories: Record<string, boolean>;
+  kind?: 'choice' | 'withdrawal';
+  supersedes?: string;
+  gpcHonored?: boolean;
+  region?: string;
 }
 
 export type StoreEvent = 'change' | 'open' | 'withdraw';
@@ -113,8 +132,6 @@ export interface StoreOptions {
   location?: VisitorLocation;
   now?: () => number;
   toolVersion?: string;
-  /** Override the record transport (tests). */
-  send?: (endpoint: string, body: ConsentRecordBody) => void;
 }
 
 export interface ConsentStore {
@@ -239,7 +256,10 @@ export function parseStored(raw: string | undefined): StoredConsent | undefined 
     if (typeof v !== 'boolean') return undefined;
     categories[k] = v;
   }
-  return { v: 1, id: j.id, at: j.at, configHash: j.configHash, regime: j.regime as Regime, gpc: j.gpc === true, categories };
+  // A field of the wrong type is dropped, not a reason to reject the value (key order = choose()'s).
+  const pick = (k: string, t: string): any => (typeof j[k] === t ? j[k] : undefined);
+  const kind = j.kind === 'choice' || j.kind === 'withdrawal' ? j.kind : undefined;
+  return { v: 1, id: j.id, at: j.at, configHash: j.configHash, regime: j.regime as Regime, gpc: j.gpc === true, categories, kind, supersedes: pick('supersedes', 'string'), gpcHonored: pick('gpcHonored', 'boolean'), region: pick('region', 'string') };
 }
 
 // --- the store ---------------------------------------------------------------------
@@ -305,7 +325,7 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
     if (fromMirror !== json) writeMirror(json);
     const categories: Record<string, boolean> = {};
     for (const id of ids) categories[id] = isNecessaryCategory(id) || stored.categories[id] === true;
-    return mk({ status: 'chosen', categories, id: stored.id, at: stored.at, configHash: stored.configHash }, stored.regime, stored.gpc);
+    return mk({ status: 'chosen', categories, id: stored.id, at: stored.at, configHash: stored.configHash, kind: stored.kind, supersedes: stored.supersedes, region: stored.region }, stored.regime, stored.gpc);
   };
 
   const copy = (s: ConsentState): ConsentState => ({ ...s, categories: { ...s.categories } });
@@ -334,21 +354,18 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
   const choose = (choice: Record<string, boolean>): ConsentState => {
     const categories: Record<string, boolean> = {};
     for (const id of ids) categories[id] = isNecessaryCategory(id) || choice[id] === true;
-    const stored: StoredConsent = { v: 1, id: randomId(), at: new Date(now()).toISOString(), configHash: config.hash, regime, gpc, categories };
+    const prev = current;
+    const was = prev.status === 'chosen';
+    const kind = was && ids.some((id) => !isNecessaryCategory(id) && prev.categories[id] && !categories[id]) ? 'withdrawal' : 'choice';
+    const region = location ? location.country + (location.region ? '-' + location.region : '') : undefined;
+    const stored: StoredConsent = { v: 1, id: randomId(), at: new Date(now()).toISOString(), configHash: config.hash, regime, gpc, categories, kind, supersedes: was ? prev.id : undefined, gpcHonored: gpc && honored, region };
     const json = JSON.stringify(stored);
     if (persist) {
       writeCookie(json, Math.floor(ttlMs / 1000), cookieDomain);
       writeMirror(json);
     }
-    if (persist && config.record?.endpoint) {
-      const body = buildRecord(stored, opts.toolVersion ?? '0.0.0');
-      try {
-        (opts.send ?? sendRecord)(config.record.endpoint, body);
-      } catch {
-        /* proof is best-effort; the choice itself still stands */
-      }
-    }
-    replace(mk({ status: 'chosen', categories, id: stored.id, at: stored.at, configHash: stored.configHash }), true);
+    if (persist && config.record?.endpoint) queueRecord(config.record.endpoint, buildRecord(stored, opts.toolVersion ?? '0.0.0'));
+    replace(mk({ status: 'chosen', categories, id: stored.id, at: stored.at, configHash: stored.configHash, kind, supersedes: stored.supersedes, region }), true);
     return copy(current);
   };
 
@@ -359,6 +376,7 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
   };
 
   current = load();
+  if (persist && config.record?.endpoint) flushOutbox(config.record.endpoint, now());
 
   // Another tab chose: follow it.
   const onStorage = (e: StorageEvent): void => {
