@@ -37,8 +37,8 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
  * The config a visitor's browser runs: the stored config with the record and
  * analytics endpoints pointing at this host, re-hashed (identical to the
  * package's hashConsentToolConfig). Deterministic. `settings` (the owner's
- * install form) is applied first, then the endpoints (add-on mode keeps no
- * `record`: the banner holds its own proof), then the hash.
+ * install form) is applied first, then the endpoints (the record endpoint in add-on mode too: it keeps
+ * proof of the banner's answer), then the hash.
  */
 export function hostedConfig(stored: Record<string, unknown>, publicOrigin: string, settings?: ConsentSettings): Record<string, unknown> & { hash: string } {
   const out: Record<string, unknown> = {
@@ -50,8 +50,7 @@ export function hostedConfig(stored: Record<string, unknown>, publicOrigin: stri
   // still reads the meta tag first, so a site that writes one keeps it. platform, fixed and an
   // owner-chosen header source stay as they are.
   if (isObj(out.regimeSource) && out.regimeSource.kind === 'meta') out.regimeSource = { kind: 'header', header: 'complykit-geo', endpoint: `${publicOrigin}/geo` };
-  if (settings?.mode === 'companion') delete out.record;
-  else out.record = { endpoint: `${publicOrigin}/api/consent-records` };
+  out.record = { endpoint: `${publicOrigin}/api/consent-records` };
   const hash = configHash(out);
   out.hash = hash;
   return out as Record<string, unknown> & { hash: string };

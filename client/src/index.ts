@@ -71,7 +71,7 @@ whenStore((s) => {
 });
 // T6: add-on mode — follow the site's own banner (complykit-consent-companion.js,
 // loaded by the core; `_companion` is the host it starts on). No UI, GTM bridge,
-// adapters, platform bridges or records in this mode.
+// adapters or platform bridges in this mode; the store keeps the banner's answer as proof (store.follow).
 export { companionHost as _companion } from './companion-loader.js';
 import { loadCompanion } from './companion-loader.js';
 whenStore(() => {

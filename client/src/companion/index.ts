@@ -5,7 +5,9 @@
 // host.sync (store.set; a grant -> deny runs the core's withdrawal cleanup). The first answer also sweeps
 // the stores of the categories the banner reports denied. `manual` has no source: the site calls
 // ComplyKit.sync(). The first state learned on a page is applied (and swept) but not reported as a decision;
-// only later changes are (`decide via 'cmp'`). A config category no map entry can reach is unknown: it is never
+// only later changes are (`decide via 'cmp'`). Once the banner is answered the store keeps the proof (cookie,
+// mirror, record with source = cmp, store.follow): `answered` comes from the source where the banner's API says
+// so (shopify, onetrust, cookiebot), else it counts as answered on a live change or when a snapshot is stored. A config category no map entry can reach is unknown: it is never
 // passed to sync (the core keeps its current value) and never swept. diagnostics.companion = { cmp, state } says 'waiting' | 'ready' | 'not-found'.
 import { isNecessaryCategory } from '../config.js';
 import { DEFAULT_MAPS } from './maps.js';
@@ -19,7 +21,7 @@ import { tcf } from './sources/tcf.js';
 import { trustarc } from './sources/trustarc.js';
 import { usercentrics } from './sources/usercentrics.js';
 import { wordpress } from './sources/wordpress.js';
-import type { Source } from './sources/types.js';
+import type { Read, Source } from './sources/types.js';
 
 export const SOURCES: Record<string, Source> = { onetrust, cookiebot, usercentrics, didomi, trustarc, shopify, wordpress, tcf, 'consent-mode': consentMode };
 
@@ -38,16 +40,17 @@ export function startCompanion(host: CompanionHost): void {
   state('waiting');
   let last: string | undefined;
   let ready = false;
-  const push = (granted: string[]): void => {
+  const push = (read: Read): void => {
+    const { granted, answered } = Array.isArray(read) ? { granted: read, answered: undefined } : read;
     ready = true;
     state('ready');
     const mapped: Record<string, boolean> = {};
     for (const [id, cats] of Object.entries(map)) for (const c of cats) if (ids.has(c) && !isNecessaryCategory(c)) mapped[c] = mapped[c] || granted.includes(id);
-    const key = JSON.stringify(mapped);
+    const key = JSON.stringify([mapped, answered]);
     if (key === last) return;
     const first = last === undefined;
     last = key;
-    host.sync(mapped, first);
+    host.sync(mapped, first, answered);
     if (!first) return;
     // Sweep on load: what the banner already denies is cleaned (cookies from before the add-on, or another device's choice).
     const denied = Object.keys(mapped).filter((c) => !mapped[c]);

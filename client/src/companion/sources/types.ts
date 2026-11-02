@@ -1,10 +1,13 @@
 // A source adapter reads the site's banner. `start(push)` runs once: it attaches the banner's change
 // listeners (each calls `push(grantedBannerIds)` when it can read the choice) and returns an optional
 // `poll()` the framework calls every 250 ms (up to 10 s) until the banner has answered once: it returns
-// the granted banner ids, or undefined while the banner's API is not there yet.
+// the granted banner ids, or undefined while the banner's API is not there yet. A source that can tell
+// whether the visitor has answered the banner (as opposed to its region defaults applying) returns / pushes
+// `{ granted, answered }` instead; one that cannot leaves `answered` out and the framework decides (index.ts).
 export type Granted = string[];
-export type Poll = () => Granted | undefined | Promise<Granted | undefined>;
-export type Source = (push: (granted: Granted) => void) => Poll | void;
+export type Read = Granted | { granted: Granted; answered?: boolean };
+export type Poll = () => Read | undefined | Promise<Read | undefined>;
+export type Source = (push: (read: Read) => void) => Poll | void;
 
 export type W = Record<string, any>;
 export const win = (): W => window as unknown as W;

@@ -31,15 +31,23 @@
 //
 //   {"v":1,"id":"<random>","at":"<ISO>","configHash":"<hash>","regime":"opt-in",
 //    "gpc":false,"categories":{"necessary":true,"analytics":false,…},
-//    "kind":"choice","supersedes":"<previous id>","gpcHonored":false,"region":"US-CA"}
+//    "kind":"choice","supersedes":"<previous id>","gpcHonored":false,"region":"US-CA","source":"shopify"}
 //
 // Each decision is a complete snapshot. `kind` is "withdrawal" when the previous
 // state was a choice and this one denies a non-necessary category it granted
 // (withdraw() or a settings change), else "choice"; `supersedes` is the previous
 // choice's id (absent for a first decision); `gpcHonored` is whether GPC counted
 // as an opt-out; `region` is the visitor's country / state when known (never
-// finer). The last four are optional on read: a value written before they
+// finer); `source` is add-on mode only. The optional ones are optional on read: a value written before they
 // existed still loads as a choice (the format stays v:1; nobody is re-asked).
+//
+// Add-on mode (config.mode 'companion'): the site's banner decides and complykit's copy is proof only, never
+// read back as the answer. store.follow(grants, answered, initial) is the one writer: once the banner has
+// answered, it keeps the stored snapshot while the grants match, else writes a new one (same shape, plus
+// `source` = config.companion.cmp) and queues the record. Before an answer the store follows the banner's
+// grants with status 'unset' and writes nothing; a banner that forgets its answer clears the snapshot and
+// leaves its id under PREV_KEY. set()/acceptAll()/rejectAll()/withdraw() stay memory-only there, and another
+// tab's write never moves this tab (no storage listener).
 //
 // Written ONLY when the visitor chooses — never for defaults — so a stored
 // value always means "a choice was recorded" (the scanner's decoder in
@@ -106,6 +114,8 @@ export interface ConsentState {
   supersedes?: string;
   /** Visitor location at decision time: `CC` or `CC-RR` (country / state only). */
   region?: string;
+  /** Add-on mode: the site banner the decision was made in (`config.companion.cmp`); never set in full mode. */
+  source?: string;
   /** Present when status is 'unset'. */
   reason?: AskReason;
 }
@@ -123,6 +133,7 @@ export interface StoredConsent {
   supersedes?: string;
   gpcHonored?: boolean;
   region?: string;
+  source?: string;
 }
 
 export type StoreEvent = 'change' | 'open' | 'withdraw';
@@ -146,6 +157,13 @@ export interface ConsentStore {
   acceptAll(): ConsentState;
   rejectAll(): ConsentState;
   withdraw(): ConsentState;
+  /**
+   * Add-on mode: the site banner's grants (`choice`, as set()) and whether the visitor has answered it (undefined =
+   * the source cannot tell: answered unless it is the page's `initial` state with nothing stored). Not answered:
+   * follow the grants, status 'unset', a stored snapshot is cleared (its id waits for the next decision). Answered:
+   * the stored snapshot stays when its grants match, else a new one (with `source`) is written and recorded.
+   */
+  follow(choice: Record<string, boolean>, answered?: boolean, initial?: boolean): ConsentState;
   open(): void;
   setRegime(regime: Regime, location?: VisitorLocation): void;
   setGpc(gpc: boolean): void;
@@ -261,7 +279,7 @@ export function parseStored(raw: string | undefined): StoredConsent | undefined 
   // A field of the wrong type is dropped, not a reason to reject the value (key order = choose()'s).
   const pick = (k: string, t: string): any => (typeof j[k] === t ? j[k] : undefined);
   const kind = j.kind === 'choice' || j.kind === 'withdrawal' ? j.kind : undefined;
-  return { v: 1, id: j.id, at: j.at, configHash: j.configHash, regime: j.regime as Regime, gpc: j.gpc === true, categories, kind, supersedes: pick('supersedes', 'string'), gpcHonored: pick('gpcHonored', 'boolean'), region: pick('region', 'string') };
+  return { v: 1, id: j.id, at: j.at, configHash: j.configHash, regime: j.regime as Regime, gpc: j.gpc === true, categories, kind, supersedes: pick('supersedes', 'string'), gpcHonored: pick('gpcHonored', 'boolean'), region: pick('region', 'string'), source: pick('source', 'string') };
 }
 
 // --- the store ---------------------------------------------------------------------
@@ -269,7 +287,7 @@ export function parseStored(raw: string | undefined): StoredConsent | undefined 
 export function createStore(config: ConsentToolConfig, regime: Regime, opts: StoreOptions = {}): ConsentStore {
   const now = opts.now ?? Date.now;
   const ids = config.categories.map((c) => c.id);
-  // Add-on mode (T6): the site's banner owns the choice and its proof; we keep it in memory only (no cookie, mirror or record).
+  // Add-on mode (T6): the site's banner owns the choice; the store's own set() stays in memory, only follow() (the banner's answer) is kept as proof.
   const persist = config.mode !== 'companion';
   const { ttlMs, cookieDomain } = consentSettings(config);
   const forget = (): void => {
@@ -291,9 +309,8 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
   };
   const unset = (reason: AskReason): ConsentState => mk({ status: 'unset', categories: defaults(), reason });
 
-  /** Decide the state from what is stored. Clears storage that no longer counts. */
-  const load = (): ConsentState => {
-    if (!persist) return unset('none');
+  /** The stored choice that still counts, or why none does. Clears storage that no longer counts, repairs a missing copy. */
+  const read = (): StoredConsent | AskReason => {
     const fromCookie = readCookie();
     const fromMirror = readMirror();
     const c = parseStored(fromCookie);
@@ -303,26 +320,33 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
     if (!stored) {
       if (fromCookie !== undefined || fromMirror !== undefined) {
         forget();
-        return unset('unreadable');
+        return 'unreadable';
       }
-      return unset('none');
+      return 'none';
     }
     const at = Date.parse(stored.at);
     if (!Number.isFinite(at) || at > now() + FUTURE_SKEW_MS) {
       forget();
-      return unset('unreadable');
+      return 'unreadable';
     }
     // A choice that stops counting is still the one the next decision replaces: its id waits under PREV_KEY.
     const reask = now() - at >= ttlMs ? 'expired' : Object.keys(stored.categories).length !== ids.length || ids.some((id) => !(id in stored.categories)) ? 'categories-changed' : '';
     if (reask) {
       forget();
       writeMirror(stored.id, PREV_KEY);
-      return unset(reask);
+      return reask;
     }
     // Repair a missing or stale copy, keeping the original expiry.
     const json = JSON.stringify(stored);
     if (fromCookie !== json) writeCookie(json, Math.floor((at + ttlMs - now()) / 1000), cookieDomain);
     if (fromMirror !== json) writeMirror(json);
+    return stored;
+  };
+
+  /** Decide the state from what is stored. Add-on mode starts with the defaults: the banner has not spoken yet. */
+  const load = (): ConsentState => {
+    const stored = persist ? read() : 'none';
+    if (typeof stored === 'string') return unset(stored);
     const categories: Record<string, boolean> = {};
     for (const id of ids) categories[id] = isNecessaryCategory(id) || stored.categories[id] === true;
     return mk({ status: 'chosen', categories, id: stored.id, at: stored.at, configHash: stored.configHash, kind: stored.kind, supersedes: stored.supersedes, region: stored.region }, stored.regime, stored.gpc);
@@ -351,22 +375,42 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
     if (changed) emit('change');
   };
 
-  const choose = (choice: Record<string, boolean>): ConsentState => {
+  // A new decision replacing `prev`: the stored snapshot, persisted when `persist` or add-on `source`.
+  const decide = (choice: Record<string, boolean>, prev?: Pick<ConsentState, 'id' | 'categories'>, source?: string): ConsentState => {
     const categories: Record<string, boolean> = {};
     for (const id of ids) categories[id] = isNecessaryCategory(id) || choice[id] === true;
-    const prev = current;
-    const was = prev.status === 'chosen';
-    const kind = was && ids.some((id) => !isNecessaryCategory(id) && prev.categories[id] && !categories[id]) ? 'withdrawal' : 'choice';
+    const kind = prev && ids.some((id) => !isNecessaryCategory(id) && prev.categories[id] && !categories[id]) ? 'withdrawal' : 'choice';
     const region = location ? location.country + (location.region ? '-' + location.region : '') : undefined;
-    const stored: StoredConsent = { v: 1, id: randomId(), at: new Date(now()).toISOString(), configHash: config.hash, regime, gpc, categories, kind, supersedes: was ? prev.id : readMirror(PREV_KEY), gpcHonored: gpc && honored, region };
-    const json = JSON.stringify(stored);
-    if (persist) {
+    const stored: StoredConsent = { v: 1, id: randomId(), at: new Date(now()).toISOString(), configHash: config.hash, regime, gpc, categories, kind, supersedes: prev ? prev.id : readMirror(PREV_KEY), gpcHonored: gpc && honored, region, source };
+    if (persist || source) {
+      const json = JSON.stringify(stored);
       writeCookie(json, Math.floor(ttlMs / 1000), cookieDomain);
       writeMirror(json);
       clearMirror(PREV_KEY);
+      if (config.record?.endpoint) queueRecord(config.record.endpoint, buildRecord(stored, opts.toolVersion ?? '0.0.0'));
     }
-    if (persist && config.record?.endpoint) queueRecord(config.record.endpoint, buildRecord(stored, opts.toolVersion ?? '0.0.0'));
-    replace(mk({ status: 'chosen', categories, id: stored.id, at: stored.at, configHash: stored.configHash, kind, supersedes: stored.supersedes, region }), true);
+    replace(mk({ status: 'chosen', categories, id: stored.id, at: stored.at, configHash: stored.configHash, kind, supersedes: stored.supersedes, region, source }), true);
+    return copy(current);
+  };
+  const choose = (choice: Record<string, boolean>): ConsentState => decide(choice, current.status === 'chosen' ? current : undefined);
+
+  const follow = (choice: Record<string, boolean>, answered?: boolean, initial?: boolean): ConsentState => {
+    const r = read();
+    const stored = typeof r === 'string' ? undefined : r;
+    const source = config.companion?.cmp ?? 'manual';
+    const grants = (): Record<string, boolean> => Object.fromEntries(ids.map((id) => [id, isNecessaryCategory(id) || choice[id] === true]));
+    const yes = answered ?? (!initial || !!stored);
+    if (!yes) {
+      if (stored) {
+        forget();
+        writeMirror(stored.id, PREV_KEY);
+      }
+      replace(mk({ status: 'unset', categories: grants(), reason: 'none' }));
+      return copy(current);
+    }
+    const categories = grants();
+    if (!stored || ids.some((id) => stored.categories[id] !== categories[id])) return decide(choice, stored, source);
+    replace(mk({ status: 'chosen', categories, id: stored.id, at: stored.at, configHash: stored.configHash, kind: stored.kind, supersedes: stored.supersedes, region: stored.region, source: stored.source }, stored.regime, stored.gpc));
     return copy(current);
   };
 
@@ -377,13 +421,13 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
   };
 
   current = load();
-  if (persist && config.record?.endpoint) flushOutbox(config.record.endpoint, now());
+  if (config.record?.endpoint) flushOutbox(config.record.endpoint, now());
 
   // Another tab chose: follow it.
   const onStorage = (e: StorageEvent): void => {
     if (e.key === STORAGE_KEY) replace(load());
   };
-  if (typeof window !== 'undefined') window.addEventListener('storage', onStorage);
+  if (persist && typeof window !== 'undefined') window.addEventListener('storage', onStorage);
 
   return {
     state: () => copy(current),
@@ -410,6 +454,7 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
       emit('withdraw');
       return s;
     },
+    follow,
     open: () => emit('open'),
     // A move emits 'change' even when the grants stay the same, so the banner can
     // re-render its words for the new regime (F2: e.g. opt-in → opt-out-signal with GPC on).

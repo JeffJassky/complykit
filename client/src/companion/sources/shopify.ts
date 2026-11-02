@@ -9,10 +9,12 @@
 //     SALE_OF_DATA stop on it, so a refused sale is a refused advertising category here too (marketing alone stays 'yes').
 //   - document event 'visitorConsentCollected', detail {analyticsAllowed, marketingAllowed,
 //     preferencesAllowed, saleOfDataAllowed}; "published only when consent changes", so we re-read.
+//   - Answered: any of currentVisitorConsent()'s analytics / marketing / preferences / sale_of_data is 'yes' or 'no'
+//     (all '' = undeclared: the region default applies, nothing was asked or answered).
 //   - The API exists only once something calls Shopify.loadFeatures([{name: 'consent-tracking-api', version: '0.1'}], cb)
 //     ("When invoked without an error, the API is globally available at window.Shopify.customerPrivacy"). Shopify's banner
 //     does not expose it on its own, so the add-on asks for it once (as bridges/shopify.ts does) and reads in the callback.
-import { listen, win, type Source } from './types.js';
+import { listen, win, type Read, type Source } from './types.js';
 
 // The decline guard. A refusal on Shopify's banner reaches the store's pixels only once Shopify has recorded it
 // (an async round trip) and told each pixel: whatever a pixel had queued (Google's page_view / scroll hits) is sent
@@ -59,7 +61,7 @@ export function installShopifyDeclineGuard(): void {
 export const shopify: Source = (push) => {
   installShopifyDeclineGuard();
   let requested = false;
-  const read = (): string[] | undefined => {
+  const read = (): Read | undefined => {
     const s = win().Shopify;
     const p = s?.customerPrivacy;
     if (typeof p?.currentVisitorConsent !== 'function') {
@@ -80,7 +82,8 @@ export const shopify: Source = (push) => {
     const eff: Record<string, string> = { analytics: 'analyticsProcessingAllowed', marketing: 'marketingAllowed', preferences: 'preferencesProcessingAllowed' };
     // Advertising also needs the sale of data not refused: effective function when present, else sale_of_data !== 'no'.
     const saleOk = typeof p.saleOfDataAllowed === 'function' ? p.saleOfDataAllowed() === true : c.sale_of_data !== 'no';
-    return Object.keys(eff).filter((k) => (typeof p[eff[k]] === 'function' ? p[eff[k]]() === true : c[k] === 'yes') && (k !== 'marketing' || saleOk));
+    const granted = Object.keys(eff).filter((k) => (typeof p[eff[k]] === 'function' ? p[eff[k]]() === true : c[k] === 'yes') && (k !== 'marketing' || saleOk));
+    return { granted, answered: ['analytics', 'marketing', 'preferences', 'sale_of_data'].some((k) => c[k] === 'yes' || c[k] === 'no') };
   };
   listen(document, 'visitorConsentCollected', () => {
     const g = read();

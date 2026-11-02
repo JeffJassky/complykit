@@ -28,7 +28,7 @@ export const MAX_FILE_BYTES = 256 * 1024 * 1024;
 const MAX_SKEW_MS = 5 * 60_000;
 
 /** What the client sends. */
-const BODY_FIELDS = new Set(['id', 'at', 'categories', 'configHash', 'toolVersion', 'regime', 'gpc', 'domain', 'kind', 'supersedes', 'gpcHonored', 'region']);
+const BODY_FIELDS = new Set(['id', 'at', 'categories', 'configHash', 'toolVersion', 'regime', 'gpc', 'domain', 'kind', 'supersedes', 'source', 'gpcHonored', 'region']);
 
 /** What we store, one per line. `receivedAt` is ours (retention runs on it, since `at` is the client's clock). */
 export interface ConsentRecord {
@@ -44,6 +44,8 @@ export interface ConsentRecord {
   kind?: 'choice' | 'withdrawal';
   /** The id of the decision this one replaced. */
   supersedes?: string;
+  /** The site banner an add-on (companion) mode decision was made in (shopify, onetrust, manual…); absent = complykit's own banner. */
+  source?: string;
   /** GPC was on and the owner's setting counted it as an opt-out. */
   gpcHonored?: boolean;
   /** Country or country-state of the visitor at decision time (US-CA, DE). */
@@ -57,6 +59,7 @@ const CATEGORY_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 const HASH_RE = /^[A-Za-z0-9][A-Za-z0-9:_.-]{3,127}$/;
 const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9.+_-]{0,31}$/;
 const REGIME_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+const SOURCE_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const REGION_RE = /^[A-Z]{2}(-[A-Z0-9]{1,3})?$/;
 const RESERVED = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -84,7 +87,7 @@ export function originDomain(origin: string | undefined): string | undefined {
 /** The body, validated and normalized. Throws a 400 (403 for a `domain` that disagrees with the Origin). */
 export function normalizeRecord(body: unknown, domain: string, now = Date.now()): ConsentRecord {
   if (!isPlainObject(body)) bad('the body must be a JSON object');
-  for (const k of Object.keys(body)) if (!BODY_FIELDS.has(k)) bad(`unknown field \`${k.slice(0, 40)}\`: a consent record holds only id, at, categories, configHash, toolVersion, regime, gpc, kind, supersedes, gpcHonored and region`);
+  for (const k of Object.keys(body)) if (!BODY_FIELDS.has(k)) bad(`unknown field \`${k.slice(0, 40)}\`: a consent record holds only id, at, categories, configHash, toolVersion, regime, gpc, kind, supersedes, source, gpcHonored and region`);
 
   if (body.domain !== undefined && siteDomain(body.domain) !== domain) bad('`domain` does not match the request Origin', 403);
 
@@ -111,6 +114,7 @@ export function normalizeRecord(body: unknown, domain: string, now = Date.now())
 
   if (body.kind !== undefined && body.kind !== 'choice' && body.kind !== 'withdrawal') bad("`kind` must be 'choice' or 'withdrawal'");
   if (body.supersedes !== undefined && (typeof body.supersedes !== 'string' || !ID_RE.test(body.supersedes))) bad('`supersedes` must be a consent id');
+  if (body.source !== undefined && (typeof body.source !== 'string' || !SOURCE_RE.test(body.source))) bad('`source` must be a banner id such as shopify or onetrust');
   if (body.gpcHonored !== undefined && typeof body.gpcHonored !== 'boolean') bad('`gpcHonored` must be true or false');
   if (body.region !== undefined && (typeof body.region !== 'string' || !REGION_RE.test(body.region))) bad('`region` must be a country or country-state code such as US-CA or DE');
 
@@ -126,6 +130,7 @@ export function normalizeRecord(body: unknown, domain: string, now = Date.now())
   if (body.gpc !== undefined) rec.gpc = body.gpc;
   if (body.kind !== undefined) rec.kind = body.kind;
   if (body.supersedes !== undefined) rec.supersedes = body.supersedes;
+  if (body.source !== undefined) rec.source = body.source;
   if (body.gpcHonored !== undefined) rec.gpcHonored = body.gpcHonored;
   if (body.region !== undefined) rec.region = body.region;
   return rec;
@@ -194,9 +199,9 @@ export class ConsentRecordStore {
     const cats = new Set<string>();
     for await (const r of this.records.records(domain)) for (const k of Object.keys(r.categories ?? {})) cats.add(k);
     const catCols = [...cats].sort();
-    yield csvRow(['id', 'at', 'receivedAt', 'kind', 'supersedes', 'regime', 'region', 'gpc', 'gpcHonored', 'configHash', 'toolVersion', ...catCols.map((c) => `category:${c}`)]);
+    yield csvRow(['id', 'at', 'receivedAt', 'kind', 'supersedes', 'source', 'regime', 'region', 'gpc', 'gpcHonored', 'configHash', 'toolVersion', ...catCols.map((c) => `category:${c}`)]);
     for await (const r of this.records.records(domain)) {
-      yield csvRow([r.id, r.at, r.receivedAt, r.kind ?? '', r.supersedes ?? '', r.regime, r.region ?? '', r.gpc === undefined ? '' : String(r.gpc), r.gpcHonored === undefined ? '' : String(r.gpcHonored), r.configHash, r.toolVersion, ...catCols.map((c) => (r.categories?.[c] === undefined ? '' : String(r.categories[c])))]);
+      yield csvRow([r.id, r.at, r.receivedAt, r.kind ?? '', r.supersedes ?? '', r.source ?? '', r.regime, r.region ?? '', r.gpc === undefined ? '' : String(r.gpc), r.gpcHonored === undefined ? '' : String(r.gpcHonored), r.configHash, r.toolVersion, ...catCols.map((c) => (r.categories?.[c] === undefined ? '' : String(r.categories[c])))]);
     }
   }
 

@@ -11,6 +11,7 @@
 //                                      (false, nothing changed: not a location, or not running)
 //   ComplyKit.withdraw()             → every non-necessary category denied, a
 //                                      record sent, 'withdraw' emitted
+//   ComplyKit.sync({ analytics: true })  add-on mode: the site's banner answered (the proof is kept, source = cmp)
 //
 // Internal modules get the store with `whenStore(fn)` (called now, or when the
 // store starts). `init(config, regime)` starts it explicitly (once: a second
@@ -160,13 +161,15 @@ export function withdraw(): ConsentState | null {
 /**
  * Add-on mode: set the store from the site's own banner choice (`{ categoryId: granted }`; a category left
  * out keeps its current value). A change of grants is reported as a decision `via: 'cmp'`, unless `initial` (the
- * first state learned from the banner on a page is applied, not a decision). Returns null (and does
+ * first state learned from the banner on a page is applied, not a decision). `answered`: whether the visitor has
+ * answered the banner (undefined = the source cannot tell, and a manual ComplyKit.sync counts as answered); once
+ * answered, the store keeps the proof (store.follow). Returns null (and does
  * nothing) when the tool is not running in add-on mode: in full mode the visitor's choice is complykit's own.
  */
-export function sync(choice: Record<string, boolean>, initial?: boolean): ConsentState | null {
+export function sync(choice: Record<string, boolean>, initial?: boolean, answered?: boolean): ConsentState | null {
   if (!store || config?.mode !== 'companion') return null;
   const before = store.state().categories;
-  const s = store.set({ ...before, ...choice });
+  const s = store.follow({ ...before, ...choice }, answered, initial);
   if (!initial && Object.keys(before).some((k) => before[k] !== s.categories[k])) report({ t: 'decide', action: 'save', via: 'cmp', categories: s.categories });
   // A grant taken back after the page's first answer: clean up (done by the store change) and reload.
   if (!initial && Object.keys(before).some((k) => before[k] && !s.categories[k])) companionRevoked();

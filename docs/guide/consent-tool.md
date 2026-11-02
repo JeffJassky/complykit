@@ -171,8 +171,10 @@ The keys are your config's category ids. A change from true to false runs the sa
 cookie cleanup as every other source.
 
 What add-on mode switches off, because the banner owns it: complykit's banner, the
-Google Tag Manager bridge, the vendor signals, the platform bridges and consent
-records (the banner keeps its own proof). The to-do list also hides "remove the
+Google Tag Manager bridge, the vendor signals and the platform bridges. The banner
+still decides; once it reports an answer complykit keeps the same proof as full mode
+(the `complykit_consent` cookie and mirror, and a record to `record.endpoint`, with
+`source` naming the banner; see [consent records](consent-records.md)). The to-do list also hides "remove the
 existing consent tool". Other tasks are unchanged. The leak tasks still say what must
 be held, but holding it is the banner's job, and a note at the top of the list says so.
 

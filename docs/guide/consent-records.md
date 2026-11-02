@@ -51,8 +51,32 @@ Each record is a full snapshot of one decision:
 - `region` is where the visitor was at that moment, as a country (`DE`) or a country
   and state (`US-CA`). Never anything finer. Left out when no location was known.
 
-`kind`, `supersedes`, `gpcHonored` and `region` are optional on the endpoint: a
+- `source` is set in add-on mode only: the banner the decision was made in
+  (`shopify`, `onetrust`, `cookiebot`, `consent-mode`, `manual`…, your `companion.cmp`).
+  A record from complykit's own banner has none.
+
+`kind`, `supersedes`, `source`, `gpcHonored` and `region` are optional on the endpoint: a
 client that predates them sends none, and the stored record then leaves them out.
+
+### Add-on mode
+
+When your own banner decides (see [the consent tool](consent-tool.md), add-on mode),
+complykit keeps the same proof once that banner reports an answer: the same record, sent
+to the same endpoint, plus `source`. The banner stays the source of truth; the stored
+copy is evidence only and is never read back as the answer.
+
+- Before the banner has an answer (a region's defaults apply), nothing is stored or sent.
+- The record's `at` is when complykit saw the answer, not when the visitor gave it. An
+  answer given before the add-on ran is recorded on the first page that loads it.
+- The same answer on later pages keeps the same `id` and sends nothing new. A different
+  answer is a new decision that supersedes the stored one (`withdrawal` when a grant was
+  taken back). If the banner loses its answer, the stored snapshot is cleared (its id
+  waits for the next decision) and nothing is sent.
+- Shopify, OneTrust and Cookiebot say whether the visitor answered. A banner that cannot
+  say (consent-mode, tcf, usercentrics, didomi, trustarc, wordpress, a manual
+  `ComplyKit.sync`) counts as answered on a live change after the page's first state, or
+  on the first state when a snapshot is already stored; a first state with nothing stored
+  is followed but not recorded.
 
 The service stores exactly this, plus `receivedAt` (the server's clock; retention
 runs on it, because `at` is the visitor's clock). It **does not store** an IP address,

@@ -258,8 +258,9 @@ function decodeShopify(raw: string): Decoded | undefined {
 //   {"v":1,"id":"<random>","at":"<ISO>","configHash":"…","regime":"opt-in","gpc":false,
 //    "categories":{"necessary":true,"analytics":false,…}}
 // plus, since the snapshot fields: "kind":"choice"|"withdrawal", "supersedes":"<previous id>",
-// "gpcHonored":bool, "region":"US-CA" (all optional here: an older value has none).
-// The client writes it ONLY on a visitor's choice (never for defaults), so a
+// "gpcHonored":bool, "region":"US-CA", "source":"shopify" (add-on mode: the site banner that answered)
+// (all optional here: an older value has none).
+// The client writes it ONLY on a visitor's choice (never for defaults; in add-on mode, the site banner's answer), so a
 // decodable value always means a recorded choice. Another `v` is not guessed at.
 /**
  * complykit's own consent cookie. The client (client/src/store.ts COOKIE_NAME) defines it; src/ never

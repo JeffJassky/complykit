@@ -5,14 +5,15 @@
 //   - Events on window: CookiebotOnConsentReady ("consent state is ready, from a fresh submission or an
 //     existing cookie"), CookiebotOnAccept and CookiebotOnDecline (also on visits where the visitor had
 //     already accepted / declined), CookiebotOnLoad.
+// Answered: Cookiebot.hasResponse === true.
 // Before the visitor answers, consent holds the defaults (only necessary true): that is the real state,
 // so "Cookiebot.consent exists" is what counts as ready.
-import { listen, win, type Source } from './types.js';
+import { listen, win, type Read, type Source } from './types.js';
 
 export const cookiebot: Source = (push) => {
-  const read = (): string[] | undefined => {
+  const read = (): Read | undefined => {
     const c = win().Cookiebot?.consent;
-    return c && typeof c === 'object' ? Object.keys(c).filter((k) => c[k] === true) : undefined;
+    return c && typeof c === 'object' ? { granted: Object.keys(c).filter((k) => c[k] === true), answered: win().Cookiebot.hasResponse === true } : undefined;
   };
   listen(window, 'CookiebotOnConsentReady CookiebotOnAccept CookiebotOnDecline CookiebotOnLoad', () => {
     const g = read();

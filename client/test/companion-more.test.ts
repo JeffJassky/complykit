@@ -70,7 +70,7 @@ ${banner.after ?? ''}
   return { page, ctx, posts };
 }
 
-const cookies = (p: Page) => p.evaluate(() => document.cookie.split(/;\s*/).map((c) => c.split('=')[0]).filter(Boolean).sort());
+const cookies = (p: Page) => p.evaluate(() => document.cookie.split(/;\s*/).map((c) => c.split('=')[0]).filter((n) => n && n !== 'complykit_consent').sort());
 const state = (p: Page) => p.evaluate(() => (window as any).ComplyKit.get()?.categories as Record<string, boolean> | undefined);
 const settle = (p: Page, ms = 300) => p.waitForTimeout(ms);
 

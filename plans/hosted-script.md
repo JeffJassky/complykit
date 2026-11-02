@@ -87,8 +87,9 @@ Client in companion mode (a separate bundle — the core is at ~96% of its 15 KB
   it at `/s/complykit-consent-companion.js` with the UI file's caching rules; the CLI's
   self-hosted copy step copies it too.
 - **Off:** the UI file (never requested), the GTM bridge, the vendor adapters, the
-  platform bridges (they would write our state into the platform — the banner owns it),
-  consent records (the banner keeps its own proof). The gate is installed but there are no
+  platform bridges (they would write our state into the platform — the banner owns it).
+  Consent records stay on: complykit keeps proof of the banner's answer (cookie, mirror and a
+  record with `source = cmp`, via `store.follow`; consent-records guide). The gate is installed but there are no
   held tags to release.
 - **On:** one source adapter for `companion.cmp` reads the banner's current choice at
   start and on every change, maps it through `companion.map ?? DEFAULT_MAPS[cmp]` to
@@ -528,7 +529,7 @@ source), `client/src/index.ts` (skip UI/GTM/adapters/bridges/records in companio
 
 **Contract:** "Add-on mode" above. **Tests (Step 0):** `client/test/companion.test.ts` —
 per source: a fake banner sets state → store follows; a revoke deletes the vendor cookie;
-sweep on load; nothing of the UI is requested; no record posted; banner absent → gives up
+sweep on load; nothing of the UI is requested; proof kept once the banner answers (client/test/companion-proof.test.ts); banner absent → gives up
 with diagnostics; `ComplyKit.sync`. **Non-goals:** writing our choice back into the banner.
 
 #### T7 — service: owner settings form + add-on in the to-do list (S, wave 2, after T3)

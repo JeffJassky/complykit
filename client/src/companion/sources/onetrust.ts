@@ -8,14 +8,19 @@
 //     event.detail while its property table says "details"; we read the global instead, so it does not matter.)
 //   - OneTrust.OnConsentChanged(cb) also exists ("triggered when the user's consent status changes");
 //     not used: the window event covers it and works before the OneTrust object does.
+//   - OneTrust.IsAlertBoxClosed(): whether the visitor has closed the banner (answered it); when it is not a function
+//     the OptanonAlertBoxClosed cookie (set when the banner is closed) stands in. Neither present = not answered.
 // Not documented (so not relied on): the exact moment OnetrustActiveGroups is first populated.
 // We therefore treat "the global is a string" as the banner being ready.
-import { listen, win, type Source } from './types.js';
+import { listen, win, type Read, type Source } from './types.js';
 
 export const onetrust: Source = (push) => {
-  const read = (): string[] | undefined => {
+  const read = (): Read | undefined => {
     const g = win().OnetrustActiveGroups;
-    return typeof g === 'string' ? g.split(',').filter(Boolean) : undefined;
+    if (typeof g !== 'string') return undefined;
+    const ot = win().OneTrust;
+    const answered = typeof ot?.IsAlertBoxClosed === 'function' ? ot.IsAlertBoxClosed() === true : /(?:^|;\s*)OptanonAlertBoxClosed=/.test(document.cookie);
+    return { granted: g.split(',').filter(Boolean), answered };
   };
   listen(window, 'OneTrustGroupsUpdated', () => {
     const g = read();

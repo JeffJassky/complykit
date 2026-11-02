@@ -4,8 +4,9 @@
 //
 // The body matches the service's allow-list exactly
 // (service/src/server/consent-records.ts — an unknown field is a 400):
-//   { id, at, kind, categories, configHash, toolVersion, regime, gpc, gpcHonored, supersedes?, region? }
-// (`supersedes` and `region` are left out when there is none; JSON drops undefined.)
+//   { id, at, kind, categories, configHash, toolVersion, regime, gpc, gpcHonored, supersedes?, source?, region? }
+// (`supersedes`, `source` and `region` are left out when there is none; JSON drops undefined. `source` is
+// add-on mode's banner id, config.companion.cmp; a full-mode record has none.)
 // `id` is a fresh random id PER DECISION (the service de-duplicates on it, so a
 // per-visitor id would swallow a changed choice). Nothing else that could
 // identify a visitor: no user agent, no URL, no referrer, no cookie values.
@@ -30,6 +31,7 @@ export interface ConsentRecordBody {
   gpcHonored?: boolean;
   kind?: 'choice' | 'withdrawal';
   supersedes?: string;
+  source?: string;
   region?: string;
 }
 
