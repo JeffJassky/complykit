@@ -41,6 +41,7 @@ let locationWait: Promise<void> | undefined;
 export const locationPending = (): Promise<void> | undefined => locationWait;
 /** The latest add-on sync: an older one waiting for the location is dropped. */
 let proofSeq = 0;
+let lastChoice: Record<string, boolean> = {};
 const waiting: Array<(s: ConsentStore) => void> = [];
 
 /**
@@ -64,7 +65,9 @@ export function init(raw: unknown, regime?: Regime, opts: StoreOptions = {}): Co
   // synchronous); a header lookup starts strict and moves the store when it answers.
   const loc = regime ? undefined : resolveLocation(config);
   const r = regime ?? loc!.initial.regime;
-  locationWait = loc?.initial.pending ? loc.ready.then(() => undefined) : undefined;
+  // Cleared once the lookup settles (before anything waiting on it runs), so a later sync takes the direct path.
+  const w: Promise<void> | undefined = loc?.initial.pending ? loc.ready.then(() => void (locationWait === w && (locationWait = undefined))) : undefined;
+  locationWait = w;
   store = createStore(config, r, { toolVersion: TOOL_VERSION, location: loc?.initial.location, ...opts });
   if (loc?.initial.pending) {
     const started = store;
@@ -170,6 +173,8 @@ export function withdraw(): ConsentState | null {
  */
 export function sync(choice: Record<string, boolean>, initial?: boolean, answered?: boolean): ConsentState | null {
   if (!store || config?.mode !== 'companion') return null;
+  // Manual has no source to name every category: its calls add up to one cumulative choice (a source passes all it maps each time).
+  if (config.companion?.cmp === 'manual') choice = lastChoice = { ...lastChoice, ...choice };
   const before = store.state().categories;
   // The grants apply at once; the proof (compare, write, record) waits for a pending location lookup so it carries the settled regime and region.
   const wait = locationPending();

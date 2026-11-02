@@ -356,7 +356,14 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
   };
 
   // A regime / GPC / location update before a choice: the defaults move, add-on mode keeps the banner's grants.
-  const refresh = (): ConsentState => (persist ? unset(current.reason ?? 'none') : mk({ status: 'unset', categories: current.categories, reason: 'none' }));
+  // Before an answer (or before any banner state) a category the banner reported keeps its value; the rest take the current defaults.
+  let followed: Record<string, boolean> | undefined;
+  const overlay = (): Record<string, boolean> => {
+    const out = defaults();
+    for (const id of ids) if (followed && id in followed) out[id] = isNecessaryCategory(id) || followed[id] === true;
+    return out;
+  };
+  const refresh = (): ConsentState => (persist ? unset(current.reason ?? 'none') : mk({ status: 'unset', categories: overlay(), reason: 'none' }));
 
   const copy = (s: ConsentState): ConsentState => ({ ...s, categories: { ...s.categories } });
 
@@ -401,9 +408,9 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
   const choose = (choice: Record<string, boolean>): ConsentState => decide(choice, current.status === 'chosen' ? current : undefined);
 
   const follow = (choice: Record<string, boolean>, answered?: boolean, initial?: boolean, hold?: boolean): ConsentState => {
-    // What the gate sees: the banner's grants, the default for a category its map does not reach.
-    const live: Record<string, boolean> = {};
-    for (const id of ids) live[id] = isNecessaryCategory(id) || (id in choice ? choice[id] === true : current.categories[id]);
+    // What the gate sees: the banner's grants, the current default for a category its map does not reach.
+    followed = choice;
+    const live = overlay();
     const keep = (r: Partial<ConsentState>): ConsentState => (replace(mk({ status: 'unset', categories: live, reason: 'none', ...r })), copy(current));
     if (hold) return keep({});
     const r = read();
