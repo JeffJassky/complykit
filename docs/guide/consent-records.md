@@ -72,11 +72,28 @@ copy is evidence only and is never read back as the answer.
   answer is a new decision that supersedes the stored one (`withdrawal` when a grant was
   taken back). If the banner loses its answer, the stored snapshot is cleared (its id
   waits for the next decision) and nothing is sent.
+- The record proves what the banner reported, not how the visitor was asked. An app
+  calling Shopify's `setTrackingConsent`, or OneTrust closing on scroll in an
+  implied-consent / notice template, also counts as an answer.
+- Shopify, OneTrust and Cookiebot say whether the visitor answered. Two cases are not an
+  answer: a GPC browser's automatic sale-of-data refusal on Shopify (nothing else
+  declared), and Cookiebot's implied consent (`consent.method` is `implied`).
+- Google Consent Mode: a `default` command is never an answer; an `update` (live, or a
+  banner restoring its stored answer) is. With only a default, the page's first state is
+  followed but not recorded, and a state that differs from the stored snapshot is not
+  written either: a banner restoring its answer a moment later must not leave a
+  withdrawal and a new choice on every page.
+- A category the banner's map cannot reach is recorded as denied (the banner never
+  asked) and never makes two answers differ; the page itself keeps that category's
+  regime default.
+- The record waits for the location lookup when one is pending: the grants apply at
+  once, and the decision is written once it settles, with the settled regime and region.
 - Shopify, OneTrust and Cookiebot say whether the visitor answered. A banner that cannot
-  say (consent-mode, tcf, usercentrics, didomi, trustarc, wordpress, a manual
-  `ComplyKit.sync`) counts as answered on a live change after the page's first state, or
-  on the first state when a snapshot is already stored; a first state with nothing stored
-  is followed but not recorded.
+  say (tcf, usercentrics, didomi, trustarc, wordpress, a manual `ComplyKit.sync`) counts
+  as answered on a live change after the page's first state, or on the first state when
+  a stored snapshot matches it; a first state with nothing stored is followed but not
+  recorded. Call `ComplyKit.sync(choice)` only once the visitor answered, or pass `false`
+  as the third argument.
 
 The service stores exactly this, plus `receivedAt` (the server's clock; retention
 runs on it, because `at` is the visitor's clock). It **does not store** an IP address,

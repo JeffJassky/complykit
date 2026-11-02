@@ -10,7 +10,8 @@
 //   - document event 'visitorConsentCollected', detail {analyticsAllowed, marketingAllowed,
 //     preferencesAllowed, saleOfDataAllowed}; "published only when consent changes", so we re-read.
 //   - Answered: any of currentVisitorConsent()'s analytics / marketing / preferences / sale_of_data is 'yes' or 'no'
-//     (all '' = undeclared: the region default applies, nothing was asked or answered).
+//     (all '' = undeclared: the region default applies, nothing was asked or answered). Not an answer: a GPC
+//     browser's automatic sale_of_data 'no' with analytics / marketing / preferences all ''.
 //   - The API exists only once something calls Shopify.loadFeatures([{name: 'consent-tracking-api', version: '0.1'}], cb)
 //     ("When invoked without an error, the API is globally available at window.Shopify.customerPrivacy"). Shopify's banner
 //     does not expose it on its own, so the add-on asks for it once (as bridges/shopify.ts does) and reads in the callback.
@@ -83,7 +84,9 @@ export const shopify: Source = (push) => {
     // Advertising also needs the sale of data not refused: effective function when present, else sale_of_data !== 'no'.
     const saleOk = typeof p.saleOfDataAllowed === 'function' ? p.saleOfDataAllowed() === true : c.sale_of_data !== 'no';
     const granted = Object.keys(eff).filter((k) => (typeof p[eff[k]] === 'function' ? p[eff[k]]() === true : c[k] === 'yes') && (k !== 'marketing' || saleOk));
-    return { granted, answered: ['analytics', 'marketing', 'preferences', 'sale_of_data'].some((k) => c[k] === 'yes' || c[k] === 'no') };
+    // A GPC visitor's automatic sale_of_data 'no' with nothing else declared is Shopify's default, not an answer.
+    const gpcOnly = (navigator as { globalPrivacyControl?: boolean }).globalPrivacyControl === true && !c.analytics && !c.marketing && !c.preferences;
+    return { granted, answered: ['analytics', 'marketing', 'preferences', 'sale_of_data'].some((k) => c[k] === 'yes' || c[k] === 'no') && !(gpcOnly && c.sale_of_data === 'no') };
   };
   listen(document, 'visitorConsentCollected', () => {
     const g = read();

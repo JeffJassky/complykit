@@ -170,6 +170,11 @@ ComplyKit.sync({ analytics: true, advertising: false, functional: true });
 The keys are your config's category ids. A change from true to false runs the same
 cookie cleanup as every other source.
 
+`ComplyKit.sync(choice)` counts as the visitor's answer and is recorded (see
+[consent records](consent-records.md)). Call it only once the visitor has answered, or
+pass `false` as the third argument (`ComplyKit.sync(choice, false, false)`) to apply
+the grants without recording an answer. A category you leave out is recorded as denied.
+
 What add-on mode switches off, because the banner owns it: complykit's banner, the
 Google Tag Manager bridge, the vendor signals and the platform bridges. The banner
 still decides; once it reports an answer complykit keeps the same proof as full mode

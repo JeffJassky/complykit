@@ -158,12 +158,15 @@ export interface ConsentStore {
   rejectAll(): ConsentState;
   withdraw(): ConsentState;
   /**
-   * Add-on mode: the site banner's grants (`choice`, as set()) and whether the visitor has answered it (undefined =
-   * the source cannot tell: answered unless it is the page's `initial` state with nothing stored). Not answered:
-   * follow the grants, status 'unset', a stored snapshot is cleared (its id waits for the next decision). Answered:
-   * the stored snapshot stays when its grants match, else a new one (with `source`) is written and recorded.
+   * Add-on mode: the site banner's grants (`choice`: only the categories its map reaches; the live state keeps its
+   * default for the others, the snapshot records them false and never compares them) and whether the visitor has
+   * answered it. `answered` undefined = the source cannot tell: answered unless it is the page's `initial` state,
+   * which is then answered only when a snapshot is stored and matches (a differing one is followed, not written,
+   * and kept). Not answered: follow the grants, status 'unset', a stored snapshot is cleared (its id waits for the
+   * next decision). Answered: the stored snapshot stays when its grants match, else a new one (with `source`) is
+   * written and recorded. `hold`: only apply the grants (the proof waits, e.g. for the location lookup).
    */
-  follow(choice: Record<string, boolean>, answered?: boolean, initial?: boolean): ConsentState;
+  follow(choice: Record<string, boolean>, answered?: boolean, initial?: boolean, hold?: boolean): ConsentState;
   open(): void;
   setRegime(regime: Regime, location?: VisitorLocation): void;
   setGpc(gpc: boolean): void;
@@ -352,6 +355,9 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
     return mk({ status: 'chosen', categories, id: stored.id, at: stored.at, configHash: stored.configHash, kind: stored.kind, supersedes: stored.supersedes, region: stored.region }, stored.regime, stored.gpc);
   };
 
+  // A regime / GPC / location update before a choice: the defaults move, add-on mode keeps the banner's grants.
+  const refresh = (): ConsentState => (persist ? unset(current.reason ?? 'none') : mk({ status: 'unset', categories: current.categories, reason: 'none' }));
+
   const copy = (s: ConsentState): ConsentState => ({ ...s, categories: { ...s.categories } });
 
   const emit = (event: StoreEvent): void => {
@@ -376,7 +382,7 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
   };
 
   // A new decision replacing `prev`: the stored snapshot, persisted when `persist` or add-on `source`.
-  const decide = (choice: Record<string, boolean>, prev?: Pick<ConsentState, 'id' | 'categories'>, source?: string): ConsentState => {
+  const decide = (choice: Record<string, boolean>, prev?: Pick<ConsentState, 'id' | 'categories'>, source?: string, live?: Record<string, boolean>): ConsentState => {
     const categories: Record<string, boolean> = {};
     for (const id of ids) categories[id] = isNecessaryCategory(id) || choice[id] === true;
     const kind = prev && ids.some((id) => !isNecessaryCategory(id) && prev.categories[id] && !categories[id]) ? 'withdrawal' : 'choice';
@@ -389,29 +395,29 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
       clearMirror(PREV_KEY);
       if (config.record?.endpoint) queueRecord(config.record.endpoint, buildRecord(stored, opts.toolVersion ?? '0.0.0'));
     }
-    replace(mk({ status: 'chosen', categories, id: stored.id, at: stored.at, configHash: stored.configHash, kind, supersedes: stored.supersedes, region, source }), true);
+    replace(mk({ status: 'chosen', categories: live ?? categories, id: stored.id, at: stored.at, configHash: stored.configHash, kind, supersedes: stored.supersedes, region, source }), true);
     return copy(current);
   };
   const choose = (choice: Record<string, boolean>): ConsentState => decide(choice, current.status === 'chosen' ? current : undefined);
 
-  const follow = (choice: Record<string, boolean>, answered?: boolean, initial?: boolean): ConsentState => {
+  const follow = (choice: Record<string, boolean>, answered?: boolean, initial?: boolean, hold?: boolean): ConsentState => {
+    // What the gate sees: the banner's grants, the default for a category its map does not reach.
+    const live: Record<string, boolean> = {};
+    for (const id of ids) live[id] = isNecessaryCategory(id) || (id in choice ? choice[id] === true : current.categories[id]);
+    const keep = (r: Partial<ConsentState>): ConsentState => (replace(mk({ status: 'unset', categories: live, reason: 'none', ...r })), copy(current));
+    if (hold) return keep({});
     const r = read();
     const stored = typeof r === 'string' ? undefined : r;
-    const source = config.companion?.cmp ?? 'manual';
-    const grants = (): Record<string, boolean> => Object.fromEntries(ids.map((id) => [id, isNecessaryCategory(id) || choice[id] === true]));
-    const yes = answered ?? (!initial || !!stored);
-    if (!yes) {
-      if (stored) {
+    const same = !!stored && ids.every((id) => !(id in choice) || isNecessaryCategory(id) || stored.categories[id] === (choice[id] === true));
+    if (answered === false || (answered === undefined && initial && !same)) {
+      if (stored && answered === false) {
         forget();
         writeMirror(stored.id, PREV_KEY);
       }
-      replace(mk({ status: 'unset', categories: grants(), reason: 'none' }));
-      return copy(current);
+      return keep({});
     }
-    const categories = grants();
-    if (!stored || ids.some((id) => stored.categories[id] !== categories[id])) return decide(choice, stored, source);
-    replace(mk({ status: 'chosen', categories, id: stored.id, at: stored.at, configHash: stored.configHash, kind: stored.kind, supersedes: stored.supersedes, region: stored.region, source: stored.source }, stored.regime, stored.gpc));
-    return copy(current);
+    if (!stored || !same) return decide(choice, stored, config.companion?.cmp ?? 'manual', live);
+    return keep({ status: 'chosen', id: stored.id, at: stored.at, configHash: stored.configHash, kind: stored.kind, supersedes: stored.supersedes, region: stored.region, source: stored.source, reason: undefined });
   };
 
   const all = (on: boolean): Record<string, boolean> => {
@@ -462,12 +468,12 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
       const moved = r !== regime || (!!loc && JSON.stringify(loc) !== JSON.stringify(location));
       regime = r;
       if (loc) location = loc;
-      if (current.status === 'unset') replace({ ...unset(current.reason ?? 'none') }, moved);
+      if (current.status === 'unset') replace(refresh(), moved);
     },
     setGpc: (b) => {
       const moved = b !== gpc;
       gpc = b;
-      if (current.status === 'unset') replace({ ...unset(current.reason ?? 'none') }, moved);
+      if (current.status === 'unset') replace(refresh(), moved);
     },
     destroy: () => {
       if (typeof window !== 'undefined') window.removeEventListener('storage', onStorage);
