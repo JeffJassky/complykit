@@ -69,7 +69,8 @@ minute and is never written.
 | Auth | This route is open even when the service has `SERVICE_PASSWORD`, because a visitor's browser has no password. Everything else, including the export, stays behind it. |
 | Limits | 4 KB per record, 60 per minute per client address, 1200 per minute per site, 256 MB per site. |
 
-The service answers `204` to a retried post of an id it already has, without storing it twice.
+A retried post of an id the service already has is answered `204` like any other. The
+file may hold the line twice; the export lists each id once.
 
 Records are appended, one JSON object per line, to
 `DATA_DIR/sites/<domain>/consent-records.jsonl` on the service's volume.
