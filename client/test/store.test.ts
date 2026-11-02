@@ -402,6 +402,18 @@ describe('consent state store', () => {
     await h.ctx.close();
   });
 
+  it('a corrupt outbox never stops the tool from starting', async () => {
+    const h = await harness(baseConfig());
+    await h.load();
+    await h.page.evaluate(() => localStorage.setItem('complykit_consent_outbox', '[null, 7, "x", {}]'));
+    await h.load();
+    expect(await get(h.page)).toMatchObject({ status: 'unset' });
+    await waitFor(() => false, 300);
+    expect(h.records).toHaveLength(0);
+    expect(await h.page.evaluate(() => localStorage.getItem('complykit_consent_outbox'))).toBe('[]');
+    await h.ctx.close();
+  });
+
   it('add-on (companion) mode keeps no outbox', async () => {
     const cfg = baseConfig();
     cfg.mode = 'companion';

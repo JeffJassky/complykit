@@ -41,8 +41,10 @@ Each record is a full snapshot of one decision:
   or a settings change that turns something off). Otherwise it is `choice`. Defaults
   that applied before any choice never count as a grant.
 - `supersedes` is the `id` of the decision this one replaced. A first decision has
-  none. Following `supersedes` gives the visitor's history, with no identifier that
-  links it to a person.
+  none. Following `supersedes` gives the visitor's history in that browser, with no
+  identifier that links it to a person. The chain restarts when a stored choice stops
+  counting (it expired, or your category list changed): the new decision is a first
+  decision again.
 - `gpcHonored` says whether the GPC signal counted as an opt-out under your settings
   (`gpc` is only that the browser sent it).
 - `region` is where the visitor was at that moment, as a country (`DE`) or a country

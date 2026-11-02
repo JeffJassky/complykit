@@ -293,7 +293,7 @@ future sends; it recalls nothing — the copy never implies otherwise (string ke
 cannot be recalled.").
 
 On withdrawal (`ComplyKit.withdraw()`, or Reject all after a grant) the tool, in
-order: records the deny-all choice (its [consent record](./consent-records.md) has `kind: "withdrawal"` and `supersedes` the decision it replaces), lets the GTM bridge push its Consent Mode update,
+order: records the deny-all choice (when it takes back a grant, its [consent record](./consent-records.md) has `kind: "withdrawal"` and `supersedes` the decision it replaces), lets the GTM bridge push its Consent Mode update,
 has the vendor adapters revoke, deletes the matching cookies and
 `localStorage` / `sessionStorage` keys of the revoked categories, then reloads the
 page; the gate holds every gated script from that load on. A partial change that turns

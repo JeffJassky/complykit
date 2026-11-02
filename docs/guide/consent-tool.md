@@ -368,9 +368,11 @@ tool is itself tracking.
 - Not fine: send a decline or withdrawal to any third-party tool, for example an
   analytics `consent_declined` event. That is a third-party request made after the
   visitor said no, the pattern wiretap claims target.
-- Not fine: join the consent record to an account, email, IP address or other
-  identifier, or use it for marketing. California's record-keeping rule limits these
-  records to compliance use.
+- Not fine: use the decision for marketing, profiling or audience building, or
+  enrich the record with an IP address or other identifiers it does not need. Keep it
+  for proving consent. (California, for one, limits records of opt-out requests to
+  compliance use.) Linking a decision to a signed-in account so the choice follows the
+  visitor across devices is a compliance use; using that link for anything else is not.
 
 The `complykit_consent` cookie travels with every request to your site, so any network
 capture (a HAR file) shows the consent state at each request. Keeping trackers held

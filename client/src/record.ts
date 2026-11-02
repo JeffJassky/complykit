@@ -93,7 +93,7 @@ export function queueRecord(endpoint: string, body: ConsentRecordBody): void {
 /** On start: forget records older than 30 days, resend the rest. */
 export function flushOutbox(endpoint: string, now: number): void {
   const all = readBox();
-  const keep = all.filter((x) => now - Date.parse(x.at) < MAX_AGE_MS);
+  const keep = all.filter((x) => x && now - Date.parse(x.at) < MAX_AGE_MS);
   if (keep.length !== all.length) writeBox(keep);
   for (const b of keep) post(endpoint, b);
 }
