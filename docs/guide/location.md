@@ -206,9 +206,11 @@ gives an answer:
    move, but only if the visitor has not made a choice yet. The tool waits 3 seconds,
    then stays strict for the rest of that page. `header` is a label for the people
    reading the config. The tool never sees the header itself; your server does.
-4. **`platform`.** On Shopify, the tool reads `Shopify.customerPrivacy.getRegion()`,
-   but only if the storefront has already loaded the Customer Privacy API. Loading
-   that API is the Shopify bridge's job.
+4. **`platform`.** On Shopify, the tool reads `Shopify.customerPrivacy.getRegion()`.
+   If the Customer Privacy API is not loaded yet, the visitor is under `opt-in` while
+   the tool asks Shopify to load it (`Shopify.loadFeatures`, once) and checks every
+   100 ms, like `header`: the defaults move when the region arrives, only if the
+   visitor has not chosen, and after 3 seconds the visitor stays strict for that page.
 5. **Unknown.** The visitor gets `opt-in`.
 
 The tool records which source gave the answer in `ComplyKit.diagnostics.location`

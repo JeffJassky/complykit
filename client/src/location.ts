@@ -26,8 +26,11 @@
 //                then the store moves to the real one (overrides.regimes['*'] does not apply while
 //                pending: scripts released then cannot be unrun). An endpoint on any
 //                third origin is refused.
-//   4. platform  {kind:'platform'}: Shopify `customerPrivacy.getRegion()`, read
-//                only if the platform already loaded it (the bridge is E1's).
+//   4. platform  {kind:'platform'}: Shopify `customerPrivacy.getRegion()`. Read at once
+//                if the API is loaded; else pending like the header (strictest until
+//                it answers, HEADER_TIMEOUT_MS), polling every 100 ms and asking
+//                `Shopify.loadFeatures` (consent-tracking-api) once, since Shopify
+//                creates customerPrivacy only then and window.Shopify may come late.
 //   5. unknown   → FALLBACK_REGIME ('opt-in', the strictest).
 //
 // Location → regime is `regimeFor()` from src/registry/regime.ts, the same
@@ -70,7 +73,7 @@ export interface LocationEnv {
   document?: Pick<Document, 'querySelector'>;
   navigator?: object;
   /** For the platform source: `window.Shopify`. */
-  window?: { ComplyKitRegion?: unknown; Shopify?: { customerPrivacy?: { getRegion?: () => unknown } } };
+  window?: { ComplyKitRegion?: unknown; Shopify?: { customerPrivacy?: { getRegion?: () => unknown }; loadFeatures?: (features: unknown[], cb: () => void) => void } };
   fetch?: (url: string, init?: RequestInit) => Promise<{ ok: boolean; text(): Promise<string> }>;
   /** The page URL; the header endpoint may share its origin. */
   pageUrl?: string;
@@ -115,8 +118,7 @@ function readGlobal(win: LocationEnv['window']): RegimeLocation | undefined {
 
 function readPlatform(win: LocationEnv['window']): RegimeLocation | undefined {
   try {
-    const cp = win?.Shopify?.customerPrivacy;
-    return typeof cp?.getRegion === 'function' ? parseRegimeLocation(cp.getRegion()) : undefined;
+    return parseRegimeLocation(win?.Shopify?.customerPrivacy?.getRegion?.());
   } catch {
     return undefined;
   }
@@ -189,7 +191,32 @@ export function resolveLocation(config: ConsentToolConfig, env: LocationEnv = {}
   const fromMeta = readMeta(doc, metaName) ?? (metaName !== DEFAULT_REGION_META ? readMeta(doc, DEFAULT_REGION_META) : undefined);
   if (fromMeta) return done(decide('meta', fromMeta));
 
-  if (src.kind === 'platform') return done(decide('platform', readPlatform(win)));
+  // "Not known yet" is not "unknown": scripts released in this window cannot be
+  // unrun, so a pending lookup always starts strict, whatever overrides.regimes['*'] says.
+  const pend = (source: 'header' | 'platform', lookup: Promise<LocationDecision>): LocationResolution => {
+    const initial: LocationDecision = { regime: FALLBACK_REGIME, source: 'unknown', gpc, pending: true, overridden: false };
+    diagnostics.location = { ...initial, source };
+    return { initial, ready: lookup.then((d) => (diagnostics.location?.pending ? note(d) : d)) }; // setRegion() ran meanwhile: keep its record
+  };
+
+  if (src.kind === 'platform') {
+    const first = readPlatform(win);
+    if (first) return done(decide('platform', first));
+    return pend('platform', new Promise((resolve) => {
+      let ask = 1;
+      const end = Date.now() + (env.timeoutMs ?? HEADER_TIMEOUT_MS);
+      const tick = () => {
+        const loc = readPlatform(win);
+        if (loc || Date.now() >= end) return clearInterval(timer), resolve(decide('platform', loc));
+        try {
+          if (ask && win?.Shopify?.loadFeatures) ask = 0, win.Shopify.loadFeatures([{ name: 'consent-tracking-api', version: '0.1' }], tick);
+        } catch {
+          /* keep polling */
+        }
+      };
+      const timer = setInterval(tick, 100);
+    }));
+  }
 
   if (src.kind === 'header') {
     const pageUrl = env.pageUrl ?? (typeof location !== 'undefined' ? location.href : undefined);
@@ -199,17 +226,12 @@ export function resolveLocation(config: ConsentToolConfig, env: LocationEnv = {}
       if (!url && typeof console !== 'undefined') console.warn(`[complykit] location endpoint ${src.endpoint} is on neither the page's nor the script's origin; using the strictest regime`);
       return done(decide('unknown'));
     }
-    // "Not known yet" is not "unknown": scripts released in this window cannot be
-    // unrun, so a pending lookup always starts strict, whatever overrides.regimes['*'] says.
-    const initial: LocationDecision = { regime: FALLBACK_REGIME, source: 'unknown', gpc, pending: true, overridden: false };
-    diagnostics.location = { ...initial, source: 'header' };
     const lookup = f(url, { credentials: 'same-origin', cache: 'no-store', redirect: 'error', headers: { accept: 'text/plain' } })
       .then((res) => (res.ok ? res.text() : ''))
       .then((body) => decide('header', parseRegimeLocation(body.split(/[\r\n,]/)[0])))
       .catch(() => decide('unknown'));
     const timeout = new Promise<LocationDecision>((r) => setTimeout(() => r(decide('unknown')), env.timeoutMs ?? HEADER_TIMEOUT_MS));
-    const ready = Promise.race([lookup, timeout]).then((d) => (diagnostics.location?.pending ? note(d) : d)); // setRegion() ran meanwhile: keep its record
-    return { initial, ready };
+    return pend('header', Promise.race([lookup, timeout]));
   }
 
   return done(decide('unknown'));

@@ -128,9 +128,10 @@ Shopify's banner left on), up to five times, recorded in
 
 Use `"regimeSource": { "kind": "platform" }` ([location](/guide/location#shopify)).
 The tool reads `getRegion()` at start if the API is already loaded. Usually it is
-not (our script runs first), so the visitor starts on `opt-in`. When the bridge has
-loaded the API it runs the same location resolver again and moves the defaults to
-the visitor's real regime, unless they have already chosen.
+not (our script runs first), so the visitor starts on `opt-in`. The tool then asks
+Shopify to load the API (`Shopify.loadFeatures`, once), waits up to 3 seconds for
+`getRegion()`, and moves the defaults to the visitor's real regime, unless they have
+already chosen. If nothing answers, the visitor stays on `opt-in` for that page.
 
 ## Customer events pixels
 
