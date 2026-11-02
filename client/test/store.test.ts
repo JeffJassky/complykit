@@ -312,6 +312,45 @@ describe('consent state store', () => {
     await h.ctx.close();
   });
 
+  it('the chain survives an expired or re-asked choice, across page loads, until the next decision', async () => {
+    const year = baseConfig();
+    year.consent = { lifetimeDays: 365 };
+    const h = await harness(year);
+    const old = { v: 1, id: 'a'.repeat(32), at: new Date(Date.now() - 366 * 86_400_000).toISOString(), configHash: baseConfig().hash, regime: 'opt-in', gpc: false, categories: { necessary: true, analytics: true, advertising: true } };
+    await h.ctx.addCookies([{ name: 'complykit_consent', value: encodeURIComponent(JSON.stringify(old)), url: server.origin }]);
+    await h.load();
+    expect(await get(h.page)).toMatchObject({ status: 'unset', reason: 'expired' });
+    // The visitor browses on without deciding: the link to the old decision is kept.
+    await h.load();
+    const next = await h.page.evaluate(() => {
+      const ck = (window as any).ComplyKit;
+      ck.init(JSON.parse(document.getElementById('complykit-config')!.textContent!)).rejectAll();
+      return ck.get();
+    });
+    // It replaces the expired decision; an expired grant is not taken back, so it is a choice.
+    expect(next).toMatchObject({ kind: 'choice', supersedes: old.id });
+    await waitFor(() => h.records.length >= 1);
+    expect(JSON.parse(h.records[0].body)).toMatchObject({ supersedes: old.id });
+
+    // Category set changes: the next decision links to the one it re-asked.
+    const added = baseConfig();
+    added.consent = { lifetimeDays: 365 };
+    added.categories.push({ id: 'preferences', label: 'Preferences', description: 'x', defaultByRegime: { ...added.categories[1].defaultByRegime } });
+    added.hash = 'e'.repeat(64);
+    h.setConfig(added);
+    await h.load();
+    expect(await get(h.page)).toMatchObject({ status: 'unset', reason: 'categories-changed' });
+    const third = await h.page.evaluate(() => {
+      const ck = (window as any).ComplyKit;
+      ck.init(JSON.parse(document.getElementById('complykit-config')!.textContent!)).acceptAll();
+      return ck.get();
+    });
+    expect(third).toMatchObject({ kind: 'choice', supersedes: next.id });
+    // Used once: a later first-ever-looking state does not reuse it.
+    expect(await h.page.evaluate(() => localStorage.getItem('complykit_consent_prev'))).toBeNull();
+    await h.ctx.close();
+  });
+
   it('keeps a stored value written before these fields existed (no re-prompt)', async () => {
     const h = await harness(baseConfig());
     await h.load();

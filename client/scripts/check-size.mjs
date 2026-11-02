@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Fail if a gzipped IIFE exceeds its budget. Run after `npm run build`.
- *   complykit-consent.js     core, blocking in <head>   15 KB (design §6)
+ *   complykit-consent.js     core, blocking in <head>   16.5 KB (design §6: 15; raised for location holds, then proof fields)
  *   complykit-consent-ui.js  banner + settings, async   12 KB (D9 split)
  *   complykit-consent-companion.js  add-on mode adapters, async   8 KB (T6)
  */
@@ -11,7 +11,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
-const BUDGETS = { 'complykit-consent.js': 16 * 1024, 'complykit-consent-ui.js': 12 * 1024, 'complykit-consent-companion.js': 8 * 1024 };
+const BUDGETS = { 'complykit-consent.js': 16.5 * 1024, 'complykit-consent-ui.js': 12 * 1024, 'complykit-consent-companion.js': 8 * 1024 };
 
 let failed = false;
 for (const [name, budget] of Object.entries(BUDGETS)) {

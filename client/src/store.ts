@@ -68,6 +68,8 @@ import { buildRecord, flushOutbox, queueRecord, randomId } from './record.js';
 
 export const COOKIE_NAME = 'complykit_consent';
 export const STORAGE_KEY = 'complykit_consent';
+/** The id of a choice that expired or was re-asked, until the next decision names it in `supersedes`. */
+const PREV_KEY = 'complykit_consent_prev';
 export const STATE_FORMAT = 1;
 /** 12 months, EU convention: the default for `config.consent.lifetimeDays`. */
 export const DEFAULT_LIFETIME_DAYS = 365;
@@ -216,23 +218,23 @@ function consentSettings(config: ConsentToolConfig): { ttlMs: number; cookieDoma
 }
 
 // Storage access can throw (blocked site data, sandboxed frames): never fatal.
-function readMirror(): string | undefined {
+function readMirror(key = STORAGE_KEY): string | undefined {
   try {
-    return localStorage.getItem(STORAGE_KEY) ?? undefined;
+    return localStorage.getItem(key) ?? undefined;
   } catch {
     return undefined;
   }
 }
-function writeMirror(json: string): void {
+function writeMirror(json: string, key = STORAGE_KEY): void {
   try {
-    localStorage.setItem(STORAGE_KEY, json);
+    localStorage.setItem(key, json);
   } catch {
     /* cookie still holds it */
   }
 }
-function clearMirror(): void {
+function clearMirror(key = STORAGE_KEY): void {
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(key);
   } catch {
     /* nothing to do */
   }
@@ -310,14 +312,12 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
       forget();
       return unset('unreadable');
     }
-    if (now() - at >= ttlMs) {
+    // A choice that stops counting is still the one the next decision replaces: its id waits under PREV_KEY.
+    const reask = now() - at >= ttlMs ? 'expired' : Object.keys(stored.categories).length !== ids.length || ids.some((id) => !(id in stored.categories)) ? 'categories-changed' : '';
+    if (reask) {
       forget();
-      return unset('expired');
-    }
-    const keys = Object.keys(stored.categories);
-    if (keys.length !== ids.length || ids.some((id) => !(id in stored.categories))) {
-      forget();
-      return unset('categories-changed');
+      writeMirror(stored.id, PREV_KEY);
+      return unset(reask);
     }
     // Repair a missing or stale copy, keeping the original expiry.
     const json = JSON.stringify(stored);
@@ -358,11 +358,12 @@ export function createStore(config: ConsentToolConfig, regime: Regime, opts: Sto
     const was = prev.status === 'chosen';
     const kind = was && ids.some((id) => !isNecessaryCategory(id) && prev.categories[id] && !categories[id]) ? 'withdrawal' : 'choice';
     const region = location ? location.country + (location.region ? '-' + location.region : '') : undefined;
-    const stored: StoredConsent = { v: 1, id: randomId(), at: new Date(now()).toISOString(), configHash: config.hash, regime, gpc, categories, kind, supersedes: was ? prev.id : undefined, gpcHonored: gpc && honored, region };
+    const stored: StoredConsent = { v: 1, id: randomId(), at: new Date(now()).toISOString(), configHash: config.hash, regime, gpc, categories, kind, supersedes: was ? prev.id : readMirror(PREV_KEY), gpcHonored: gpc && honored, region };
     const json = JSON.stringify(stored);
     if (persist) {
       writeCookie(json, Math.floor(ttlMs / 1000), cookieDomain);
       writeMirror(json);
+      clearMirror(PREV_KEY);
     }
     if (persist && config.record?.endpoint) queueRecord(config.record.endpoint, buildRecord(stored, opts.toolVersion ?? '0.0.0'));
     replace(mk({ status: 'chosen', categories, id: stored.id, at: stored.at, configHash: stored.configHash, kind, supersedes: stored.supersedes, region }), true);
