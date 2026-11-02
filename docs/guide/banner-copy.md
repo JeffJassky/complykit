@@ -78,7 +78,7 @@ and advertising"), so a site with no advertising tools never mentions advertisin
 | Choice | Reason | Source |
 |---|---|---|
 | Purpose first, no "We value your privacy" | Consent has to be specific and informed: say what is used, for what. The purposes come from the scan, so they are accurate for the site. | EDPB Cookie Banner Taskforce; ICO 2026 guidance (§3.1, §3.3) |
-| "Reject all" next to "Accept all", same element, reject first | Refusing has to be as easy as accepting, on the same layer; "Accept all" plus a "Preferences" link is not symmetrical. | EDPB CBTF ¶¶8, 14, 18; CNIL; AEPD; ICO; CCPA Regs §7004(a)(2)(C)–(D) (§1.2, §3.1) |
+| "Reject all" next to "Accept all", same element and size, adjacent | Refusing has to be as easy as accepting, on the same layer; "Accept all" plus a "Preferences" link is not symmetrical. | EDPB CBTF ¶¶8, 14, 18; CNIL; AEPD; ICO; CCPA Regs §7004(a)(2)(C)–(D) (§1.2, §3.1) |
 | "They stay off unless you accept" / "Each stays off until you switch it on" | Silence is not consent and pre-ticked boxes are invalid; the copy states that the toggles start off. | Planet49 C-673/17; CCPA Regs §7004(a)(3) (§1.2, §3.1) |
 | No "By continuing to browse…", no close button | Navigating on or closing is not consent. | CCPA Regs §7004(a)(3)(D); Connecticut AG; CNIL (§1.2, §1.5, §3.1) |
 | "You can change your choice at any time from Privacy choices" + a persistent control | Withdrawal must be as easy as consent, from a persistent link. | EDPB CBTF ¶¶31–35 (§3.1) |

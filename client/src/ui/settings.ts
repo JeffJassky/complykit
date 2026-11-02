@@ -2,7 +2,7 @@
 // the config carries (a site with no advertising tools shows no advertising
 // toggle), each with its description and the vendors observed in it
 // (config.vendors labels), a checkbox per category — `necessary` checked and
-// locked on — and Reject all / Accept all / Save choices, plus Close.
+// locked on — and Accept all / Reject all / Save choices, plus Close (the banner's order).
 //
 // Checkboxes start from the current effective grants: under opt-in, before a
 // choice, everything but necessary is unchecked (no pre-ticked boxes). Under an
@@ -78,8 +78,8 @@ export function createSettings(config: ConsentToolConfig, act: SettingsActions, 
       h(
         'div',
         { class: 'ck-actions' },
-        button('reject', t('settings.rejectAll'), act.rejectAll),
         button('accept', t('settings.acceptAll'), act.acceptAll),
+        button('reject', t('settings.rejectAll'), act.rejectAll),
         button('save', t('settings.save'), () => act.save(choice())),
         button('close', t('settings.close'), () => el.close()),
       ),

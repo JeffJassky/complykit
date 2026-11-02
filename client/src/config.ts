@@ -42,6 +42,7 @@ export type {
   GtmConfig,
   ConsentPlatform,
   ConsentTheme,
+  ConsentAppearance,
   ConsentLayout,
   ConsentStringKey,
   ConsentStringTable,

@@ -89,10 +89,11 @@ describe('the generated config validates (D2)', () => {
     expect(gen(undefined, { scriptSrc: '/assets/ck/complykit-consent.js' }).snippet).toContain('<script src="/assets/ck/complykit-consent.js"></script>');
   });
 
-  it('defaults: empty theme and strings (the tool’s defaults per regime), bar layout, 365 days', () => {
+  it('defaults: empty theme and strings (the tool’s defaults per regime), box layout (the card), no appearance, 365 days', () => {
     expect(r.config.theme).toEqual({});
     expect(r.config.strings).toEqual({});
-    expect(r.config.layout).toBe('bar');
+    expect(r.config.layout).toBe('box');
+    expect(r.config.appearance).toBeUndefined();
     expect(r.config.blockPage).toBe(false);
     expect(gen(undefined, { blockPage: true }).config.blockPage).toBe(true);
     expect(r.config.consent).toEqual({ lifetimeDays: 365 });

@@ -108,7 +108,7 @@ up on the rescan as "deployed config was edited since it was generated".
 
 Every field below is in the parsed form. In the written form, `vendors`, `gate`,
 `platform`, `theme`, `strings`, `consent` and `layout` may be omitted (defaults: `[]`,
-`[]`, `"none"`, `{}`, `{}`, `{ "lifetimeDays": 365 }`, `"bar"`); `gtm`, `record`,
+`[]`, `"none"`, `{}`, `{}`, `{ "lifetimeDays": 365 }`, `"box"`); `gtm`, `record`,
 `analytics`, `mode`, `companion` and `privacyPolicyUrl` are optional and stay optional.
 
 ### `version`, `generatedFrom`, `hash`
@@ -341,19 +341,59 @@ the parsed container.
 `"none" | "shopify" | "wix" | "squarespace" | "wordpress"`. Names the platform
 bridge to load. Required by `control: "platform"` and `regimeSource: platform`.
 
-### `theme` and `layout`
+### `theme`, `layout` and `appearance`
 
-Theming is tokens, not an engine. `font` is always `inherit`.
+The default banner is a white card in the bottom-left corner: a cookie
+illustration on the left, a bold title, a muted paragraph, a filled **Accept
+all** and a same-size outlined **Reject all**, and **Manage choices** as an
+underlined link beneath them. On screens 720px wide or narrower the card spans
+the width with a 16px gutter, the illustration sits on top and the buttons stack
+full width, Accept first. An empty `theme` and no `appearance` give exactly that.
+
+Theming is tokens, not an engine. The body font family is always the page's; `headingFont` takes a font stack (quoted names allowed, up to 160 characters).
 
 ```json
-"theme": { "bg": "#fff", "fg": "#111", "accent": "#2563eb", "border": "#ddd", "radius": "6px" },
-"layout": "bar"
+"theme": { "accent": "#0f5132", "accentText": "#fff", "icon": "#0f5132", "headingFont": "Poppins, sans-serif" },
+"layout": "box",
+"appearance": { "icon": "cookie", "accept": "filled", "manage": "link", "position": "left" }
 ```
 
-Each key sets a CSS custom property: `--ck-bg`, `--ck-fg`, `--ck-accent`,
-`--ck-border`, `--ck-radius`. `layout` is `bar` (bottom bar, the default), `box`
-(corner box) or `modal` (centered). The per-category settings layer is the same in
-all three.
+Each `theme` key sets a CSS custom property:
+
+| Key | Property | Default | What it colors |
+|---|---|---|---|
+| `bg` | `--ck-bg` | `#fff` | card background |
+| `fg` | `--ck-fg` | `#111` | title, button text and borders, the cookie |
+| `muted` | `--ck-muted` | `#3a3a38` | body text, notes |
+| `border` | `--ck-border` | `#e2e2df` | card edge, settings dividers |
+| `accent` | `--ck-accent` | `#111` | Accept fill, checkboxes |
+| `accentText` | `--ck-accent-text` | `#fff` | text on the filled Accept |
+| `icon` | `--ck-icon` | `fg` | the steam above the cookie |
+| `radius` | `--ck-radius` | `16px` | card corners (buttons take 9/16 of it) |
+| `headingFont` | `--ck-heading-font` | the page font | title font stack |
+
+The colors are fixed, not taken from the visitor's light or dark setting: set
+`bg`, `fg`, `muted` and `border` together for a dark banner (native checkboxes stay light-scheme; restyle `.ck-toggle` if that matters). On screens under 600px tall the illustration is hidden so the buttons stay on screen. Pick `accent` and
+`accentText` with enough contrast between them.
+
+`layout` is `box` (the card, the default), `bar` (a full-width strip along the
+bottom, same contents) or `modal` (centered dialog). The per-category settings
+layer is the same in all three.
+
+`appearance` switches parts of the design. Every key is optional:
+
+| Key | Values | Default |
+|---|---|---|
+| `icon` | `cookie`, `none` | `cookie` |
+| `accept` | `filled` (accent fill), `outline` (identical to Reject) | `filled` |
+| `manage` | `link` (under the buttons), `button` (third button in the row) | `link` |
+| `position` | `left`, `right` (the `box` corner) | `left` |
+
+Reject is always an outlined button of the same size and type as Accept. That is
+what keeps a filled Accept within the
+[equal-prominence rule](./banner-rules.md): the rule flags a filled Accept next to
+a Reject with no fill and no border. A site that restyles Reject as a bare link with
+its own CSS gets that finding in its report.
 
 `blockPage` (default `false`) blocks the page until the visitor makes a choice, in
 any layout. A dimmed backdrop covers the page (the `modal` layout uses the
@@ -363,7 +403,7 @@ keyboard focus, hidden from screen readers), and scrolling is locked. Any choice
 choice is never blocked.
 
 ```json
-"layout": "bar",
+"layout": "box",
 "blockPage": true
 ```
 

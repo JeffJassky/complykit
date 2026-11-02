@@ -144,13 +144,36 @@ export interface GtmConfig {
 
 export type ConsentPlatform = 'none' | 'shopify' | 'wix' | 'squarespace' | 'wordpress';
 
-/** CSS custom-property values: `--ck-bg`, `--ck-fg`, `--ck-accent`, `--ck-border`, `--ck-radius`. Font is always `inherit`. */
+/** CSS custom-property values: `--ck-bg`, `--ck-fg`, `--ck-accent`, `--ck-border`, `--ck-radius`, `--ck-muted`, `--ck-accent-text`, `--ck-icon`, `--ck-heading-font`. Body font is always `inherit`. */
 export interface ConsentTheme {
   bg?: string;
   fg?: string;
   accent?: string;
   border?: string;
   radius?: string;
+  /** Body text (`--ck-muted`). */
+  muted?: string;
+  /** Text on a filled Accept (`--ck-accent-text`). */
+  accentText?: string;
+  /** Cookie illustration stroke (`--ck-icon`). */
+  icon?: string;
+  /** Title font stack (`--ck-heading-font`); absent = the page font. */
+  headingFont?: string;
+}
+
+/**
+ * Banner appearance switches (the client UI reads them; absent = the default
+ * design). Purely visual: none of them changes what a choice does.
+ */
+export interface ConsentAppearance {
+  /** The cookie illustration beside the text. Default 'cookie'. */
+  icon?: 'cookie' | 'none';
+  /** Accept filled with the accent color, or outlined like Reject. Default 'filled'. Reject is always outlined at the same size. */
+  accept?: 'filled' | 'outline';
+  /** Manage as an underlined text control under the buttons, or a third button. Default 'link'. */
+  manage?: 'link' | 'button';
+  /** Which bottom corner the box layout sits in. Default 'left'. */
+  position?: 'left' | 'right';
 }
 
 export type ConsentLayout = 'bar' | 'box' | 'modal';
@@ -291,6 +314,8 @@ export interface ConsentToolConfig {
   /** Required when mode is 'companion'. */
   companion?: CompanionConfig;
   layout: ConsentLayout;
+  /** Visual switches for the banner; absent = the default design. */
+  appearance?: ConsentAppearance;
   /** Block the page (backdrop, inert, no scroll) until the visitor chooses. The guard fills false when absent (configs older than the field). */
   blockPage: boolean;
 }

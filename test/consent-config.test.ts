@@ -94,7 +94,8 @@ describe('consent tool config: schema', () => {
       categories: [{ id: 'necessary', label: 'Necessary', description: '', defaultByRegime: { 'opt-in': true, 'opt-out-signal': true, 'opt-out': true } }],
     });
     expect(cfg.regimeSource).toEqual({ kind: 'meta', name: 'complykit-region' });
-    expect(cfg).toMatchObject({ vendors: [], gate: [], platform: 'none', theme: {}, strings: {}, consent: { lifetimeDays: 365 }, layout: 'bar' });
+    expect(cfg).toMatchObject({ vendors: [], gate: [], platform: 'none', theme: {}, strings: {}, consent: { lifetimeDays: 365 }, layout: 'box' });
+    expect(cfg.appearance).toBeUndefined(); // no default: older configs hash the same
     expect(cfg.privacyPolicyUrl).toBeUndefined();
     expect(cfg.gtm).toBeUndefined();
     expect(cfg.record).toBeUndefined();
@@ -493,7 +494,7 @@ describe('consent tool config: emitted artifacts are fresh', () => {
     expect(s.required).not.toContain('layout'); // has a default
     expect(s.required).not.toContain('blockPage'); // has a default
     expect(Object.keys(s.properties).sort()).toEqual(
-      ['analytics', 'blockPage', 'categories', 'companion', 'consent', 'gate', 'generatedFrom', 'gtm', 'hash', 'layout', 'locationDefaults', 'mode', 'overrides', 'platform', 'privacyPolicyUrl', 'record', 'regimeSource', 'strings', 'theme', 'vendors', 'version'].sort(),
+      ['analytics', 'appearance', 'blockPage', 'categories', 'companion', 'consent', 'gate', 'generatedFrom', 'gtm', 'hash', 'layout', 'locationDefaults', 'mode', 'overrides', 'platform', 'privacyPolicyUrl', 'record', 'regimeSource', 'strings', 'theme', 'vendors', 'version'].sort(),
     );
   });
 

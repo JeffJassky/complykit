@@ -13,6 +13,7 @@ import {
   type VendorControl,
   type ConsentLayout,
   type ConsentTheme,
+  type ConsentAppearance,
 } from './record/consent-config-guard.js';
 import { parseConsentToolConfig, withConsentConfigHash, type ConsentToolConfigInput } from './record/consent-config.js';
 import { COMPLYKIT_PARTY_ID, CONSENT_PLUGIN_LABELS, DEFAULT_KB, WIRETAP_CATEGORIES, WIRETAP_STATES, kbEntryOf, type KnowledgeBase, type KnowledgeEntry } from './registry/index.js';
@@ -75,7 +76,7 @@ export { scriptJson };
 //   - regimeSource: Shopify → 'platform' (customerPrivacy.getRegion); otherwise
 //     <meta name="complykit-region">, which the server must write (a note says
 //     so; without it every visitor is treated as opt-in — fail closed).
-//   - theme and strings empty (the tool's defaults, per regime), layout 'bar',
+//   - theme and strings empty (the tool's defaults, per regime), layout 'box',
 //     blockPage off, choices remembered 365 days, no consent-record endpoint unless asked.
 //   - Wiretap holds (schema 1.1, plans/regime-overrides.md): in every wiretap-
 //     litigation state (registry/wiretap.ts) the config holds, before a choice,
@@ -203,6 +204,8 @@ export interface GenerateConsentConfigOptions {
   /** Block the page until the visitor chooses (default false). */
   blockPage?: boolean;
   theme?: ConsentTheme;
+  /** Banner appearance switches; absent = the default design. */
+  appearance?: ConsentAppearance;
   lifetimeDays?: number;
   /** The site owner's overrides (schema 1.1): written into the config as given (the service keeps them with the consent settings), and named in a `policy-overridden` flag note. They may loosen policy; the report still judges by complykit policy. */
   overrides?: ConsentOverrides;
@@ -858,7 +861,8 @@ export function generateConsentConfig(evaluation: TrackingEvaluation, opts: Gene
     consent: { lifetimeDays: opts.lifetimeDays ?? 365 },
     ...(opts.privacyPolicyUrl ? { privacyPolicyUrl: opts.privacyPolicyUrl } : {}),
     ...(opts.recordEndpoint ? { record: { endpoint: opts.recordEndpoint } } : {}),
-    layout: opts.layout ?? 'bar',
+    layout: opts.layout ?? 'box',
+    ...(opts.appearance ? { appearance: opts.appearance } : {}),
     blockPage: opts.blockPage ?? false,
   };
   const config = withConsentConfigHash(input);

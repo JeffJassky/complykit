@@ -464,7 +464,7 @@
     },
     "theme": {
       "default": {},
-      "description": "CSS values for --ck-bg, --ck-fg, --ck-accent, --ck-border, --ck-radius. Font is always inherit.",
+      "description": "CSS values for --ck-bg, --ck-fg, --ck-accent, --ck-border, --ck-radius, --ck-muted (body text), --ck-accent-text (text on a filled Accept), --ck-icon (cookie stroke), --ck-heading-font (title font). Body font is always inherit.",
       "type": "object",
       "properties": {
         "bg": {
@@ -480,6 +480,18 @@
           "type": "string"
         },
         "radius": {
+          "type": "string"
+        },
+        "muted": {
+          "type": "string"
+        },
+        "accentText": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string"
+        },
+        "headingFont": {
           "type": "string"
         }
       }
@@ -977,13 +989,48 @@
       ]
     },
     "layout": {
-      "default": "bar",
+      "default": "box",
       "type": "string",
       "enum": [
         "bar",
         "box",
         "modal"
       ]
+    },
+    "appearance": {
+      "description": "Banner appearance. icon: the cookie illustration ('cookie', default) or 'none'. accept: 'filled' (default, accent fill) or 'outline' (same as Reject). manage: 'link' (default, under the buttons) or 'button'. position: the box layout's corner, 'left' (default) or 'right'.",
+      "type": "object",
+      "properties": {
+        "icon": {
+          "type": "string",
+          "enum": [
+            "cookie",
+            "none"
+          ]
+        },
+        "accept": {
+          "type": "string",
+          "enum": [
+            "filled",
+            "outline"
+          ]
+        },
+        "manage": {
+          "type": "string",
+          "enum": [
+            "link",
+            "button"
+          ]
+        },
+        "position": {
+          "type": "string",
+          "enum": [
+            "left",
+            "right"
+          ]
+        }
+      },
+      "additionalProperties": false
     },
     "blockPage": {
       "description": "Block the page until the visitor chooses: backdrop, page inert, scrolling locked. Any layout. Released by the choice.",

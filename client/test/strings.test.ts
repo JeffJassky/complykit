@@ -88,7 +88,7 @@ const settingsWords = async (p: Page) => {
 };
 
 describe('opt-in (EU/UK) defaults', () => {
-  it('purpose-first copy, Reject all / Accept all / Manage choices, no icon, policy link last', async () => {
+  it('purpose-first copy, Accept all / Reject all / Manage choices, no icon, policy link last', async () => {
     const page = await load(fixed('opt-in'));
     const w = await words(page);
     expect(w.title).toBe('Cookies on this site');
@@ -96,16 +96,16 @@ describe('opt-in (EU/UK) defaults', () => {
     expect(w.body).toContain('for analytics and advertising.');
     expect(w.body).toContain('They stay off unless you accept.');
     expect(w.body).not.toMatch(/value your privacy/i);
-    expect(w.actions).toEqual(['Reject all', 'Accept all', 'Manage choices']);
+    expect(w.actions).toEqual(['Accept all', 'Reject all', 'Manage choices']);
     expect(w.icon).toBeNull();
     expect(w.gpc).toBeNull();
     expect(w.policy).toBe('https://example-shop.test/privacy');
     expect(w.policyText).toBe('Privacy policy');
-    // Reject stays the first stop; the policy link comes after the actions.
-    expect(await page.evaluate(() => document.querySelector('.ck-banner .ck-actions')!.nextElementSibling?.className)).toBe('ck-links');
+    // The choices are the first stops; the policy link comes after them, last.
+    expect(await page.evaluate(() => document.querySelector('.ck-banner .ck-content')!.lastElementChild?.className)).toBe('ck-links');
     const s = await settingsWords(page);
     expect(s.title).toBe('Privacy settings');
-    expect(s.actions).toEqual(['Reject all', 'Accept all', 'Save choices', 'Close']);
+    expect(s.actions).toEqual(['Accept all', 'Reject all', 'Save choices', 'Close']);
     expect(s.policy).toBe('Privacy policy');
     await page.context().close();
   });
@@ -131,10 +131,10 @@ describe('opt-out-signal (California etc.) defaults', () => {
     const w = await words(page);
     expect(w.title).toBe('Your Privacy Choices');
     expect(w.body).toContain('"sale" or "sharing" of your personal information');
-    expect(w.actions).toEqual([DNSS, 'Accept all', 'Manage choices']);
+    expect(w.actions).toEqual(['Accept all', DNSS, 'Manage choices']);
     const s = await settingsWords(page);
     expect(s.title).toBe('Your Privacy Choices');
-    expect(s.actions).toEqual([DNSS, 'Accept all', 'Save choices', 'Close']);
+    expect(s.actions).toEqual(['Accept all', DNSS, 'Save choices', 'Close']);
     await page.keyboard.press('Escape');
     await page.click('.ck-banner [data-ck-action=reject]');
     expect(await page.locator('#complykit-ui [role=status]').textContent()).toBe('Opt-out request honored.');
@@ -165,7 +165,7 @@ describe('opt-out defaults', () => {
     const w = await words(page);
     expect(w.title).toBe('Your Privacy Choices');
     expect(w.body).toContain('opt out of targeted advertising');
-    expect(w.actions).toEqual(['Reject all', 'Accept all', 'Manage choices']);
+    expect(w.actions).toEqual(['Accept all', 'Reject all', 'Manage choices']);
     await page.click('.ck-banner [data-ck-action=accept]');
     const after = await words(page);
     expect(after.choices).toBe('Your Privacy Choices');
@@ -180,7 +180,7 @@ describe('overrides and edge cases', () => {
     let page = await load(fixed('opt-out-signal', { strings }));
     let w = await words(page);
     expect(w.title).toBe('Your California Privacy Choices');
-    expect(w.actions[0]).toBe('Decline all');
+    expect(w.actions[1]).toBe('Decline all');
     await page.context().close();
     page = await load(fixed('opt-in', { strings }));
     w = await words(page);
@@ -203,7 +203,7 @@ describe('overrides and edge cases', () => {
     // wording was never shown to a visitor it may not govern.
     expect((await words(page)).title).toBe('Your Privacy Choices');
     const w = await words(page);
-    expect(w.actions[0]).toBe(DNSS);
+    expect(w.actions[1]).toBe(DNSS);
     expect(w.gpc).toContain('Global Privacy Control');
     await page.context().close();
   });

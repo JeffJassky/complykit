@@ -35,6 +35,7 @@ import type {
   ConsentModeSignal,
   ConsentPlatform,
   ConsentTheme,
+  ConsentAppearance,
   ConsentLayout,
   ConsentConfigGuardResult,
   ParseConsentToolConfigResult,
@@ -124,6 +125,7 @@ export type _check_Regime = Expect<Mutual<Regime, Public.Regime>>;
 export type _check_ConsentModeSignal = Expect<Mutual<ConsentModeSignal, Public.ConsentModeSignal>>;
 export type _check_ConsentPlatform = Expect<Mutual<ConsentPlatform, Public.ConsentPlatform>>;
 export type _check_ConsentTheme = Expect<Mutual<ConsentTheme, Public.ConsentTheme>>;
+export type _check_ConsentAppearance = Expect<Mutual<ConsentAppearance, Public.ConsentAppearance>>;
 export type _check_ConsentLayout = Expect<Mutual<ConsentLayout, Public.ConsentLayout>>;
 export type _check_ConsentConfigGuardResult = Expect<Mutual<ConsentConfigGuardResult, Public.ConsentConfigGuardResult>>;
 export type _check_ParseConsentToolConfigResult = Expect<Mutual<ParseConsentToolConfigResult, Public.ParseConsentToolConfigResult>>;

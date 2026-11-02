@@ -106,7 +106,7 @@ describe('banner (bar layout): markup', () => {
         label: document.getElementById(b.getAttribute('aria-labelledby')!)?.textContent,
         desc: !!document.getElementById(b.getAttribute('aria-describedby')!)?.textContent,
         tags: btns.map((x) => `${x.tagName}:${x.type}:${x.className}`),
-        adjacent: r.nextElementSibling === a,
+        adjacent: a.nextElementSibling === r,
         actions: btns.map((x) => x.getAttribute('data-ck-action')),
         choicesHidden: (document.querySelector('.ck-choices') as HTMLElement).hidden,
         settingsOpen: (document.querySelector('.ck-settings') as HTMLDialogElement).open,
@@ -116,7 +116,7 @@ describe('banner (bar layout): markup', () => {
     expect(m.role).toBe('region');
     expect(m.label).toBe('Your privacy choices'); // config.strings override
     expect(m.desc).toBe(true);
-    expect(m.actions).toEqual(['reject', 'accept', 'manage']);
+    expect(m.actions).toEqual(['accept', 'reject', 'manage']);
     expect(new Set(m.tags).size).toBe(1); // same element, type and class
     expect(m.adjacent).toBe(true);
     expect(m.choicesHidden).toBe(true);
@@ -130,7 +130,7 @@ describe('banner (bar layout): markup', () => {
     const page = await load();
     const stops = await tabTo(page, '#page-first');
     // F2: the privacy-policy link (config.privacyPolicyUrl) follows the actions.
-    expect(stops).toEqual(['reject', 'accept', 'manage', 'privacy-policy', '#page-first']);
+    expect(stops).toEqual(['accept', 'reject', 'manage', 'privacy-policy', '#page-first']);
     await page.context().close();
   });
 
@@ -237,7 +237,7 @@ describe('keyboard-only runs', () => {
     await tabTo(page, 'cat:analytics', 1);
     await page.keyboard.press('Space');
     const stops = await tabTo(page, 'save');
-    expect(stops).toEqual(['cat:advertising', 'reject', 'accept', 'save']);
+    expect(stops).toEqual(['cat:advertising', 'accept', 'reject', 'save']);
     await page.keyboard.press('Enter');
     expect(await state(page)).toMatchObject({ status: 'chosen', categories: { necessary: true, analytics: true, advertising: false } });
     expect(await settingsOpen(page)).toBe(false);
@@ -389,13 +389,13 @@ describe('blockPage', () => {
       // A click on the page lands on nothing that acts.
       await page.mouse.click(20, 20);
       expect(new URL(page.url()).hash).toBe('');
-      // Tab never reaches the page; reject is the first stop.
+      // Tab never reaches the page; accept is the first stop.
       const stops: string[] = [];
       for (let i = 0; i < 6; i++) {
         await page.keyboard.press(TAB);
         stops.push(await focused(page));
       }
-      expect(stops[0]).toBe('reject');
+      expect(stops[0]).toBe('accept');
       expect(stops).not.toContain('#page-first');
       await page.click('.ck-banner [data-ck-action=reject]');
       expect(await state(page)).toMatchObject({ status: 'chosen', categories: { analytics: false } });

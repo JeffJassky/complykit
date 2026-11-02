@@ -9,6 +9,29 @@ real if CI runs the matrix. See standards/traps.md #10.
 
 ## [Unreleased]
 
+### Changed: banner design
+- Client: the default banner is now the card from the 2026-10-23 mockup (Arm C): a white
+  card in the bottom-left corner (880px wide, 16px radius, soft shadow), a cookie
+  illustration on the left, a bold title, a muted body, a filled **Accept all** next to
+  a same-size outlined **Reject all**, and **Manage choices** as an underlined link
+  beneath them. Below 720px it spans the width with a 16px gutter, the illustration
+  sits on top and the buttons stack full width.
+- Client: button order is Accept, Reject, Manage on the banner and Accept, Reject,
+  Save, Close in the settings layer (was Reject first). Accept is the first tab stop.
+- Client: default colors are fixed (`#fff` / `#111`), no longer the system colors that
+  followed the visitor's light/dark setting; the focus ring uses `fg`, not `accent`.
+- `layout` defaults to `box` (the card) in the schema and the generator; `box` is now
+  the 880px card, bottom-left. `bar` and `modal` keep their placement with the new look.
+
+### Added: banner appearance
+- Config: `theme` gains `muted`, `accentText`, `icon` and `headingFont`
+  (`--ck-muted`, `--ck-accent-text`, `--ck-icon`, `--ck-heading-font`).
+- Config: optional `appearance` (no default, so older configs hash the same):
+  `icon` (`cookie` | `none`), `accept` (`filled` | `outline`), `manage`
+  (`link` | `button`), `position` (`left` | `right`, the box corner).
+- New hooks: `.ck-art` (with `.ck-art-steam`, `.ck-art-cookie`), `.ck-content`,
+  `.ck-sub`, `#complykit-ui[data-ck-accept]`, `.ck-banner[data-ck-position][data-ck-manage]`.
+
 ### Added: region API
 - Client: `window.ComplyKitRegion = 'US-CA'`, set before the tool's script, tells the tool
   where the visitor is with no request. It is read synchronously, beats the meta tag, the

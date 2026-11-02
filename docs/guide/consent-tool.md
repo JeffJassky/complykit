@@ -125,7 +125,7 @@ the platform bridges and the consent record. Then:
 
 | Setting | Values | Effect |
 |---|---|---|
-| Layout | bar, box, modal | Shape of the banner ([theme and layout](./config.md#theme-and-layout)) |
+| Layout | box (default), bar, modal | Shape of the banner ([theme, layout and appearance](./config.md#theme-layout-and-appearance)) |
 | Block the page | on / off | Blocks the page until a choice is made, in any layout |
 | Privacy policy link | an `https` URL | Linked from the banner and the settings layer |
 
@@ -382,9 +382,13 @@ This is not legal advice; check with counsel.
 
 ## 5. Look and words
 
-Theming is a handful of tokens, not an engine: `theme` sets `--ck-bg`, `--ck-fg`,
-`--ck-accent`, `--ck-border` and `--ck-radius`; `layout` is `bar`, `box` or `modal`;
-`blockPage: true` blocks the page until a choice in any layout; the font is always inherited ([theme and layout](./config.md#theme-and-layout)).
+The default banner is a card in the bottom-left corner with a cookie illustration,
+a filled Accept all, a same-size outlined Reject all and Manage choices as a link
+underneath. Theming is a handful of tokens, not an engine: `theme` sets colors,
+radius and the title font; `appearance` turns the illustration off, outlines
+Accept, makes Manage a button or moves the card right; `layout` is `box`, `bar`
+or `modal`; `blockPage: true` blocks the page until a choice in any layout; the
+body font is always inherited ([theme, layout and appearance](./config.md#theme-layout-and-appearance)).
 
 Words come from per-regime defaults inside the tool; the config carries overrides
 only, per language and regime ([strings](./config.md#strings), [Banner

@@ -78,12 +78,8 @@ rules). Those are described in [Consent tool config](/guide/config).
 | `gtm.tags[].category` | `string` | yes |  | Category id, as used in data-category and the consent record. pattern `^[a-z][a-z0-9-]*$` |
 | `gtm.tags[].vendor` | `string` |  |  | min length 1 |
 | `platform` | `"none"` / `"shopify"` / `"wix"` / `"squarespace"` / `"wordpress"` |  | `"none"` |  |
-| `theme` | `object` |  | `{}` | CSS values for --ck-bg, --ck-fg, --ck-accent, --ck-border, --ck-radius. Font is always inherit |
-| `theme.bg` | `string` |  |  |  |
-| `theme.fg` | `string` |  |  |  |
-| `theme.accent` | `string` |  |  |  |
-| `theme.border` | `string` |  |  |  |
-| `theme.radius` | `string` |  |  |  |
+| `theme` | `object` |  | `{}` | CSS values for --ck-bg, --ck-fg, --ck-accent, --ck-border, --ck-radius, --ck-muted (body text), --ck-accent-text (text on a filled Accept), --ck-icon (cookie stroke), --ck-heading-font (title font). Body font is always inherit |
+| `theme.<string key>` | `string` |  |  | Keys: `bg`, `fg`, `accent`, `border`, `radius`, `muted`, `accentText`, `icon`, `headingFont`. Each value is a non-empty string |
 | `strings.<key>` | map |  | `{}` | language tag → string table (overrides only). Keys match `^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$`. Overrides by string key; unknown keys and empty strings are refused |
 | `strings.<key>.<string key>` | `string` |  |  | Keys: `banner.title`, `banner.body`, `banner.accept`, `banner.reject`, `banner.manage`, `settings.title`, `settings.body`, `settings.gpcInfo`, `settings.acceptAll`, `settings.rejectAll`, `settings.save`, `settings.close`, `withdraw.link`, `withdraw.confirm`, `withdraw.note`, `withdraw.recall`, `privacyChoices.link`, `optOut.link`, `optOut.confirmed`, `optOut.iconAlt`, `gpc.honored`, `privacyPolicy.link`. Each value is a non-empty string |
 | `strings.<key>.byRegime` | `object` |  |  | Per-regime overrides of the same keys |
@@ -105,5 +101,10 @@ rules). Those are described in [Consent tool config](/guide/config).
 | `companion` | `object` |  |  | Add-on mode: which banner to follow. Required when mode is companion |
 | `companion.cmp` | `"onetrust"` / `"cookiebot"` / `"usercentrics"` / `"didomi"` / `"trustarc"` / `"shopify"` / `"wordpress"` / `"tcf"` / `"consent-mode"` / `"manual"` | yes |  |  |
 | `companion.map` | map |  |  | The banner's purpose/group id → complykit category ids. Absent = the built-in map for that banner |
-| `layout` | `"bar"` / `"box"` / `"modal"` |  | `"bar"` |  |
+| `layout` | `"bar"` / `"box"` / `"modal"` |  | `"box"` |  |
+| `appearance` | `object` |  |  | Banner appearance. icon: the cookie illustration ('cookie', default) or 'none'. accept: 'filled' (default, accent fill) or 'outline' (same as Reject). manage: 'link' (default, under the buttons) or 'button'. position: the box layout's corner, 'left' (default) or 'right' |
+| `appearance.icon` | `"cookie"` / `"none"` |  |  |  |
+| `appearance.accept` | `"filled"` / `"outline"` |  |  |  |
+| `appearance.manage` | `"link"` / `"button"` |  |  |  |
+| `appearance.position` | `"left"` / `"right"` |  |  |  |
 | `blockPage` | `boolean` |  | `false` | Block the page until the visitor chooses: backdrop, page inert, scrolling locked. Any layout. Released by the choice |

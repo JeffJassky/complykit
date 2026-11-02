@@ -1,7 +1,13 @@
-// The first layer (ticket D9): title, one paragraph, and three real buttons —
-// Reject all, Accept all, Manage choices — adjacent, in that order, the same
-// element and the same class (`ck-btn`), so reject is exactly as prominent as
-// accept (research-consent-law.md: same layer, same level; CPPA §7004(a)(2)).
+// The first layer (ticket D9): the cookie illustration, a title, one paragraph,
+// and the three choices — Accept all, Reject all, Manage choices. Accept and
+// Reject are real buttons of the same element, class (`ck-btn`), size and type,
+// adjacent on the same layer, so refusing is exactly as easy as accepting
+// (research-consent-law.md: same layer, same level; CPPA §7004(a)(2)). Accept
+// is filled by default and Reject outlined (config.appearance.accept): the
+// equal-prominence rule (src/rules/consent/banner-design.ts) passes that shape
+// because Reject keeps a visible border at the same size; a bare text link
+// would not. Manage is the only control that may be demoted to a link
+// (appearance.manage, default 'link'): it is not the refusal.
 // There is no close button: closing is not a choice.
 //
 // Layouts (config.layout):
@@ -13,7 +19,7 @@
 //               does NOT dismiss it (a choice is still owed); if the browser
 //               closes it anyway (repeat-Escape anti-abuse), it reopens.
 
-import type { ConsentLayout } from '../config.js';
+import type { ConsentAppearance, ConsentLayout } from '../config.js';
 import { button, focusIf, h, wrapTab } from './dom.js';
 import { t } from './strings.js';
 import { gpcNote, policyLink } from './copy.js';
@@ -34,11 +40,45 @@ export interface Banner {
   refresh(): void;
 }
 
-export function createBanner(layout: ConsentLayout, act: BannerActions): Banner {
+// The cookie line art (decorative, aria-hidden). Steam strokes take --ck-icon,
+// the cookie --ck-fg. [tag, attributes] in a 92×104 box.
+const NS = 'http://www.w3.org/2000/svg';
+const STEAM = ['M30 34c-4-5-4-9 0-14 4-5 4-9 0-14', 'M46 36c-4-6-4-11 0-17 4-6 4-11 0-17', 'M62 34c-4-5-4-9 0-14 4-5 4-9 0-14'];
+// cx cy rx ry rotation
+const CHIPS = '36 62 4 3 -20|54 60 3.6 2.7 25|30 78 3.4 2.6 10|46 88 4 3 -30|60 78 3.2 2.4 40|44 72 2.8 2.1 -10';
+
+function svg(tag: string, attrs: Record<string, string>, ...kids: Element[]): SVGElement {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  e.append(...kids);
+  return e;
+}
+
+function cookieArt(): SVGElement {
+  return svg(
+    'svg',
+    { class: 'ck-art', viewBox: '0 0 92 104', fill: 'none', 'stroke-width': '2.4', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true', focusable: 'false' },
+    svg('g', { class: 'ck-art-steam' }, ...STEAM.map((d) => svg('path', { d }))),
+    svg(
+      'g',
+      { class: 'ck-art-cookie' },
+      svg('path', { d: 'M64.67 94.19A29 29 0 1 1 74.81 75.37 11 11 0 0 0 64.67 94.19Z' }),
+      ...CHIPS.split('|').map((c) => {
+        const [cx, cy, rx, ry, r] = c.split(' ');
+        return svg('ellipse', { cx, cy, rx, ry, transform: `rotate(${r} ${cx} ${cy})` });
+      }),
+    ),
+  );
+}
+
+export function createBanner(layout: ConsentLayout, act: BannerActions, look: ConsentAppearance = {}): Banner {
   const modal = layout === 'modal';
+  const manageLink = look.manage !== 'button';
   const el = h(modal ? 'dialog' : 'div', {
     class: 'ck-banner',
     'data-ck-layout': modal ? 'modal' : layout === 'box' ? 'box' : 'bar',
+    'data-ck-position': look.position === 'right' ? 'right' : 'left',
+    'data-ck-manage': manageLink ? 'link' : 'button',
     role: modal ? undefined : 'region',
     'aria-labelledby': 'complykit-banner-title',
     'aria-describedby': 'complykit-banner-body',
@@ -57,19 +97,20 @@ export function createBanner(layout: ConsentLayout, act: BannerActions): Banner 
   }
 
   const render = (): void => {
+    const manage = button('manage', t('banner.manage'), act.manage);
     el.replaceChildren(
-      h('h2', { id: 'complykit-banner-title', class: 'ck-title' }, t('banner.title')),
-      h('p', { id: 'complykit-banner-body', class: 'ck-body' }, t('banner.body')),
-      gpcNote(),
+      ...(look.icon === 'none' ? [] : [cookieArt()]),
       h(
         'div',
-        { class: 'ck-actions' },
-        button('reject', t('banner.reject'), act.reject),
-        button('accept', t('banner.accept'), act.accept),
-        button('manage', t('banner.manage'), act.manage),
+        { class: 'ck-content' },
+        h('h2', { id: 'complykit-banner-title', class: 'ck-title' }, t('banner.title')),
+        h('p', { id: 'complykit-banner-body', class: 'ck-body' }, t('banner.body')),
+        gpcNote(),
+        h('div', { class: 'ck-actions' }, button('accept', t('banner.accept'), act.accept), button('reject', t('banner.reject'), act.reject), manageLink ? null : manage),
+        manageLink ? h('p', { class: 'ck-sub' }, manage) : null,
+        // After the choices, so they are the first stops (F2).
+        policyLink(),
       ),
-      // After the actions, so reject stays the first stop (F2).
-      policyLink(),
     );
   };
 

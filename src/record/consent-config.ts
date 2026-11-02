@@ -167,8 +167,22 @@ export const ConsentThemeSchema = z
     accent: z.string().optional(),
     border: z.string().optional(),
     radius: z.string().optional(),
+    muted: z.string().optional(),
+    accentText: z.string().optional(),
+    icon: z.string().optional(),
+    headingFont: z.string().optional(),
   })
-  .describe('CSS values for --ck-bg, --ck-fg, --ck-accent, --ck-border, --ck-radius. Font is always inherit.');
+  .describe('CSS values for --ck-bg, --ck-fg, --ck-accent, --ck-border, --ck-radius, --ck-muted (body text), --ck-accent-text (text on a filled Accept), --ck-icon (cookie stroke), --ck-heading-font (title font). Body font is always inherit.');
+
+export const ConsentAppearanceSchema = z
+  .object({
+    icon: z.enum(['cookie', 'none']).optional(),
+    accept: z.enum(['filled', 'outline']).optional(),
+    manage: z.enum(['link', 'button']).optional(),
+    position: z.enum(['left', 'right']).optional(),
+  })
+  .strict()
+  .describe("Banner appearance. icon: the cookie illustration ('cookie', default) or 'none'. accept: 'filled' (default, accent fill) or 'outline' (same as Reject). manage: 'link' (default, under the buttons) or 'button'. position: the box layout's corner, 'left' (default) or 'right'.");
 
 export const ConsentLayoutSchema = z.enum(['bar', 'box', 'modal']);
 
@@ -258,7 +272,9 @@ export const ConsentToolConfigSchema = z
       })
       .optional()
       .describe('Add-on mode: which banner to follow. Required when mode is companion.'),
-    layout: ConsentLayoutSchema.default('bar'),
+    layout: ConsentLayoutSchema.default('box'),
+    // No default: a config generated before it must hash the same.
+    appearance: ConsentAppearanceSchema.optional(),
     blockPage: z
       .boolean()
       .default(false)
