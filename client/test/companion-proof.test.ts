@@ -27,6 +27,16 @@ import { DIST, launchBrowser, startFixtureServer, type FixtureServer } from './h
 //     wordpress, and manual ComplyKit.sync) counts as answered on a live change after the page's first state,
 //     or on a first state when a snapshot is already stored; a page's first state with nothing stored is
 //     followed but not recorded.
+//     Consent Mode: a `default` command is never an answer; an `update` (live, or a CMP restoring its
+//     stored answer) is. Shopify: a GPC visitor's automatic sale_of_data 'no' with the other fields
+//     undeclared is not an answer. Cookiebot: consent.method 'implied' is not an answer.
+//   - A page's first state from a source that cannot tell, when it differs from the stored snapshot, is
+//     followed but not written (a CMP restoring its answer a moment later must not leave a
+//     withdrawal + choice pair per page); a later live change on the page is a decision.
+//   - The proof waits for the visitor's location: a decision learned while the header lookup is pending
+//     is written once it settles, with the settled regime and region (the gate follows the banner at once).
+//   - A config category the banner's map cannot reach is recorded as false (the banner never asked); the
+//     live state keeps its default. Its default never makes two answers differ.
 //   - Another tab writing a snapshot never resets this tab to defaults (its own banner stays the answer).
 //   - Full mode records carry no `source`.
 
@@ -356,6 +366,87 @@ describe('add-on proof: banners that cannot say', () => {
     await settle(o.page);
     expect(await snapshot(o)).toMatchObject({ kind: 'choice', source: 'manual', categories: { analytics: true, advertising: false } });
     expect(validRecord(o.posts[0])).toMatchObject({ source: 'manual' });
+    await o.ctx.close();
+  });
+});
+
+describe('add-on proof: review fixes', () => {
+  // A CMP that restores its stored answer with an async `update` after complykit's first read (Google's
+  // recommended setup: inline default in <head>, CMP script async).
+  const CONSENT_MODE_ASYNC = `<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}
+gtag('consent','default',{analytics_storage:'denied',ad_storage:'denied'});
+setTimeout(function(){var u=localStorage.getItem('__fakeCm');if(u)gtag('consent','update',JSON.parse(u));},150);
+window.__cm=function(u){localStorage.setItem('__fakeCm',JSON.stringify(u));gtag('consent','update',u)};</script>`;
+
+  it('consent-mode: a default before the restored update is no withdrawal; later pages keep the id', async () => {
+    const o = await open(companionConfig('consent-mode'), CONSENT_MODE_ASYNC);
+    await expectNothingWritten(o);
+    await o.page.evaluate(() => (window as any).__cm({ analytics_storage: 'granted', ad_storage: 'granted' }));
+    await settle(o.page);
+    const c = await snapshot(o);
+    await o.load();
+    await settle(o.page, 400);
+    await o.load();
+    await settle(o.page, 400);
+    expect((await snapshot(o)).id).toBe(c.id);
+    expect(o.posts.map((p) => p.kind)).toEqual(['choice']);
+    expect(await get(o.page)).toMatchObject({ categories: { analytics: true, advertising: true } });
+    await o.ctx.close();
+  });
+
+  it('the proof waits for a pending location lookup and records the settled regime and region', async () => {
+    const cfg = companionConfig('shopify', { regimeSource: { kind: 'header', header: 'cf-ipcountry', endpoint: '/geo-slow' } });
+    const ctx = await browser.newContext();
+    const page0 = await ctx.newPage();
+    await page0.close();
+    await ctx.route('**/geo-slow', async (route) => {
+      await new Promise((r) => setTimeout(r, 600));
+      await route.fulfill({ contentType: 'text/plain', body: 'US-TX', headers: { 'access-control-allow-origin': '*' } });
+    });
+    const o = await open(cfg, SHOPIFY(ALL_YES), 'none', ctx);
+    await settle(o.page, 1000);
+    const c = await snapshot(o);
+    const s = await get(o.page);
+    expect(s.location).toMatchObject({ country: 'US', region: 'TX' });
+    expect(c).toMatchObject({ region: 'US-TX', regime: s.regime, source: 'shopify' });
+    expect(o.posts).toHaveLength(1);
+    expect(o.posts[0]).toMatchObject({ region: 'US-TX', regime: s.regime });
+    await o.load();
+    await settle(o.page, 1000);
+    expect((await snapshot(o)).id).toBe(c.id);
+    expect(o.posts).toHaveLength(1);
+    await o.ctx.close();
+  });
+
+  it('a category the banner cannot reach is recorded as false; the live state keeps its default', async () => {
+    const base = companionConfig('shopify', { regimeSource: { kind: 'fixed', regime: 'opt-out' } });
+    const social = { ...base.categories.find((c: any) => c.id === 'analytics'), id: 'social', label: 'Social' };
+    social.defaultByRegime = { 'opt-in': false, 'opt-out-signal': true, 'opt-out': true };
+    const cfg = { ...base, categories: [...base.categories, social] };
+    const o = await open(cfg, SHOPIFY(ALL_YES));
+    expect(await get(o.page)).toMatchObject({ categories: { social: true } });
+    const c = await snapshot(o);
+    expect(c.categories).toMatchObject({ social: false, analytics: true, advertising: true });
+    expect(o.posts[0].categories.social).toBe(false);
+    await o.load();
+    expect((await snapshot(o)).id).toBe(c.id);
+    expect(o.posts).toHaveLength(1);
+    await o.ctx.close();
+  });
+
+  it("shopify: a GPC visitor's automatic sale-of-data opt-out is not an answer", async () => {
+    const ctx = await browser.newContext();
+    await ctx.addInitScript(() => Object.defineProperty(Navigator.prototype, 'globalPrivacyControl', { get: () => true }));
+    const o = await open(companionConfig('shopify'), SHOPIFY({ analytics: '', marketing: '', preferences: '', sale_of_data: 'no' }, true), 'none', ctx);
+    expect(await get(o.page)).toMatchObject({ status: 'unset', categories: { analytics: true, advertising: false } });
+    await expectNothingWritten(o);
+    await o.ctx.close();
+  });
+
+  it('cookiebot: implied consent is not an answer', async () => {
+    const o = await open(companionConfig('cookiebot'), `<script>window.Cookiebot={hasResponse:true,consented:true,declined:false,consent:{method:'implied',necessary:true,preferences:true,statistics:true,marketing:true}};</script>`);
+    expect(await get(o.page)).toMatchObject({ status: 'unset', categories: { analytics: true } });
+    await expectNothingWritten(o);
     await o.ctx.close();
   });
 });
