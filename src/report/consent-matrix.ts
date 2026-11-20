@@ -61,7 +61,7 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
     // A cookie is never judged better than its tool (plans/report-truth.md A, amended): under an unclassified tool
     // it is unclassified too, whatever its name or the site's answer for it; under a classified tool the tool's, the
     // site's answer's and the known name's categories together drive (the strictest wins).
-    ...[...new Map(p.stores.map(s=>[JSON.stringify([s.kind,s.name]),s])).values()].map(s=>{const site=siteClass(m,p.partyId,s.kind,s.name);const entry=lookupStore(DEFAULT_KB,s.name);const tool=judged.get(p.partyId)!.categories;const toolKnown=tool.length>0&&!tool.includes('unknown');
+    ...[...new Map(p.stores.map(s=>[JSON.stringify([s.kind,s.name]),s])).values()].map(s=>{const site=siteClass(m,p.partyId,s.kind,s.name);const entry=lookupStore(DEFAULT_KB,s.kind,s.name);const tool=judged.get(p.partyId)!.categories;const toolKnown=tool.length>0&&!tool.includes('unknown');
       const categories=!toolKnown?[]:[...new Set([...tool,...(site?.categories??[]),...(entry?.categories??[])])];
       const categorySource=!toolKnown?(entry?`${entry.vendor} by name; depends on what ${p.label} is for`:'not classified (unidentified tool)'):site?SITE_SOURCE:entry&&!entry.categories.every(c=>tool.includes(c))?`set by ${p.label}; known cookie name (${entry.vendor})`:`set by ${p.label}`;
       return {id:JSON.stringify([p.partyId,s.kind,s.name]),kind:'storage' as const,label:s.name,storageKind:s.kind,tool:p.label,partyId:p.partyId,

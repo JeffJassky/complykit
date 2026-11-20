@@ -280,7 +280,7 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
     const cookies: OwnerCookieRow[] = (bm?.rows ?? [])
       .filter((r) => r.kind === 'storage' && r.partyId === p.partyId)
       .map((r) => {
-        const judge = { name: lookupStore(DEFAULT_KB, r.label)?.categories.map(String) ?? [], site: m?.siteWorkspace?.classifications.find((c) => c.kind === 'storage' && c.partyId === p.partyId && c.storageKind === r.storageKind && c.name === r.label)?.categories ?? [] };
+        const judge = { name: lookupStore(DEFAULT_KB, r.storageKind ?? 'cookie', r.label)?.categories.map(String) ?? [], site: m?.siteWorkspace?.classifications.find((c) => c.kind === 'storage' && c.partyId === p.partyId && c.storageKind === r.storageKind && c.name === r.label)?.categories ?? [] };
         const cats = cookieCategories(base, judge);
         return { id: r.id, name: r.label, kind: r.storageKind ?? 'cookie', purpose: cats.length ? categoryLabel(cats) : `Depends on what ${p.label} is for`, classified: cats.length > 0, judge, cells: cellsFor(r) };
       })

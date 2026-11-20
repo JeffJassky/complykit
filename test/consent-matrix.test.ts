@@ -160,6 +160,24 @@ describe('consent behavior matrix',()=>{
   expect(owners.get('_gcl_ls')).toEqual(['google.ads.doubleclick']);
   expect(owners.get('GCL_AW_P')).toHaveLength(1);
  });
+ it('walrusaudio.com, 2026-11: a localStorage key is not claimed by a vendor that declares a cookie of a similar name, and a cookie set and deleted at once is a probe, not storage',()=>{
+  const fs='https://static-autocomplete.fastsimon.com/fast-simon-autocomplete.umd.js';
+  const hs='https://js-na2.hs-analytics.net/analytics/1/2261046.js';
+  const t=Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'browse',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies:[],storage:[],frames:[]},events:[
+   {type:'request',t:5,id:'f',url:fs,method:'GET',resourceType:'script',origin:'page',pageUrl:evaluation.site.url,pageIndex:0,initiator:{type:'parser',chain:[]}},
+   {type:'request',t:6,id:'h',url:hs,method:'GET',resourceType:'script',origin:'page',pageUrl:evaluation.site.url,pageIndex:0,initiator:{type:'parser',chain:[]}},
+   {type:'storage-write',t:10,area:'local',key:'fs_reporting_dedup',value:'redacted',chain:[fs],frameUrl:evaluation.site.url,pageIndex:0},
+   {type:'cookie-write',t:20,name:'cookietest',value:'redacted',attributes:'SameSite=Strict',chain:[hs],frameUrl:evaluation.site.url,pageIndex:0},
+   {type:'cookie-write',t:21,name:'cookietest',value:'',attributes:'SameSite=Strict; expires=Thu, 01-Jan-1970 00:00:01 GMT',chain:[hs],frameUrl:evaluation.site.url,pageIndex:0},
+   {type:'cookie-write',t:30,name:'__hstc',value:'redacted',attributes:'max-age=15552000; path=/',chain:[hs],frameUrl:evaluation.site.url,pageIndex:0},
+  ]});
+  const owners=new Map<string,string[]>();
+  for(const [id,f] of analyzeTimeline(t).parties)for(const st of f.stores)owners.set(st.name,[...(owners.get(st.name)??[]),id]);
+  expect(owners.get('fs_reporting_dedup')).not.toContain('fullstory');
+  expect([...analyzeTimeline(t).parties.keys()]).not.toContain('fullstory');
+  expect(owners.has('cookietest')).toBe(false);
+  expect(owners.get('__hstc')).toHaveLength(1);
+ });
  it('a cookie deletion after the choice (consent-tool cleanup, a vendor dropping its id) is not a write (E4)',()=>{
   const ev=(t:number,attributes?:string)=>({type:'cookie-write',t,name:'_fbp',value:attributes?'':'redacted',...(attributes?{attributes}:{}),chain:['https://connect.facebook.net/pixel.js'],frameUrl:evaluation.site.url,pageIndex:0});
   const timeline=Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'reject',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies:[],storage:[],frames:[]},events:[{type:'banner',t:0,state:'shown',pageIndex:0},ev(100),{type:'choice',t:200,choice:'reject',ok:true,method:'test',pageIndex:0},ev(300,'Max-Age=0; Path=/; Secure'),ev(310,'expires=Mon, 05 Oct 2026 00:00:00 GMT; path=/'),ev(320,'expires=Thu, 01 Jan 1970 00:00:00 GMT')]});

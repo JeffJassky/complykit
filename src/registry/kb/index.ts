@@ -110,17 +110,24 @@ export function lookupGateway(kb: KnowledgeBase, chain: readonly string[], pathn
   return undefined;
 }
 
-/** An entry whose declared stores name this cookie/storage key. */
-export function lookupStore(kb: KnowledgeBase, key: string): KnowledgeEntry | undefined {
+/**
+ * An entry whose declared stores name this cookie/storage key, of the same kind: a store
+ * declared as a cookie does not claim a localStorage key with a similar name (FullStory's
+ * `^fs_` cookies claimed Fast Simon's `fs_*` localStorage keys on walrusaudio.com, 2026-11).
+ */
+export function lookupStore(kb: KnowledgeBase, kind: string, key: string): KnowledgeEntry | undefined {
+  const k = storeKind(kind);
   for (const e of kb.entries) {
-    if (e.stores.some((s) => pathRe(s.name).test(key))) return e;
+    if (e.stores.some((s) => s.kind === k && pathRe(s.name).test(key))) return e;
   }
   return undefined;
 }
 
+const storeKind = (kind: string): 'cookie' | 'local' | 'session' => (kind === 'local' || kind === 'session' ? kind : 'cookie');
+
 /** Is this cookie/storage key a vendor's opt-out record (a stored refusal, no identifier)? */
 export function isOptOutStore(kb: KnowledgeBase, kind: string, key: string): boolean {
-  const k = kind === 'local' || kind === 'session' ? kind : 'cookie';
+  const k = storeKind(kind);
   return kb.entries.some((e) => e.stores.some((s) => s.optOut === true && s.kind === k && pathRe(s.name).test(key)));
 }
 

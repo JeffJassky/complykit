@@ -180,7 +180,11 @@ describe('knowledge base', () => {
     expect(lookupEntry(DEFAULT_KB, 'www.google.com', '/recaptcha/api.js')?.id).toBe('google.recaptcha');
     expect(lookupEntry(DEFAULT_KB, 'www.google.com', '/ccm/collect')?.id).toBe('google.ads.ccm');
     expect(lookupEntry(DEFAULT_KB, 'connect.facebook.net', '/en_US/fbevents.js')?.id).toBe('meta.pixel');
-    expect(lookupStore(DEFAULT_KB, '_fbp')?.id).toBe('meta.pixel');
+    expect(lookupStore(DEFAULT_KB, 'cookie', '_fbp')?.id).toBe('meta.pixel');
+    // A store declared as a cookie does not claim a localStorage key with a similar name (walrusaudio.com, 2026-11).
+    expect(lookupStore(DEFAULT_KB, 'cookie', 'fs_uid')?.id).toBe('fullstory');
+    expect(lookupStore(DEFAULT_KB, 'local', 'fs_avoid_inject_on_interaction')).toBeUndefined();
+    expect(lookupStore(DEFAULT_KB, 'local', '_gcl_ls')?.id).toBe(lookupStore(DEFAULT_KB, 'cookie', '_gcl_au')?.id);
     expect(DEFAULT_KB.entries.every((e) => !e.provenance.confirmedBy)).toBe(true); // seed = proposals
   });
 

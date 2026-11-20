@@ -53,15 +53,25 @@ const NEVER = /(checkout|\/account|login|logout|sign[-_]?in|sign[-_]?out|registe
 const LISTING = /\/(collections?|categor(y|ies)|shop|catalog|c|department|products\/?$)(\/|$|\?)/i;
 const PRODUCT = /\/(products?|p|item|dp|produkt|produit)\/[^/?#]+/i;
 const CART = /\/(cart|basket|bag|warenkorb|panier)(\/|$|\?)/i;
+// A gift card is the least typical product page (no reviews, payment widgets or product
+// video): the journey took walrusaudio.com's /products/gift-card, the first product link on
+// its home page, and never saw what a real product page loads (2026-11). Used only when it
+// is the sole product link.
+const GIFT_CARD = /gift[-_]?cards?/i;
 
 /** Pick the journey's next pages from links on the current page. */
 export async function discoverJourneyPages(page: Page, maxPages: number): Promise<string[]> {
   const links = (await page
     .evaluate(() => Array.from(document.querySelectorAll('a[href]')).map((a) => (a as HTMLAnchorElement).href))
     .catch(() => [])) as string[];
+  return pickJourneyPages(links, page.url(), maxPages);
+}
+
+/** The journey's pages from the links on a page at `pageUrl`: a listing, a product and the cart first, then the rest in page order. */
+export function pickJourneyPages(links: string[], pageUrl: string, maxPages: number): string[] {
   let here: URL;
   try {
-    here = new URL(page.url());
+    here = new URL(pageUrl);
   } catch {
     return [];
   }
@@ -74,7 +84,8 @@ export async function discoverJourneyPages(page: Page, maxPages: number): Promis
     }
   });
   const pick = (re: RegExp): string | undefined => same.find((h) => re.test(new URL(h).pathname));
-  const picked = [pick(LISTING), pick(PRODUCT), pick(CART)].filter((x): x is string => Boolean(x));
+  const product = same.find((h) => PRODUCT.test(new URL(h).pathname) && !GIFT_CARD.test(new URL(h).pathname)) ?? pick(PRODUCT);
+  const picked = [pick(LISTING), product, pick(CART)].filter((x): x is string => Boolean(x));
   for (const h of same) {
     if (picked.length >= maxPages) break;
     if (!picked.includes(h)) picked.push(h);

@@ -161,7 +161,7 @@ export function cookieInventory(m: ConsentReportModel, groups: ActionGroup[]): s
 export function storageReviewCards(m: ConsentReportModel, groups: ActionGroup[]): string {
   return m.inventory.flatMap(p => [...new Map(p.stores.map(s => [JSON.stringify([s.kind, s.name]), s])).values()].map(s => {
     const key = workspaceId('storage', [p.partyId, p.domain, s.kind, s.name]);
-    const entry = lookupStore(DEFAULT_KB, s.name);
+    const entry = lookupStore(DEFAULT_KB, s.kind, s.name);
     const linked = relatedActions(p, groups);
     const exact = linked.some(g => s.kind === 'cookie' && g.kind === 'violation' && g.findings.some(f => f.evidence.some(e => e.kind === 'cookie' && e.name === s.name && (e.domain.replace(/^\./, '') === p.domain || p.hosts.includes(e.domain.replace(/^\./, ''))))));
     // Classified for this site in its workspace (C3): no longer asked.

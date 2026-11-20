@@ -439,18 +439,28 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
   // and Google Ads' identifiers, and listing them under the tag loader as well put
   // the same cookie on two rows (storyfolder.com, 2026-10-08). The writing script
   // decides only for names the knowledge base does not know.
-  const storeOwner = (name: string, chain: string[]) => {
-    const entry = lookupStore(kb, name);
+  const storeOwner = (kind: string, name: string, chain: string[]) => {
+    const entry = lookupStore(kb, kind, name);
     return entry ? ensure({ id: entry.id, entry, domain: entry.match.hosts[0] }, entry.match.hosts[0]) : writerParty(chain);
   };
+  // A cookie written and deleted again by the same page within a moment is a capability
+  // probe ("can I set cookies here?"), not storage: HubSpot writes cookietest=1 and expires
+  // it on the next line (walrusaudio.com, 2026-11). It never stays in the browser. A deletion
+  // later than that, or after a privacy choice, is the vendor dropping a real cookie (E4).
+  const PROBE_MS = 50;
+  const choiceTimes = events.filter((e) => e.type === 'choice').map((e) => e.t);
+  const deletions = events.filter((e): e is Extract<typeof e, { type: 'cookie-write' }> => e.type === 'cookie-write' && isCookieDeletion(e.attributes, startEpoch + e.t / 1000));
+  const isProbe = (e: Extract<(typeof events)[number], { type: 'cookie-write' }>) =>
+    deletions.some((d) => d.name === e.name && (d.pageIndex ?? 0) === (e.pageIndex ?? 0) && d.t >= e.t && d.t - e.t <= PROBE_MS && !choiceTimes.some((c) => c >= e.t && c <= d.t));
   for (const e of events) {
     if (e.type === 'cookie-write') {
+      if (isProbe(e)) continue;
       // Expiring a cookie (Max-Age<=0, or an expiry at or before the write) deletes
       // it: a consent tool's withdrawal cleanup or a vendor dropping its id after a
       // refusal is not the vendor storing anything (E4: counted as "storage writes
       // after rejecting", which turned held vendors red).
       if (isCookieDeletion(e.attributes, startEpoch + e.t / 1000)) continue;
-      const f = storeOwner(e.name, e.chain);
+      const f = storeOwner('cookie', e.name, e.chain);
       if (!f) continue;
       const previous = f.stores.find(s=>s.name===e.name&&s.kind==='cookie');
       const write = { t: e.t, pageIndex: e.pageIndex ?? 0, phase: phaseAt(e.t, bannerShownT, choices) };
@@ -460,7 +470,7 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
       const lifetimeDays = exp !== undefined && exp > 0 ? (exp - startEpoch) / 86400 : maxAge ? Number(maxAge) / 86400 : 0;
       f.stores.push({ name: e.name, kind: 'cookie', lifetimeDays: Math.round(lifetimeDays), setBy: 'script', setByUrl: e.chain[0], t: e.t, phase: write.phase, writes: [write] });
     } else if (e.type === 'storage-write') {
-      const f = storeOwner(e.key, e.chain);
+      const f = storeOwner(e.area, e.key, e.chain);
       if (!f) continue;
       const previous = f.stores.find(s=>s.name===e.key&&s.kind===e.area);
       const write = { t: e.t, pageIndex: e.pageIndex ?? 0, phase: phaseAt(e.t, bannerShownT, choices) };
@@ -473,7 +483,7 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
   const cookieClaimed = (name: string) => [...parties.values()].some((p) => p.stores.some((s) => s.name === name && s.kind === 'cookie'));
   // Known first-party cookie names (e.g. _ga, _fbp) the shim didn't see written.
   for (const c of snapshot.cookies) {
-    const entry = lookupStore(kb, c.name);
+    const entry = lookupStore(kb, 'cookie', c.name);
     if (!entry) continue;
     if (cookieClaimed(c.name)) continue;
     const f = parties.get(entry.id) ?? ensure({ id: entry.id, entry, domain: entry.match.hosts[0] }, entry.match.hosts[0]);
