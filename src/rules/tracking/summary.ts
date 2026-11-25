@@ -304,14 +304,19 @@ export function summarizeBehavior(timelines: Timeline[], kb: KnowledgeBase = DEF
     // A cookie that exists only on another company's domain (doubleclick.net's IDE,
     // facebook.com's fr) is one the site cannot remove: its mere presence is not the site's activity.
     const siteDomain = tl.snapshot.site.registrableDomain;
-    const onlyThirdParty = (name: string): boolean => {
-      const jar = tl.snapshot.cookies.filter((c) => c.name === name);
-      return jar.length > 0 && jar.every((c) => registrableDomain(c.domain.replace(/^\./, '')) !== siteDomain);
+    const jarDomain = (c: { domain: string }) => registrableDomain(c.domain.replace(/^\./, ''));
+    // The jar entries that are this party's cookie: same name, on a domain its writes landed on (when known).
+    // HubSpot's __cf_bm on its own domain is not the site's __cf_bm (walrusaudio.com, 2026-11).
+    const jarOf = (s: { name: string; domains?: string[] }) => tl.snapshot.cookies.filter((c) => c.name === s.name && (!s.domains || s.domains.includes(jarDomain(c))));
+    const onlyThirdParty = (s: { name: string; domains?: string[] }): boolean => {
+      const jar = jarOf(s);
+      return jar.length > 0 && jar.every((c) => jarDomain(c) !== siteDomain);
     };
     // A cookie only a server can remove: every jar entry on the site's own domain is HttpOnly
     // (set by a Set-Cookie header; no script on the page, the consent tool's included, can delete it).
-    const serverOnly = (name: string): boolean => {
-      const own = tl.snapshot.cookies.filter((c) => c.name === name && registrableDomain(c.domain.replace(/^\./, '')) === siteDomain);
+    const serverOnly = (s: { name: string; domains?: string[] }): boolean => {
+      if (s.domains && !s.domains.includes(siteDomain)) return false;
+      const own = tl.snapshot.cookies.filter((c) => c.name === s.name && jarDomain(c) === siteDomain);
       return own.length > 0 && own.every((c) => c.httpOnly);
     };
     const count = (p: { requests: PartyRequest[] }, keep: (r: PartyRequest) => boolean): Record<string, number> => {
@@ -343,9 +348,9 @@ export function summarizeBehavior(timelines: Timeline[], kb: KnowledgeBase = DEF
           kind: s.kind,
           writePhase: s.phase,
           writePhases: writePhasesOf(p, s),
-          presentAtEnd: s.kind === 'cookie' ? tl.snapshot.cookies.some((c) => c.name === s.name) : tl.snapshot.storage.some((v) => v.key === s.name && v.area === s.kind),
-          ...(s.kind === 'cookie' && onlyThirdParty(s.name) ? { thirdParty: true } : {}),
-          ...(s.kind === 'cookie' && tl.snapshot.cookies.some((c) => c.name === s.name) && serverOnly(s.name) ? { httpOnly: true } : {}),
+          presentAtEnd: s.kind === 'cookie' ? jarOf(s).length > 0 : tl.snapshot.storage.some((v) => v.key === s.name && v.area === s.kind),
+          ...(s.kind === 'cookie' && onlyThirdParty(s) ? { thirdParty: true } : {}),
+          ...(s.kind === 'cookie' && jarOf(s).length > 0 && serverOnly(s) ? { httpOnly: true } : {}),
           attribution: s.setBy === 'known-name' ? ('known-name' as const) : ('observed' as const),
         })),
       })),

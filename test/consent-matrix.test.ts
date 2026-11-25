@@ -102,6 +102,25 @@ describe('consent behavior matrix',()=>{
   // The site's own cookie left behind is still the site's.
   expect(status(m(tl([cookie('_fbp','.shop.example')])),'storage','_fbp','reject').status).toBe('mismatch');
  });
+ it('a vendor’s cookie is judged on the domain it was set on, even when the site has a cookie of the same name (walrusaudio.com __cf_bm, 2026-11)',()=>{
+  const inv={...inventory,stores:[...inventory.stores,{name:'__cf_bm',kind:'cookie',lifetimeDays:0}]};
+  const cookie=(domain:string)=>({name:'__cf_bm',value:'x',domain,path:'/',expires:-1,httpOnly:true,secure:true});
+  // The vendor's response sets __cf_bm on its own domain before the choice; the site's Cloudflare sets its own __cf_bm too.
+  const tl=(setDomain:string|undefined,cookies:object[])=>Timeline.parse({location:evaluation.locations[0].spec,verification:evaluation.locations[0].verification,snapshot:{site:evaluation.site,scenario:'reject',locationId:'de',startedAt:'2026-10-05T00:00:00Z',durationMs:10000,gpc:false,browser:{name:'chromium'},pages:[],cookies,storage:[],frames:[]},events:[{type:'banner',t:0,state:'shown',pageIndex:0},{type:'request',t:50,id:'r1',url:'https://www.facebook.com/tr/?ev=PageView',method:'GET',resourceType:'image',origin:'page',pageUrl:evaluation.site.url,pageIndex:0,initiator:{type:'other',chain:[]},setCookies:[{name:'__cf_bm',...(setDomain?{domain:setDomain}:{})}]},{type:'choice',t:200,choice:'reject',ok:true,method:'test',pageIndex:0}]});
+  const jar=[cookie('.facebook.com'),cookie('.shop.example')];
+  const meta=(t:ReturnType<typeof tl>)=>summarizeBehavior([t])[0].parties.find(p=>p.partyId==='meta.pixel')!.stores.find(s=>s.name==='__cf_bm')!;
+  const m=(t:ReturnType<typeof tl>)=>({...buildConsentReportModel({...evaluation,inventory:[inv]} as unknown as typeof evaluation,[]),behaviorObservations:summarizeBehavior([t])});
+  // Domain attribute, or no attribute (the response host): the vendor's copy only.
+  for(const d of ['.facebook.com',undefined]){
+    expect(meta(tl(d,jar))).toMatchObject({presentAtEnd:true,thirdParty:true});
+    expect(meta(tl(d,jar)).httpOnly).toBeUndefined();
+    expect(status(m(tl(d,jar)),'storage','__cf_bm','reject').status).toBe('match');
+  }
+  // The vendor's copy gone, the site's left: not this vendor's cookie.
+  expect(meta(tl('.facebook.com',[cookie('.shop.example')])).presentAtEnd).toBe(false);
+  // A vendor response that sets the cookie on the site's domain: the site's leftover, still counted.
+  expect(status(m(tl('.shop.example',jar)),'storage','__cf_bm','reject').status).toBe('mismatch');
+ });
  it('marks a surviving cookie httpOnly only when every jar entry for it on the site’s domain is HttpOnly; never for a third-party-only cookie',()=>{
   const inv={...inventory,stores:[...inventory.stores,{name:'fr',kind:'cookie',lifetimeDays:90}]};
   const cookie=(name:string,domain:string,httpOnly:boolean)=>({name,value:'x',domain,path:'/',expires:-1,httpOnly,secure:true});

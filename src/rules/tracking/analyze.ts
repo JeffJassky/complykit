@@ -107,6 +107,20 @@ export interface PartyStore {
   writePhases?: Phase[];
   /** Every write: when, on which page, in which phase — so a write at the instant of a choice can be told from one after it. */
   writes?: Array<{ t: number; pageIndex: number; phase: Phase }>;
+  /** Cookies: the registrable domain(s) this party's writes landed on (Set-Cookie Domain or response host;
+   *  document.cookie Domain or frame host). Absent when any write's domain is unknown. Two parties' cookies with one
+   *  name (__cf_bm on the site and on a vendor's domain) are told apart by it (walrusaudio.com, 2026-11). */
+  domains?: string[];
+}
+
+/** The registrable domain a cookie write lands on: its Domain attribute, else the writing URL's host. */
+function cookieDomainOf(domainAttr: string | undefined, url: string | undefined): string | undefined {
+  const host = domainAttr ? domainAttr.replace(/^\./, '') : url ? hostOf(url) : undefined;
+  return host ? registrableDomain(host) : undefined;
+}
+/** One more write's domain: an unknown one makes the whole set unknown (judged by name, as before). */
+function addDomain(domains: string[] | undefined, domain: string | undefined): string[] | undefined {
+  return domains && domain ? [...new Set([...domains, domain])] : undefined;
 }
 
 export interface PartyFacts {
@@ -371,12 +385,14 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
       const lifetimeDays = c.maxAgeSec !== undefined ? c.maxAgeSec / 86400 : c.expires ? Math.max(0, (Date.parse(c.expires) / 1000 - startEpoch) / 86400) : 0;
       const previous = f.stores.find(s=>s.name===c.name&&s.kind==='cookie');
       const write = { t: e.t, pageIndex: e.pageIndex ?? 0, phase: phaseAt(e.t, bannerShownT, choices) };
+      const domain = cookieDomainOf(c.domain, e.url);
       if (previous) {
         previous.writePhases = [...new Set([...(previous.writePhases ?? (previous.phase ? [previous.phase] : [])), write.phase])];
         previous.writes = [...(previous.writes ?? []), write];
+        previous.domains = addDomain(previous.domains, domain);
       }
       if (!previous) {
-        f.stores.push({ name: c.name, kind: 'cookie', lifetimeDays: Math.round(lifetimeDays), setBy: 'header', setByUrl: e.url, t: e.t, phase: write.phase, writes: [write] });
+        f.stores.push({ name: c.name, kind: 'cookie', lifetimeDays: Math.round(lifetimeDays), setBy: 'header', setByUrl: e.url, t: e.t, phase: write.phase, writes: [write], ...(domain ? { domains: [domain] } : {}) });
       }
     }
   }
@@ -464,11 +480,12 @@ export function analyzeTimeline(timeline: Timeline, kb: KnowledgeBase = DEFAULT_
       if (!f) continue;
       const previous = f.stores.find(s=>s.name===e.name&&s.kind==='cookie');
       const write = { t: e.t, pageIndex: e.pageIndex ?? 0, phase: phaseAt(e.t, bannerShownT, choices) };
-      if(previous){previous.writePhases=[...new Set([...(previous.writePhases??(previous.phase?[previous.phase]:[])),write.phase])];previous.writes=[...(previous.writes??[]),write];continue;}
+      const domain = cookieDomainOf(/(?:^|;)\s*domain=([^;]+)/i.exec(e.attributes ?? '')?.[1]?.trim(), e.frameUrl);
+      if(previous){previous.writePhases=[...new Set([...(previous.writePhases??(previous.phase?[previous.phase]:[])),write.phase])];previous.writes=[...(previous.writes??[]),write];previous.domains=addDomain(previous.domains,domain);continue;}
       const exp = cookieExpiry.get(e.name);
       const maxAge = /max-age=(\d+)/i.exec(e.attributes ?? '')?.[1];
       const lifetimeDays = exp !== undefined && exp > 0 ? (exp - startEpoch) / 86400 : maxAge ? Number(maxAge) / 86400 : 0;
-      f.stores.push({ name: e.name, kind: 'cookie', lifetimeDays: Math.round(lifetimeDays), setBy: 'script', setByUrl: e.chain[0], t: e.t, phase: write.phase, writes: [write] });
+      f.stores.push({ name: e.name, kind: 'cookie', lifetimeDays: Math.round(lifetimeDays), setBy: 'script', setByUrl: e.chain[0], t: e.t, phase: write.phase, writes: [write], ...(domain ? { domains: [domain] } : {}) });
     } else if (e.type === 'storage-write') {
       const f = storeOwner(e.area, e.key, e.chain);
       if (!f) continue;
