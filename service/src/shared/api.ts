@@ -717,6 +717,8 @@ export interface OwnerToolRow {
   /** What complykit did with the site's classification of this tool; set when one exists. */
   answer?: { categories: string[]; applied: boolean; reason?: string };
   cells: OwnerCell[];
+  /** The tool's network requests alone, judged like the tool (absent in reports made before it was added). */
+  requests?: OwnerCell[];
   cookies: OwnerCookieRow[];
   /** What the scan saw the tool do (absent in reports made before it was added). */
   activity?: OwnerToolActivity;

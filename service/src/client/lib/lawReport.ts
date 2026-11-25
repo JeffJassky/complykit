@@ -26,7 +26,7 @@ export function reportForLocation(report: OwnerReport, locationId: string): Owne
   const final = report.stage === 'final';
 
   const tools = report.matrix.tools
-    .map((t) => ({ ...t, cells: pick(t.cells), cookies: t.cookies.map((c) => ({ ...c, cells: pick(c.cells) })) }))
+    .map((t) => ({ ...t, cells: pick(t.cells), ...(t.requests ? { requests: pick(t.requests) } : {}), cookies: t.cookies.map((c) => ({ ...c, cells: pick(c.cells) })) }))
     .filter((t) => !(final && t.cells.every((c) => c.state === 'pending')));
 
   const counts: Counts = { ok: 0, mismatch: 0, needsDecision: 0, pending: 0, notChecked: 0, notApplicable: 0, blocked: 0 };

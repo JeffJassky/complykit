@@ -178,3 +178,34 @@ describe('D. browser-safe', () => {
     expect(categoryLabel([])).toBe('Unclassified');
   });
 });
+
+describe('a tool’s requests have their own row', () => {
+  // GA4 with ad storage denied: Google sends pings, stores nothing — the tool is red, none of its cookies is (walrusaudio.com, 2026-11).
+  const obs = [
+    seen('de', 'do-nothing', [{ partyId: ga4.partyId, requests: 3 }], ['google.analytics']),
+    seen('de', 'accept', [{ partyId: ga4.partyId, requests: 3, stores: [store('_ga', { writePhases: ['after-accept'], writePhase: 'after-accept' })] }], ['google.analytics']),
+  ];
+  const r = owner(evaluation({ inventory: [ga4], behaviorObservations: obs }));
+  const g = toolOf(r, 'Google Analytics 4');
+  it('is red where the tool is red for what it sent, while its cookies stay green', () => {
+    const de = colIndex(r, 'de:do-nothing');
+    expect(g.cells[de].state).toBe('mismatch');
+    expect(g.cookies[0].cells[de].state).toBe('ok');
+    expect(g.requests[de].state).toBe('mismatch');
+    expect(g.requests[de].observed).toMatch(/^3 data request/);
+    expect(g.requests[colIndex(r, 'de:accept')].state).toBe('ok');
+  });
+  it('is judged with the site’s answer like the tool, and is not counted (it breaks down the tool’s cells)', () => {
+    const judged = judgeOwnerReport(r, { [g.classKey]: ['advertising'] });
+    const t = toolOf(judged, 'Google Analytics 4');
+    const de = colIndex(judged, 'de:do-nothing');
+    expect(t.requests[de].expected).toBe(t.cells[de].expected);
+    expect(t.requests[de].state).toBe('mismatch');
+    const cells = judged.matrix.tools.flatMap((x) => [...x.cells, ...x.cookies.flatMap((k) => k.cells)]);
+    expect(judged.matrix.counts.mismatch).toBe(cells.filter((c) => c.state === 'mismatch').length);
+  });
+  it('a report saved without the row judges to none', () => {
+    const old = { ...r, matrix: { ...r.matrix, tools: r.matrix.tools.map(({ requests: _r, ...t }) => t) } } as unknown as OwnerReport;
+    expect(toolOf(judgeOwnerReport(old, {}), 'Google Analytics 4').requests).toEqual([]);
+  });
+});

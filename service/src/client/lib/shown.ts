@@ -26,8 +26,8 @@ export function sameCategories(a: readonly string[], b: readonly string[]): bool
  *  server-written cell the judge would not produce. Pure; the input is never mutated. */
 export function judgedReport(report: OwnerReport, pending: PendingAnswers | undefined): OwnerReport {
   if (!judgeable(report)) return report;
-  // The service mirror differs from core in one place: `OwnerToolRow.activity` is optional here (reports made before it
-  // existed), required in core. The judge only spreads it through, so the cast is safe.
+  // The service mirror differs from core in two places: `OwnerToolRow.activity` and `.requests` are optional here (reports
+  // made before them), required in core. The judge spreads activity through and treats missing requests as none, so the cast is safe.
   return judgeOwnerReport(report as unknown as CoreOwnerReport, { ...report.answers, ...pending }) as unknown as OwnerReport;
 }
 

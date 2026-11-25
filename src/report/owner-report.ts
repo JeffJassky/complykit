@@ -146,7 +146,17 @@ function cellOf(c: BehaviorMatrixCell | undefined): OwnerCell {
   if (!c) return { state: 'not-checked', reason: 'Nothing was recorded for this visit.' };
   const state: OwnerCellState =
     c.skip === 'not-applicable' ? 'not-applicable' : c.skip === 'blocked' ? 'blocked' : c.status === 'match' || c.status === 'allowed' ? 'ok' : c.status === 'mismatch' ? 'mismatch' : c.status === 'review' ? 'needs-decision' : 'not-checked';
-  return { state, expected: c.expected, observed: c.observed, reason: c.reason, ...(c.runs ? { runs: c.runs } : {}), ...(c.comparisonFacts ? { facts: c.comparisonFacts } : {}), ...(c.skip === 'not-applicable' || c.skip === 'blocked' ? { skip: c.skip } : {}) };
+  return { state, expected: c.expected, observed: c.observed, reason: c.reason, ...(c.runs ? { runs: c.runs } : {}), ...(c.requests ? { requests: c.requests } : {}), ...(c.comparisonFacts ? { facts: c.comparisonFacts } : {}), ...(c.skip === 'not-applicable' || c.skip === 'blocked' ? { skip: c.skip } : {}) };
+}
+
+/**
+ * A tool cell narrowed to its network requests: active when it sent data, restricted-mode only when every request was.
+ * Its cookies have their own rows. A cell with no request count (not finished, not checked) is left as it is.
+ */
+function requestsOnly(c: OwnerCell): OwnerCell {
+  if (!c.facts || !c.requests) return c;
+  const { data, limited } = c.requests;
+  return { ...c, observed: data ? `${data} data request(s) sent during this part of the visit${limited === data ? ', all consent-denied or restricted-mode' : ''}.` : 'No data requests sent during this part of the visit.', facts: { ...c.facts, hasActivity: data > 0, limitedOnly: data > 0 && limited === data } };
 }
 
 /** The coverage-gap suffix the scanner appends; the owner page says it once, in its own words. */
@@ -297,6 +307,7 @@ export function buildOwnerReport(input: OwnerReportInput): OwnerReport {
       classKey,
       judge: { base, ...(trackerReason ? { trackerReason } : {}) },
       cells: cellsFor(toolRow),
+      requests: cellsFor(toolRow).map(requestsOnly),
       cookies,
       activity: activityOf(p, cookies, input.site.registrableDomain),
     });

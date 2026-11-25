@@ -399,6 +399,8 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
                 const isOpen = expanded.has(t.id);
                 const rows = [
                   { key: t.id, name: t.label, sub: ui.answers?.[t.classKey] && !toolJudgeable(t) ? 'Saved — the report updates shortly' : t.purpose, cells: t.cells, tool: true, unclassified: !t.classified },
+                  // Under a tool that sets cookies, its requests get their own row first: a tool red only for what it sent shows why.
+                  ...(isOpen && t.requests?.length ? [{ key: t.id + ':requests', name: 'Data sent', sub: 'network requests', cells: t.requests, tool: false, unclassified: !t.classified }] : []),
                   ...(isOpen ? t.cookies : []).map((k) => ({ key: k.id, name: k.name, sub: k.kind === 'cookie' ? 'cookie' : `${k.kind} storage`, cells: k.cells, tool: false, unclassified: !k.classified })),
                 ];
                 return (
@@ -441,7 +443,7 @@ export function Matrix({ data, ui = {}, actions = {} }: { data: JobReportRespons
                               ) : (
                                 <div className="rp-detail">
                                   <p>
-                                    <strong>{r.name}</strong> — {r.tool ? `${t.purpose}${t.recognized ? '' : ' (classified by your team)'} · ${t.domain}` : `set by ${t.label}; ${r.sub}`}.
+                                    <strong>{r.name}</strong> — {r.tool ? `${t.purpose}${t.recognized ? '' : ' (classified by your team)'} · ${t.domain}` : `${r.key === t.id + ':requests' ? 'sent' : 'set'} by ${t.label}; ${r.sub}`}.
                                   </p>
                                   {r.tool ? <ToolEvidence tool={t} /> : null}
                                   <p className="muted">Select a symbol in the row to see what the scan saw.</p>

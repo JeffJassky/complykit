@@ -97,7 +97,7 @@ export function buildBehaviorMatrix(m: ConsentReportModel): BehaviorMatrix {
     const comparisonFacts: ComparisonFacts = {scenario:col.scenario,regime:rg.regime,regimeLabel:rg.label,wiretap:isWiretapJurisdiction(m.locations.find(l=>l.id===col.location)?.jurisdictions??[]),unavailable,hasActivity,limitedOnly:row.kind==='tool'&&requests>0&&limited===requests&&!facts?.stores.some(isActiveStore),captureGap};
     const verdict=compareCookieBehavior(comparisonFacts,{categories:row.categories});
     const isMismatch=verdict.status==='mismatch';
-    return {columnId:col.id,...verdict,...(col.unavailable?{skip:col.unavailable.kind}:{}),observed:actual,...(isMismatch&&serverCookies.length?{serverCookies,...(cookieOnly?{cookieOnly:true}:{})}:{}),comparisonFacts,evidencePointers:[`/inventory/${i}`, ...(observed?['/behaviorObservations/'+m.behaviorObservations!.indexOf(observed)]:[])]} satisfies BehaviorMatrixCell;
+    return {columnId:col.id,...verdict,...(col.unavailable?{skip:col.unavailable.kind}:{}),observed:actual,...(row.kind==='tool'&&facts?{requests:{data:requests,limited}}:{}),...(isMismatch&&serverCookies.length?{serverCookies,...(cookieOnly?{cookieOnly:true}:{})}:{}),comparisonFacts,evidencePointers:[`/inventory/${i}`, ...(observed?['/behaviorObservations/'+m.behaviorObservations!.indexOf(observed)]:[])]} satisfies BehaviorMatrixCell;
     };
     const built=visits.length?visits.map(build):[build(undefined)];
     const activeRuns=built.filter(c=>c.comparisonFacts?.hasActivity).length;

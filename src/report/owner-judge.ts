@@ -66,6 +66,7 @@ export function judgeOwnerReport(report: OwnerReport, answers: Record<string, st
       categories,
       classified: categories.length > 0,
       cells: t.cells.map((c) => judgeCell(c, categories)),
+      requests: (t.requests ?? []).map((c) => judgeCell(c, categories)),
       cookies: t.cookies.map((k) => {
         const cats = cookieCategories(categories, k.judge);
         return { ...k, purpose: cats.length ? categoryLabel(cats) : `Depends on what ${t.label} is for`, classified: cats.length > 0, cells: k.cells.map((c) => judgeCell(c, cats)) };

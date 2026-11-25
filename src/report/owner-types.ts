@@ -20,6 +20,8 @@ export interface OwnerCell {
   facts?: ComparisonFacts;
   /** The matrix cell's skip, when the scan could not check it or nothing applied. */
   skip?: 'not-applicable' | 'blocked';
+  /** Tool cells: the data requests in this part of the visit, and how many were consent-denied / restricted-mode. */
+  requests?: { data: number; limited: number };
 }
 
 export interface OwnerColumn {
@@ -66,6 +68,9 @@ export interface OwnerToolRow {
   /** The tool before any site answer: the base knowledge base's categories for it (`[]` when unknown), and why it counts as a tracker (decided from the base knowledge base, never the site's). */
   judge: { base: string[]; trackerReason?: string };
   cells: OwnerCell[];
+  /** The tool's network requests alone, judged like the tool: the row under a tool that says why the tool is red when
+   *  none of its cookies is (Google sending pings with nothing stored). Not counted: a breakdown of the tool's cells. */
+  requests: OwnerCell[];
   cookies: OwnerCookieRow[];
   /** What the scan saw the tool do: requests only, or storing cookies / storage too. */
   activity: OwnerToolActivity;
